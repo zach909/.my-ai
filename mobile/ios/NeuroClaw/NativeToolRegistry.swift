@@ -98,6 +98,12 @@ enum NativeToolRegistry {
         switch status { case .authorized: return "authorized"; case .denied: return "denied"; case .restricted: return "restricted"; case .notDetermined: return "not_determined"; @unknown default: return "unknown" }
     }
 
+    private static func hasEventReadAccess(_ status: EKAuthorizationStatus) -> Bool {
+        if status == .authorized { return true }
+        if #available(iOS 17.0, *), status == .fullAccess { return true }
+        return false
+    }
+
     private static func eventLabel(_ status: EKAuthorizationStatus) -> String {
         if #available(iOS 17.0, *) {
             if status == .fullAccess { return "authorized" }
@@ -155,7 +161,7 @@ enum NativeToolRegistry {
                 store.requestAccess(to: .event) { granted, _ in continuation.resume(returning: granted) }
             }
             guard granted else { return (403, ["error": "calendar_permission_denied"]) }
-        } else if status != .authorized && status != .fullAccess {
+        } else if !hasEventReadAccess(status) {
             return (403, ["error": "calendar_permission_denied", "status": eventLabel(status)])
         }
         let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
