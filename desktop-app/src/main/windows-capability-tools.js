@@ -85,7 +85,6 @@ const DEFINITIONS = [
   ['openPath','Open a file or folder','files','native','Open a user-selected path with the operating system.'],
   ['systemSettings','System settings inspection','system','adapter-required','Inspect supported settings; changes need confirmation.'],
   ['adminOperation','Elevated administrative operation','security','admin-or-adapter','No silent elevation or UAC bypass; explicit approved elevation only.'],
-,
   ["readFileMetadata","Read file metadata","files","native","Read metadata only for user-selected paths."],
   ["createFile","Create a file","files","adapter-required","Create files only in a user-authorized destination."],
   ["updateFile","Update a file","files","adapter-required","Update files only within an authorized scope."],
