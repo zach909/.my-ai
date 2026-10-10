@@ -3,6 +3,7 @@ import AppTrackingTransparency
 import CoreBluetooth
 import CoreLocation
 import CoreMotion
+import CoreNFC
 import CoreTelephony
 import Contacts
 import EventKit
@@ -103,6 +104,7 @@ enum ExtendedNativeTools {
         tool("permissions.catalog", "Return an inventory of requestable iOS permissions, user-controlled settings, entitlement-gated capabilities, and platform-blocked access."),
         tool("nearby.get_capabilities", "Report Nearby Interaction support and its entitlement/session requirements."),
         tool("nfc.get_capabilities", "Report NFC reader availability and required entitlements."),
+        tool("nfc.read_tag", "Read an NDEF NFC tag in the foreground system reader session."),
         tool("critical_alerts.get_capabilities", "Report critical notification alert restrictions."),
         tool("research_sensors.get_capabilities", "Report research sensor data restrictions and entitlement requirements.")
     ]
@@ -328,6 +330,8 @@ enum ExtendedNativeTools {
             return await HomeKitTools.listAccessories(arguments)
         case "homekit.control_accessory":
             return await HomeKitTools.controlAccessory(arguments)
+        case "nfc.read_tag":
+            return await NFCReaderFlow.shared.readTag()
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -1002,5 +1006,58 @@ private final class HomeKitTools: NSObject, HMHomeManagerDelegate {
     private func waitUntilReady() async {
         if hasLoadedHomes { return }
         await withCheckedContinuation { continuation in readyWaiters.append(continuation) }
+    }
+}
+
+
+@MainActor
+private final class NFCReaderFlow: NSObject, NFCNDEFReaderSessionDelegate {
+    static let shared = NFCReaderFlow()
+    private var session: NFCNDEFReaderSession?
+    private var continuation: CheckedContinuation<(Int, [String: Any]), Never>?
+
+    func readTag() async -> (Int, [String: Any]) {
+        guard NFCNDEFReaderSession.readingAvailable else {
+            return (501, ["error": "nfc_reading_unavailable_on_device"])
+        }
+        guard session == nil else { return (409, ["error": "nfc_session_already_active"]) }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            let session = NFCNDEFReaderSession(delegate: self, queue: nil, invalidateAfterFirstRead: true)
+            session.alertMessage = "Hold your iPhone near an NFC tag."
+            self.session = session
+            session.begin()
+        }
+    }
+
+    func readerSession(_ session: NFCNDEFReaderSession, didDetectNDEFs messages: [NFCNDEFMessage]) {
+        let records: [[String: Any]] = messages.flatMap { message in
+            message.records.map { record in
+                [
+                    "type": String(data: record.type, encoding: .utf8) ?? record.type.base64EncodedString(),
+                    "identifier_base64": record.identifier.base64EncodedString(),
+                    "payload_base64": record.payload.base64EncodedString(),
+                    "payload_text": String(data: record.payload, encoding: .utf8) as Any? ?? NSNull()
+                ]
+            }
+        }
+        finish((200, ["read": true, "messages": records, "record_count": records.count]))
+        session.invalidate()
+    }
+
+    func readerSession(_ session: NFCNDEFReaderSession, didInvalidateWithError error: Error) {
+        if continuation != nil {
+            let nsError = error as NSError
+            let cancelled = nsError.domain == NFCReaderError.errorDomain && nsError.code == NFCReaderError.readerSessionInvalidationErrorUserCanceled.rawValue
+            finish((cancelled ? 499 : 500, ["error": cancelled ? "user_cancelled" : "nfc_session_failed", "detail": error.localizedDescription]))
+        }
+        self.session = nil
+    }
+
+    private func finish(_ result: (Int, [String: Any])) {
+        let continuation = self.continuation
+        self.continuation = nil
+        continuation?.resume(returning: result)
+        self.session = nil
     }
 }
