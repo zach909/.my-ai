@@ -269,56 +269,94 @@ class DeviceTools(private val context: Context) {
      * This is broader than the app manifest audit, but cannot enumerate OEM/custom permissions
      * or permissions introduced by a newer SDK than the one used to compile this app.
      */
+    /**
+     * Broad on-device permission inventory. Combines constants in the compile SDK with
+     * permission definitions the OS PackageManager exposes on this device. OEM-defined
+     * permissions and permissions hidden by OS visibility/privilege boundaries may remain
+     * undiscoverable; this is an inventory, not a way to bypass permission enforcement.
+     */
     private fun permissionCatalog(): JSONObject {
+        val pm = appContext.packageManager
         val declared = try {
-            val flags = if (Build.VERSION.SDK_INT >= 33)
-                android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong())
-            else null
             @Suppress("DEPRECATION")
             val info = if (Build.VERSION.SDK_INT >= 33)
-                appContext.packageManager.getPackageInfo(appContext.packageName, flags!!)
-            else appContext.packageManager.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+                pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong()))
+            else pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
             info.requestedPermissions.orEmpty().toSet()
         } catch (_: Exception) { emptySet<String>() }
-        val rows = JSONArray()
-        var declaredCount = 0
-        var grantedCount = 0
-        var unavailableCount = 0
+
+        data class PermissionRow(
+            val name: String,
+            var constant: String? = null,
+            var ownerPackage: String? = null,
+            var group: String? = null,
+            var protection: String = "unknown_or_not_defined_on_this_device"
+        )
+        val inventory = linkedMapOf<String, PermissionRow>()
         val fields = Manifest.permission::class.java.fields
             .filter { java.lang.reflect.Modifier.isStatic(it.modifiers) && it.type == String::class.java }
             .sortedBy { it.name }
         for (field in fields) {
             val permission = try { field.get(null) as? String } catch (_: Exception) { null } ?: continue
-            val isDeclared = permission in declared
-            val granted = appContext.packageManager.checkPermission(permission, appContext.packageName) == PackageManager.PERMISSION_GRANTED
-            var protection = "unknown_or_not_defined_on_this_device"
-            try {
-                @Suppress("DEPRECATION")
-                val pi = appContext.packageManager.getPermissionInfo(permission, 0)
-                protection = when (pi.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) {
+            val row = inventory.getOrPut(permission) { PermissionRow(permission) }
+            row.constant = field.name
+        }
+
+        var deviceDefinitionsAvailable = false
+        var queryError: String? = null
+        try {
+            @Suppress("DEPRECATION")
+            val defined = pm.queryPermissionsByGroup(null, 0)
+            for (pi in defined) {
+                val name = pi.name ?: continue
+                val row = inventory.getOrPut(name) { PermissionRow(name) }
+                row.ownerPackage = pi.packageName
+                row.group = pi.group
+                row.protection = when (pi.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) {
                     android.content.pm.PermissionInfo.PROTECTION_DANGEROUS -> "dangerous_runtime"
-                    android.content.pm.PermissionInfo.PROTECTION_NORMAL -> "normal"
+                    android.content.pm.PermissionInfo.PROTECTION_NORMAL -> "normal_install"
                     android.content.pm.PermissionInfo.PROTECTION_SIGNATURE -> "signature_or_privileged"
                     else -> "special_or_other"
                 }
-            } catch (_: Exception) { unavailableCount++ }
-            if (isDeclared) declaredCount++
-            if (isDeclared && granted) grantedCount++
-            rows.put(JSONObject()
-                .put("constant", field.name)
-                .put("permission", permission)
-                .put("declared_by_app", isDeclared)
-                .put("granted_to_app", isDeclared && granted)
-                .put("protection", protection))
+            }
+            deviceDefinitionsAvailable = true
+        } catch (e: Exception) {
+            queryError = e.javaClass.simpleName
         }
-        return ok(JSONObject()
+
+        var declaredCount = 0
+        var grantedCount = 0
+        var deviceDefinedCount = 0
+        val rows = JSONArray()
+        for (row in inventory.values.sortedBy { it.name }) {
+            val isDeclared = row.name in declared
+            val granted = isDeclared && pm.checkPermission(row.name, appContext.packageName) == PackageManager.PERMISSION_GRANTED
+            if (isDeclared) declaredCount++
+            if (granted) grantedCount++
+            if (row.ownerPackage != null) deviceDefinedCount++
+            rows.put(JSONObject()
+                .put("constant", row.constant ?: JSONObject.NULL)
+                .put("permission", row.name)
+                .put("defined_on_device", row.ownerPackage != null)
+                .put("defined_by_package", row.ownerPackage ?: JSONObject.NULL)
+                .put("group", row.group ?: JSONObject.NULL)
+                .put("declared_by_app", isDeclared)
+                .put("granted_to_app", granted)
+                .put("protection", row.protection))
+        }
+        val result = JSONObject()
             .put("permissions", rows)
             .put("count", rows.length())
+            .put("sdk_constants_count", fields.size)
+            .put("device_defined_count", deviceDefinedCount)
+            .put("device_definition_query_succeeded", deviceDefinitionsAvailable)
             .put("declared_count", declaredCount)
             .put("declared_and_granted_count", grantedCount)
-            .put("not_resolved_by_package_manager", unavailableCount)
             .put("device_api_level", Build.VERSION.SDK_INT)
-            .put("note", "This catalog enumerates Manifest.permission constants in the SDK used to compile this app. It does not include OEM/vendor custom permissions, newer SDK constants unavailable at compile time, or prove a permission is obtainable. Signature, privileged, role, restricted, and special-access permissions have additional OS rules."))
+            .put("coverage_note", "Combines compile-SDK Manifest.permission constants with permission definitions returned by this device's PackageManager. It cannot guarantee discovery of every OEM/vendor, hidden, newer-SDK, or privileged permission.")
+            .put("grant_note", "Inventory does not grant permissions. Runtime permissions need user approval; special access uses OS settings or consent; signature/privileged permissions require platform authorization and cannot be obtained by an ordinary app.")
+        if (queryError != null) result.put("device_definition_query_error", queryError)
+        return ok(result)
     }
 
     private fun checkPermission(permission: String): JSONObject {
