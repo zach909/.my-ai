@@ -118,6 +118,9 @@ enum ExtendedNativeTools {
         case "music.play_item":
             properties = ["persistent_id": ["type": "number", "description": "Media-library persistent ID"]]
             required = ["persistent_id"]
+        case "photos.save":
+            properties = ["image_base64": ["type": "string", "description": "Base64-encoded JPEG or PNG image data"], "filename": ["type": "string"]]
+            required = ["image_base64"]
         case "contacts.create":
             properties = ["given_name": ["type": "string"], "family_name": ["type": "string"], "phone": ["type": "string"], "email": ["type": "string"]]
             required = ["given_name"]
@@ -291,6 +294,8 @@ enum ExtendedNativeTools {
             return (200, ["authorization": settings.authorizationStatus.rawValue, "alerts": settings.alertSetting.rawValue, "sounds": settings.soundSetting.rawValue, "badges": settings.badgeSetting.rawValue])
         case "voice_activation.get_status", "voice_activation.request":
             return (200, ["speech_authorization": SFSpeechRecognizer.authorizationStatus().rawValue, "siri_setup": "Use App Intents and Shortcuts; apps cannot enable always-listening activation themselves."])
+        case "photos.save":
+            return await savePhoto(arguments)
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -316,6 +321,28 @@ enum ExtendedNativeTools {
         }
     }
 
+
+
+    private static func savePhoto(_ a: [String: Any]) async -> (Int, [String: Any]) {
+        guard let encoded = a["image_base64"] as? String, let data = Data(base64Encoded: encoded), let image = UIImage(data: data) else {
+            return (400, ["error": "valid_base64_image_required"])
+        }
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        if status == .denied || status == .restricted { return (403, ["error": "photos_add_permission_denied", "status": status.rawValue]) }
+        if status == .notDetermined {
+            let granted = await withCheckedContinuation { c in
+                PHPhotoLibrary.requestAuthorization(for: .addOnly) { value in c.resume(returning: value == .authorized || value == .limited) }
+            }
+            guard granted else { return (403, ["error": "photos_add_permission_denied"]) }
+        }
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetChangeRequest.creationRequestForAsset(from: image)
+                request.creationDate = Date()
+            }
+            return (200, ["ok": true, "saved": true, "format": data.starts(with: [0x89, 0x50, 0x4E, 0x47]) ? "png" : "image"])
+        } catch { return (500, ["error": "photo_save_failed", "detail": error.localizedDescription]) }
+    }
 
     private static func contactsStoreWithAccess() async -> CNContactStore? {
         let store = CNContactStore()
