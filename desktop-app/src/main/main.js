@@ -197,6 +197,10 @@ function isTrustedAppFrame(frameUrl) {
   }
 }
 
+function permissionGrantKey(permission, frameUrl) {
+  try { return permission + ':' + new URL(frameUrl).origin; } catch { return permission + ':' + frameUrl; }
+}
+
 function installPermissionHandlers() {
   const appSession = session.defaultSession;
   appSession.setPermissionRequestHandler(async (webContents, permission, callback, details = {}) => {
@@ -214,7 +218,7 @@ function installPermissionHandlers() {
       return;
     }
 
-    const key = permission + ':' + requestingUrl;
+    const key = permissionGrantKey(permission, requestingUrl);
     if (SESSION_PERMISSION_GRANTS.has(key)) {
       callback(true);
       return;
@@ -251,7 +255,7 @@ function installPermissionHandlers() {
     const origin = requestingOrigin || (webContents && webContents.getURL ? webContents.getURL() : '');
     if (!isTrustedAppFrame(origin)) return false;
     if (!WEB_PERMISSION_LABELS[permission]) return false;
-    return SESSION_PERMISSION_GRANTS.has(permission + ':' + origin);
+    return SESSION_PERMISSION_GRANTS.has(permissionGrantKey(permission, origin));
   });
 }
 
@@ -400,6 +404,8 @@ function normalizeFingerprint(fp) {
 }
 
 app.whenReady().then(async () => {
+  installPermissionHandlers();
+
   // Window first, backend second. The other order meant the user clicked the
   // icon and got nothing at all for as long as the backend took to boot
   // (measured at 13-18s), which is indistinguishable from a failed launch.
