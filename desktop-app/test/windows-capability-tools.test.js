@@ -68,6 +68,23 @@ check(getTool('appWindowList').implementation === 'native-windows', 'window inve
 check(getTool('windowsUpdateStatus').implementation === 'native-windows', 'Windows Update service inspection is read-only');
 check(getTool('deviceEncryptionStatus').implementation === 'native-windows', 'volume encryption status never exposes recovery keys');
 check(getTool('secureBootStatus').implementation === 'native-windows', 'Secure Boot state is queried without changing firmware settings');
+check(getTool('accountInfo').implementation === 'native-windows', 'current Windows identity metadata is read without credentials');
+check(getTool('cameraDevices').implementation === 'native-windows', 'camera device metadata is listed without capturing images');
+check(getTool('inputDeviceStatus').implementation === 'native-windows', 'input device metadata is listed without recording input');
+check(getTool('processMetrics').implementation === 'native-windows', 'process CPU and memory metadata is bounded and read-only');
+check(getTool('registryRead').implementation === 'native-consent', 'registry reads are limited to allowlisted non-secret keys');
+check(getTool('registryInspect').implementation === 'native-consent', 'registry inspection rejects arbitrary paths');
+check(getTool('permissionAuditLog').implementation === 'native', 'permission audit reports catalog state without claiming OS grants');
+check(getTool('permissionControls').implementation === 'native', 'permission controls open Windows privacy settings');
+check(getTool('appPermissions').implementation === 'native', 'app permissions shortcut opens Windows privacy settings');
+check(getTool('defaultApps').implementation === 'native', 'default apps shortcut opens Windows Settings');
+check(getTool('timeZoneSettings').implementation === 'native-windows', 'time-zone state is read without changing it');
+check(getTool('localeSettings').implementation === 'native-windows', 'locale metadata is read-only');
+check(getTool('systemSoundSettings').implementation === 'native', 'system sound shortcut opens Windows Settings');
+check(getTool('accessibilitySettings').implementation === 'native', 'accessibility shortcut opens Windows Settings without enabling input monitoring');
+check(getTool('locationSettings').implementation === 'native', 'location shortcut opens Windows privacy settings without enabling location');
+check(getTool('windowsAppCapabilities').implementation === 'native', 'packaging context is reported without claiming manifest grants');
+
 
 check(getTool('wifiStatus').implementation === 'native-windows', 'Wi-Fi status is inspected without changing network configuration');
 check(getTool('bluetooth').implementation === 'native-windows', 'Bluetooth device metadata inspection is implemented');
