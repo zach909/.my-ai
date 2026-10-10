@@ -48,6 +48,7 @@ describe('the assets', () => {
     expect(isAmbientRoute('/ambient.css', 'GET')).toBe(true)
     expect(isAmbientRoute('/ambient.js', 'GET')).toBe(true)
     expect(isAmbientRoute('/ambient.js', 'HEAD')).toBe(true)
+    expect(isAmbientRoute('/ai-icon.jpg', 'GET')).toBe(false)
     expect(isAmbientRoute('/ambient.js', 'POST')).toBe(false)
     expect(isAmbientRoute('/ambient.js.map', 'GET')).toBe(false)
     expect(isAmbientRoute('/api/store', 'GET')).toBe(false)

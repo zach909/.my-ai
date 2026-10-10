@@ -28,6 +28,8 @@ import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/c
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
+import { AVATAR_HTML } from './avatar.js';
+import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
@@ -2148,13 +2150,19 @@ export class WebServer {
       let remembered = 0;
       let graftedNeurons = 0;
       for (const filename of entries) {
-        let data: { project?: { name?: string }; name?: string; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
+        let data: { project?: { name?: string }; name?: string; io?: unknown; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
         try {
           data = JSON.parse(await fs.readFile(path.join(dir, filename), 'utf8'));
         } catch {
           continue; // malformed/unreadable -- skip this one file, don't fail the boot
         }
         const extName = data.project?.name ?? data.name ?? filename;
+        // The doorways an extension asks for (its "io" block), declared before
+        // anything else so an extension that is only a doorway still counts.
+        if (data.io !== undefined) {
+          const { skipped } = system.doorways.declareFromExtension(extName, data.io);
+          for (const bad of skipped) console.warn(`[doorways] ${extName}: skipped an entry: ${bad.reason}`);
+        }
         const neurons = Array.isArray(data.neurons) ? data.neurons : [];
         if (neurons.length === 0) continue;
         filesLoaded++;
@@ -2437,6 +2445,11 @@ export class WebServer {
       return;
     }
 
+    if (pathname === '/avatar' && method === 'GET') {
+      this.sendHtml(res, AVATAR_HTML);
+      return;
+    }
+
     if (pathname === '/' && method === 'GET') {
       this.sendHtml(res, HTML_TEMPLATE);
       return;
@@ -2608,6 +2621,113 @@ export class WebServer {
       try {
         const { updateInstalls } = await import('../models && skills/core/store-install.js');
         this.sendJson(res, await updateInstalls());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // ── Doorways besides the Zip Loop ───────────────────────────────────
+    // Extensions declare them (their "io" block). Data goes in and out as raw
+    // bytes, base64 on the wire; nothing here makes tokens out of anything.
+    if (pathname === '/api/doorways' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { doorways: system.doorways.list() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/doorways/send' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { name?: unknown; data?: unknown } | null;
+        if (typeof body?.name !== 'string' || typeof body?.data !== 'string') {
+          this.sendJson(res, { error: 'Expected { name: string, data: base64 string }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, await system.doorways.send(body.name, new Uint8Array(Buffer.from(body.data, 'base64'))));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    if (pathname === '/api/doorways/receive' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { name?: unknown; bytes?: unknown } | null;
+        if (typeof body?.name !== 'string' || typeof body?.bytes !== 'number') {
+          this.sendJson(res, { error: 'Expected { name: string, bytes: number }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const out = await system.doorways.receive(body.name, body.bytes);
+        this.sendJson(res, { bytes: out.length, data: Buffer.from(out).toString('base64') });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    // ── Live content: played while the mesh is still making it ───────────
+    // The source is the mesh's own output on a doorway. Playing may begin as
+    // soon as it can never catch up with what is made (startDelaySeconds 0).
+    if (pathname === '/api/live/start' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as
+          { doorway?: unknown; bytesPerSecond?: unknown; totalSeconds?: unknown; chunkBytes?: unknown } | null;
+        if (typeof body?.doorway !== 'string' || typeof body?.bytesPerSecond !== 'number' || !(body.bytesPerSecond > 0)) {
+          this.sendJson(res, { error: 'Expected { doorway: string, bytesPerSecond: number > 0, totalSeconds?: number, chunkBytes?: number }.' }, 400);
+          return;
+        }
+        const name = body.doorway;
+        const chunk = typeof body.chunkBytes === 'number' && body.chunkBytes > 0 ? Math.min(Math.floor(body.chunkBytes), 65536) : 256;
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const stream = system.live.open(
+          { pull: async () => { const out = await system.doorways.receive(name, chunk); return out.length > 0 ? out : null; } },
+          { bytesPerSecond: body.bytesPerSecond, totalSeconds: typeof body.totalSeconds === 'number' ? body.totalSeconds : undefined },
+        );
+        this.sendJson(res, stream.status());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    const liveMatch = pathname.match(/^\/api\/live\/([^/]+)$/);
+    if (liveMatch && (method === 'GET' || method === 'DELETE')) {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const id = decodeURIComponent(liveMatch[1]);
+        if (method === 'DELETE') {
+          this.sendJson(res, { stopped: system.live.stop(id) });
+          return;
+        }
+        const stream = system.live.get(id);
+        if (!stream) { this.sendJson(res, { error: 'No such live stream.' }, 404); return; }
+        const q = new URL(req.url ?? '/', 'http://x').searchParams;
+        const from = Math.max(0, Number(q.get('from')) || 0);
+        const limit = Math.min(1 << 20, Math.max(0, Number(q.get('limit')) || 65536));
+        const data = stream.read(from, limit);
+        this.sendJson(res, { ...stream.status(), from, bytes: data.length, data: Buffer.from(data).toString('base64') });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    if (pathname === '/api/preneed' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { preNeed: system.preNeed.stats(), live: system.live.list() });
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
       }
@@ -3721,6 +3841,13 @@ export class WebServer {
           this.sendJson(res, { error: 'Thread not found' }, 404);
           return;
         }
+        // Continuing an old conversation: the mesh gets its context as a short
+        // replay through the Zip Loop (context compression), in the background,
+        // so the page never waits on it.
+        void import('../src/index.js')
+          .then(m => m.getNeuroclawSystem())
+          .then(system => system.continueThread(thread.id, thread.messages))
+          .catch(() => undefined);
         this.sendJson(res, { thread });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -4735,6 +4862,8 @@ export class WebServer {
         const body = await this.parseBody(req) as
           {
             name?: string;
+            /** Doorways beyond the Zip Loop this extension asks for: { inputs: [{name, kind}], outputs: [{name, kind}] }. */
+            io?: unknown;
             neurons?: Array<{
               name?: string; value?: number; definition?: string;
               scripts?: Array<{ userSays?: string; response?: string }>;
@@ -4742,6 +4871,13 @@ export class WebServer {
           } | null;
         const name = (body?.name ?? '').trim() || `extension_${Date.now()}`;
         const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+        let doorways: { declared: number; skipped: Array<{ reason: string }> } | undefined;
+        if (body?.io !== undefined) {
+          const { getNeuroclawSystem } = await import('../src/index.js');
+          const system = await getNeuroclawSystem();
+          const result = system.doorways.declareFromExtension(name, body.io);
+          doorways = { declared: result.declared.length, skipped: result.skipped.map(s => ({ reason: s.reason })) };
+        }
 
         const path = await import('node:path');
         const { promises: fs } = await import('node:fs');
@@ -4749,7 +4885,7 @@ export class WebServer {
         await fs.mkdir(dir, { recursive: true });
         const safe = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
         const filename = `${safe}_${Date.now()}.ext.json`;
-        await fs.writeFile(path.join(dir, filename), JSON.stringify({ name, neurons }, null, 2), 'utf8');
+        await fs.writeFile(path.join(dir, filename), JSON.stringify(body?.io !== undefined ? { name, io: body.io, neurons } : { name, neurons }, null, 2), 'utf8');
 
         const { remembered, grafted } = await this.installSkillProject(name, neurons);
 
@@ -4757,7 +4893,7 @@ export class WebServer {
         // actually joined the running mesh and how many of the skill's own
         // connections came with them. Reported rather than assumed -- a graft
         // that silently did nothing would look exactly like one that worked.
-        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted });
+        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted, ...(doorways ? { doorways } : {}) });
       } catch (err) {
         this.sendError(res, err);
       }
