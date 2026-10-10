@@ -42,6 +42,19 @@ The desktop layer on the PC (`models && skills/core/desktop-control.ts`) can be 
 
 Neither app's bridge could be compiled or run where it was written (no Android SDK or Xcode), so expect small build fixes the first time.
 
+## Native Android device tools
+
+When the Android **Agent bridge** is enabled in Accessibility settings, the app exposes a token-protected native tool API on port **7862**. Requests require the bridge token as a bearer token. By default the bridge listens only on the phone itself; enable the Wi-Fi bridge only when you intend the PC to connect.
+
+- `GET /v1/tools` returns the available tool names, descriptions, and associated runtime permission.
+- `POST /v1/tools/{name}` executes one tool with a JSON object body.
+- Example request: `POST /v1/tools/device_info` with `Authorization: Bearer <token>`.
+- For arguments, use JSON fields such as `{"query":"Alex"}` for `search_contacts`, `{"limit":10}` for list tools, `{"number":"+15551234567"}` for `dial_number`, and `{"to":"person@example.com","subject":"Hello","body":"Message"}` for `compose_email`.
+
+Available tools include device and permission status; network status; account and sensor inventory; contact search/list; calendar event list and opening the event editor; cached location; photo/video/audio metadata; call-log reading; dialer, SMS and email composers; installed-app listing and launching; Bluetooth status; voice-recognition UI; camera and screen-capture launch flows; and shortcuts to Android's special-access settings.
+
+Sensitive actions remain under Android/user control: SMS, calls, email, and calendar creation open a composer/editor rather than silently sending or saving; screen capture still requires Android's consent flow; missing runtime permissions return a permission error rather than being bypassed. Tools that depend on special access can only work after the person enables that access in Android Settings. The catalog is a native bridge API; the phone's neural-network chat loop does not automatically invoke every tool merely because it is listed.
+
 ## What sync does
 
 When the PC is reachable (after each message or photo, or when you tap **Sync now**):
