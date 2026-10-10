@@ -42,6 +42,14 @@ class DeviceTools(private val context: Context) {
         }
         add("device_info", "Read Android version, device model, locale, and app version.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
+        add("permission_audit", "Audit every permission declared in this installed app: grant state, protection level when available, and runtime/special-access classification.")
+        add("check_permission", "Check the grant state of one permission declared by this app.", "permission name supplied as an argument")
+        add("open_permission_settings", "Open this app's settings so the user can grant or revoke permissions.")
+        add("open_exact_alarm_settings", "Open the app's exact-alarm permission settings.")
+        add("open_unknown_app_settings", "Open the app's install-unknown-apps setting.")
+        add("open_dnd_settings", "Open Do Not Disturb policy access settings.")
+        add("open_nfc_settings", "Open Android NFC settings.")
+        add("open_privacy_settings", "Open Android privacy settings.")
         add("special_access_status", "Report app-specific special access that Android exposes through settings.")
         add("network_status", "Read current network type and whether Android reports internet connectivity.")
         add("list_accounts", "List account types and names visible to this app.", Manifest.permission.GET_ACCOUNTS)
@@ -81,6 +89,14 @@ class DeviceTools(private val context: Context) {
             when (name) {
                 "device_info" -> deviceInfo()
                 "permission_status" -> permissionStatus()
+                "permission_audit" -> permissionAudit()
+                "check_permission" -> checkPermission(args.optString("permission", ""))
+                "open_permission_settings" -> openSystemSettings("app")
+                "open_exact_alarm_settings" -> openSystemSettings("alarms")
+                "open_unknown_app_settings" -> openSystemSettings("unknown_apps")
+                "open_dnd_settings" -> openSystemSettings("dnd")
+                "open_nfc_settings" -> openSystemSettings("nfc")
+                "open_privacy_settings" -> openSystemSettings("privacy")
                 "special_access_status" -> specialAccessStatus()
                 "network_status" -> networkStatus()
                 "list_accounts" -> listAccounts()
@@ -190,10 +206,16 @@ class DeviceTools(private val context: Context) {
             "overlay" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_OVERLAY_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "wifi" -> Settings.ACTION_WIFI_SETTINGS
             "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            "alarms" -> if (Build.VERSION.SDK_INT >= 31) Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "unknown_apps" -> if (Build.VERSION.SDK_INT >= 26) Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "dnd" -> Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
+            "nfc" -> Settings.ACTION_NFC_SETTINGS
+            "privacy" -> Settings.ACTION_PRIVACY_SETTINGS
+            "app" -> Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             else -> return JSONObject().put("ok", false).put("error", "Unknown settings page")
         }
         val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (which in setOf("notification", "files", "battery", "overlay")) intent.data = Uri.parse("package:${context.packageName}")
+        if (which in setOf("notification", "files", "battery", "overlay", "alarms", "unknown_apps", "app")) intent.data = Uri.parse("package:${context.packageName}")
         context.startActivity(intent)
         return ok(JSONObject().put("opened_settings", which))
     }
@@ -208,6 +230,53 @@ class DeviceTools(private val context: Context) {
             .put("model", Build.MODEL)
             .put("locale", Locale.getDefault().toLanguageTag())
             .put("app_version", version))
+    }
+
+
+    private fun permissionAudit(): JSONObject {
+        val rows = JSONArray()
+        val pm = appContext.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= 33)
+            android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong())
+        else null
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= 33) pm.getPackageInfo(appContext.packageName, flags!!)
+            else pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+        val declared = info.requestedPermissions ?: emptyArray()
+        for (permission in declared.distinct().sorted()) {
+            val granted = pm.checkPermission(permission, appContext.packageName) == PackageManager.PERMISSION_GRANTED
+            var protection = "unknown"
+            try {
+                val pi = if (Build.VERSION.SDK_INT >= 28) pm.getPermissionInfo(permission, 0)
+                    else @Suppress("DEPRECATION") pm.getPermissionInfo(permission, 0)
+                protection = when (pi.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) {
+                    android.content.pm.PermissionInfo.PROTECTION_DANGEROUS -> "dangerous_runtime"
+                    android.content.pm.PermissionInfo.PROTECTION_NORMAL -> "normal_install"
+                    android.content.pm.PermissionInfo.PROTECTION_SIGNATURE -> "signature_or_privileged"
+                    else -> "special_or_other"
+                }
+            } catch (_: Exception) { }
+            rows.put(JSONObject().put("permission", permission).put("granted", granted).put("protection", protection))
+        }
+        return ok(JSONObject().put("permissions", rows).put("count", rows.length())
+            .put("note", "This lists permissions declared by this app, not every permission in Android or permissions granted to other apps."))
+    }
+
+    private fun checkPermission(permission: String): JSONObject {
+        if (!permission.startsWith("android.permission.") || permission.length > 180)
+            return JSONObject().put("ok", false).put("error", "Supply a fully qualified android.permission.* name.")
+        val declared = try {
+            val pi = if (Build.VERSION.SDK_INT >= 33)
+                appContext.packageManager.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong()))
+            else {
+                @Suppress("DEPRECATION")
+                appContext.packageManager.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+            }
+            pi.requestedPermissions?.contains(permission) == true
+        } catch (_: Exception) { false }
+        if (!declared) return ok(JSONObject().put("permission", permission).put("declared", false).put("granted", false))
+        return ok(JSONObject().put("permission", permission).put("declared", true)
+            .put("granted", appContext.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED))
     }
 
     private fun permissionStatus(): JSONObject {
