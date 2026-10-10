@@ -294,10 +294,10 @@ class DeviceTools(private val context: Context) {
         val commands = missing.joinToString("; ") { permission ->
             if (!permission.matches(Regex("[A-Za-z0-9_.]+"))) return@joinToString ""
             "pm grant $safePackage $permission && echo GRANTED:$permission || echo FAILED:$permission"
-        }.trim(';', ' ', '\\t')
+        }.trim(';', ' ', '\t')
         if (commands.isBlank()) return JSONObject().put("ok", false).put("error", "No valid grant commands were generated.")
         val result = runRootCommand("id; $commands", 25)
-        val isRoot = Regex("uid=0(?:\\\\(|\\\\s|$)").containsMatchIn(result.output)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
         val grantedRows = JSONArray()
         val failedRows = JSONArray()
         for (permission in missing) {
@@ -335,7 +335,7 @@ class DeviceTools(private val context: Context) {
             "appops set ${appContext.packageName} $operation allow && echo GRANTED:$operation || echo FAILED:$operation"
         }
         val result = runRootCommand("id; $commands", 25)
-        val isRoot = Regex("uid=0(?:\\\\(|\\\\s|$)").containsMatchIn(result.output)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
         val grantedRows = JSONArray()
         val failedRows = JSONArray()
         for (operation in operations) {
