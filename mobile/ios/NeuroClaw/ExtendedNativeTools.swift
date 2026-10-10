@@ -1080,12 +1080,15 @@ private final class NFCReaderFlow: NSObject, NFCNDEFReaderSessionDelegate {
 private final class NearbyInteractionTools: NSObject, NISessionDelegate {
     private static let shared = NearbyInteractionTools()
     private var session: NISession?
+    private var tokenSession: NISession?
+    private var peerToken: NIDiscoveryToken?
     private var lastMeasurement: [String: Any] = [:]
     private var lastError: String?
 
     static func localToken() -> (Int, [String: Any]) {
         guard NISession.isSupported else { return (501, ["error": "nearby_interaction_unsupported_on_device"]) }
-        guard let token = shared.session?.discoveryToken ?? NISession().discoveryToken else {
+        if shared.tokenSession == nil { shared.tokenSession = NISession() }
+        guard let token = shared.tokenSession?.discoveryToken else {
             return (500, ["error": "nearby_discovery_token_unavailable"])
         }
         do {
@@ -1107,6 +1110,7 @@ private final class NearbyInteractionTools: NSObject, NISessionDelegate {
         let session = NISession()
         session.delegate = shared
         shared.session = session
+        shared.peerToken = token
         shared.lastMeasurement = [:]
         shared.lastError = nil
         session.run(NINearbyPeerConfiguration(peerToken: token))
@@ -1123,6 +1127,7 @@ private final class NearbyInteractionTools: NSObject, NISessionDelegate {
         guard shared.session != nil else { return (200, ["stopped": true, "already_stopped": true]) }
         shared.session?.invalidate()
         shared.session = nil
+        shared.peerToken = nil
         shared.lastMeasurement = [:]
         return (200, ["stopped": true])
     }
@@ -1143,6 +1148,6 @@ private final class NearbyInteractionTools: NSObject, NISessionDelegate {
     }
 
     func sessionSuspensionEnded(_ session: NISession) {
-        session.run(NINearbyPeerConfiguration(peerToken: session.discoveryToken!))
+        if let peerToken { session.run(NINearbyPeerConfiguration(peerToken: peerToken)) }
     }
 }
