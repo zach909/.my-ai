@@ -51,6 +51,31 @@ enum ExtendedNativeTools {
         tool("screen_recording.get_capabilities", "Report screen/system-audio capture limits."),
         tool("accessibility.get_capabilities", "Report cross-app accessibility control limits."),
         tool("accounts.get_capabilities", "Report account-information access limits."),
+        tool("photos.get_status", "Read Photos library authorization status."),
+        tool("photos.save", "Save an image only through an explicit user-facing flow."),
+        tool("camera.capture_photo", "Capture a photo using a foreground camera interface."),
+        tool("microphone.record", "Record audio through a foreground, user-visible recording interface."),
+        tool("microphone.stop_recording", "Stop an active in-app recording session."),
+        tool("voice_activation.get_status", "Report voice activation and speech recognition availability."),
+        tool("contacts.create", "Create a contact after explicit user confirmation."),
+        tool("contacts.update", "Update a contact after explicit user confirmation."),
+        tool("calendar.create_event", "Create a calendar event after explicit user confirmation."),
+        tool("calendar.update_event", "Update a calendar event after explicit user confirmation."),
+        tool("calendar.delete_event", "Delete a calendar event after explicit user confirmation."),
+        tool("reminders.create", "Create a reminder after explicit user confirmation."),
+        tool("reminders.complete", "Mark a reminder completed after explicit user confirmation."),
+        tool("reminders.delete", "Delete a reminder after explicit user confirmation."),
+        tool("files.read_selected", "Read a user-selected document using a security-scoped URL."),
+        tool("files.export", "Export a file through a user-facing share or document picker."),
+        tool("network.local_discovery", "Discover local-network services only after iOS permission."),
+        tool("nearby.start_session", "Start a Nearby Interaction session where supported."),
+        tool("nearby.stop_session", "Stop an active Nearby Interaction session."),
+        tool("homekit.get_status", "Report HomeKit entitlement and authorization readiness."),
+        tool("homekit.list_homes", "List HomeKit homes after capability setup and authorization."),
+        tool("homekit.list_accessories", "List HomeKit accessories after capability setup and authorization."),
+        tool("homekit.control_accessory", "Control a HomeKit accessory with explicit confirmation."),
+        tool("notifications.get_status", "Read notification authorization settings."),
+        tool("voice_activation.request", "Explain user-driven Siri/Shortcuts setup for voice activation."),
         tool("capabilities.catalog", "List supported iOS tool coverage and system-enforced limitations.")
     ]
 
@@ -142,6 +167,17 @@ enum ExtendedNativeTools {
             return limitation("iOS does not expose a universal list of device accounts, passwords, or account credentials to apps.")
         case "capabilities.catalog":
             return (200, ["implemented_tools": NativeToolRegistry.definitions.compactMap { $0["name"] as? String } + definitions.compactMap { $0["name"] as? String }, "platform_limits": ["No unrestricted filesystem access", "No reading SMS/iMessage, call history, or arbitrary email inboxes", "No arbitrary cross-app screen capture or tap injection", "No changing system permissions or settings on behalf of the user", "Background execution is scheduled and system-controlled", "HealthKit/HomeKit require valid entitlements and user authorization"]])
+        case "photos.get_status":
+            return (200, ["authorization": PHPhotoLibrary.authorizationStatus(for: .readWrite).rawValue])
+        case "notifications.get_status":
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            return (200, ["authorization": settings.authorizationStatus.rawValue, "alerts": settings.alertSetting.rawValue, "sounds": settings.soundSetting.rawValue, "badges": settings.badgeSetting.rawValue])
+        case "voice_activation.get_status", "voice_activation.request":
+            return (200, ["speech_authorization": SFSpeechRecognizer.authorizationStatus().rawValue, "siri_setup": "Use App Intents and Shortcuts; apps cannot enable always-listening activation themselves."])
+        case "homekit.get_status", "homekit.list_homes", "homekit.list_accessories", "homekit.control_accessory":
+            return (501, ["error": "homekit_integration_not_implemented", "detail": "HomeKit capability and a foreground authorization flow are required. No accessory was changed."])
+        case "camera.capture_photo", "microphone.record", "microphone.stop_recording", "photos.save", "files.read_selected", "files.export", "contacts.create", "contacts.update", "calendar.create_event", "calendar.update_event", "calendar.delete_event", "reminders.create", "reminders.complete", "reminders.delete", "network.local_discovery", "nearby.start_session", "nearby.stop_session":
+            return (501, ["error": "foreground_or_write_flow_required", "detail": "This tool is registered, but its user-facing native flow or write handler is not implemented yet. No device data was changed."])
         default:
             return (404, ["error": "unknown_extended_tool", "name": name])
         }
