@@ -56,10 +56,13 @@ enum Permissions {
     static func requestAll() async -> [Status] {
         var out: [Status] = []
         out.append(Status(id: "location", label: "Location", result: await requestLocation()))
+        out.append(Status(id: "precise_location", label: "Precise Location", result: await requestPreciseLocation()))
         out.append(Status(id: "contacts", label: "Contacts", result: await requestContacts()))
-        out.append(Status(id: "calendars", label: "Calendars", result: await requestCalendar()))
+        out.append(Status(id: "calendars", label: "Calendars Read/Write", result: await requestCalendar()))
+        out.append(Status(id: "calendar_write_only", label: "Calendar Write Only", result: await requestCalendarWriteOnly()))
         out.append(Status(id: "reminders", label: "Reminders", result: await requestReminders()))
-        out.append(Status(id: "photos", label: "Photos", result: await requestPhotos()))
+        out.append(Status(id: "photos", label: "Photos Read/Write", result: await requestPhotos()))
+        out.append(Status(id: "photos_add_only", label: "Photos Add Only", result: await requestPhotosAddOnly()))
         out.append(Status(id: "microphone", label: "Microphone", result: await requestMicrophone()))
         out.append(Status(id: "camera", label: "Camera", result: await requestCamera()))
         out.append(Status(id: "speech", label: "Speech Recognition", result: await requestSpeechRecognition()))
@@ -130,6 +133,30 @@ enum Permissions {
         }
     }
 
+    /// Requests temporary precise-location access where supported.
+    private static let preciseLocationManager = CLLocationManager()
+
+    static func requestPreciseLocation() async -> String {
+        await withCheckedContinuation { continuation in
+            let manager = preciseLocationManager
+            guard manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse else {
+                continuation.resume(returning: "Location permission must be granted first")
+                return
+            }
+            if #available(iOS 14.0, *) {
+                guard manager.accuracyAuthorization != .fullAccuracy else {
+                    continuation.resume(returning: "Already precise")
+                    return
+                }
+                manager.requestTemporaryFullAccuracyAuthorization(withPurposeKey: "AgentTask") { error in
+                    continuation.resume(returning: error == nil ? "Precise location granted or already allowed" : (error?.localizedDescription ?? "Precise location not granted"))
+                }
+            } else {
+                continuation.resume(returning: "Precise-location authorization is not separately available on this iOS version")
+            }
+        }
+    }
+
     // MARK: Contacts
 
     static func requestContacts() async -> String {
@@ -152,6 +179,17 @@ enum Permissions {
         }
     }
 
+    static func requestCalendarWriteOnly() async -> String {
+        guard #available(iOS 17.0, *) else {
+            return "Not separately available before iOS 17; use Calendar access"
+        }
+        return await withCheckedContinuation { continuation in
+            EKEventStore().requestWriteOnlyAccessToEvents { granted, error in
+                continuation.resume(returning: granted ? "Granted" : (error?.localizedDescription ?? "Denied"))
+            }
+        }
+    }
+
     static func requestReminders() async -> String {
         await withCheckedContinuation { continuation in
             EKEventStore().requestAccess(to: .reminder) { granted, error in
@@ -167,6 +205,14 @@ enum Permissions {
             // .readWrite covers NSPhotoLibraryUsageDescription; NSPhotoLibraryAddUsageDescription
             // (save-only) is declared too, for any save-to-library feature added later.
             PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                continuation.resume(returning: describePhotos(status))
+            }
+        }
+    }
+
+    static func requestPhotosAddOnly() async -> String {
+        await withCheckedContinuation { continuation in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
                 continuation.resume(returning: describePhotos(status))
             }
         }
