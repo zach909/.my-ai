@@ -329,7 +329,7 @@ enum ExtendedNativeTools {
         case "network.local_discovery":
             return await LocalNetworkDiscovery.discover(arguments)
         case "homekit.get_status":
-            return HomeKitTools.status()
+            return await HomeKitTools.status()
         case "homekit.list_homes":
             return await HomeKitTools.listHomes()
         case "homekit.list_accessories":
