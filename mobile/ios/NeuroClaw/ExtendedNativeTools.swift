@@ -15,6 +15,7 @@ import MediaPlayer
 import Photos
 import Speech
 import UIKit
+import UniformTypeIdentifiers
 import UserNotifications
 
 /// Expanded public-API tools. iOS intentionally does not expose some system data/actions;
@@ -142,6 +143,9 @@ enum ExtendedNativeTools {
         case "bluetooth.scan":
             properties = ["seconds": ["type": "number", "minimum": 1, "maximum": 10]]
             required = []
+        case "files.export":
+            properties = ["filename": ["type": "string"], "data_base64": ["type": "string"]]
+            required = ["data_base64"]
         default:
             properties = [:]
             required = []
@@ -211,8 +215,8 @@ enum ExtendedNativeTools {
             }
         case "siri.get_status":
             return (200, ["note": "Use App Intents and Shortcuts for Siri integration. iOS does not provide a general Siri permission status API for arbitrary app automation."])
-        case "files.pick":
-            return (409, ["error": "document_picker_requires_foreground_ui", "instruction": "Open the app's file picker UI. iOS requires a user-facing document picker; this HTTP bridge cannot present it safely by itself."])
+        case "files.pick", "files.read_selected":
+            return await DocumentPickerFlow.pickFile()
         case "files.get_access_model":
             return (200, ["model": "sandboxed", "supported": ["UIDocumentPickerViewController", "security-scoped URLs", "app container"], "not_supported": "Unrestricted filesystem access"])
         case "local_network.get_status":
@@ -296,6 +300,10 @@ enum ExtendedNativeTools {
             return (200, ["speech_authorization": SFSpeechRecognizer.authorizationStatus().rawValue, "siri_setup": "Use App Intents and Shortcuts; apps cannot enable always-listening activation themselves."])
         case "photos.save":
             return await savePhoto(arguments)
+        case "files.export":
+            return await DocumentPickerFlow.exportFile(arguments)
+        case "camera.capture_photo":
+            return await CameraCaptureFlow.capturePhoto()
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -314,7 +322,7 @@ enum ExtendedNativeTools {
             return await deleteReminder(arguments)
         case "homekit.get_status", "homekit.list_homes", "homekit.list_accessories", "homekit.control_accessory":
             return (501, ["error": "homekit_requires_foreground_setup", "detail": "HomeKit requires the entitlement and an app-owned manager lifecycle. No accessory was changed."])
-        case "camera.capture_photo", "microphone.record", "microphone.stop_recording", "photos.save", "files.read_selected", "files.export", "network.local_discovery", "nearby.start_session", "nearby.stop_session":
+        case "microphone.record", "microphone.stop_recording", "network.local_discovery", "nearby.start_session", "nearby.stop_session":
             return (409, ["error": "foreground_or_capability_flow_required", "detail": "This operation requires a foreground UIKit flow, a configured entitlement, or a supported user-selected resource. No device data was changed."])
         default:
             return (404, ["error": "unknown_extended_tool", "name": name])
