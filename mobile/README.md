@@ -165,6 +165,8 @@ The Android app includes optional root-aware tools for devices that are already 
 - **Check root indicators** reports visible `su`/Magisk indicators without invoking `su`; these indicators are not proof that root works.
 - **Request root authorization** runs only `id` through `su` so the installed root manager can show its authorization UI and the app can verify whether the effective UID is 0.
 - **Audit root permissions** reports effective identity, SELinux mode, build flags, Linux capability masks, and a bounded mount list.
-- The agent bridge exposes read-only root tools for installed package paths, process inventory, system properties, mounts, and a bounded recent log excerpt. System logs may contain private data.
+- The agent bridge exposes read-only root diagnostics for installed package paths, process inventory, system properties, mounts, and a bounded recent log excerpt. System logs may contain private data.
+- **Grant eligible declared runtime permissions using root** explicitly attempts each permission in the installed manifest that Android classifies as dangerous and that is not already granted. Signature, privileged, role-restricted, and OEM-controlled permissions are skipped.
+- **Grant eligible special AppOps using root** explicitly attempts a fixed list of special-access AppOps such as overlay, write-settings, usage access, all-files access, notifications, and background execution. Android/OEM versions may reject operations, and a successful AppOps write does not guarantee the associated feature is enabled.
 
 The app does not unlock the bootloader, root the phone, bypass the root manager, or automatically obtain Android signature/privileged permissions. SELinux, Android's permission model, hardware-backed security, and vendor restrictions can still deny operations even to a root process. These source changes have not been built or tested on a rooted device.
