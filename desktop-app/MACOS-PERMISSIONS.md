@@ -49,3 +49,12 @@ The Electron preload exposes three narrowly scoped helpers:
 These are renderer-facing APIs, not a completed permission dashboard. A UI must call them when the user enables a feature, display the returned state accurately, and handle OS-version differences. Do not use the status helper to imply access to Contacts, Calendar, files, or other categories that it cannot query directly.
 
 The entitlement file configured for Electron's hardened runtime is not a permission grant. Distribution still requires macOS build testing and, for external distribution, appropriate code signing and notarization.
+
+
+## Extended protected-resource catalog
+
+The runtime registry also includes Apple's documented TCC service identifiers that are not separate general-purpose permission prompts in Electron: `AppleEvents`, `AudioCapture`, `Siri`, `UserTracking`, `SystemPolicyAppBundles`, `SystemPolicyAppData`, `SystemPolicySysAdminFiles`, `VirtualMachineNetworking`, `VoiceBanking`, `WebBrowserPublicKeyCredential`, and `PostEvent`. Calendar write-only/full-access and Reminders full-access are listed separately because modern macOS distinguishes authorization levels. The catalog also has explicit user-selected file and folder entries.
+
+Apple's documented service list is a list of protected-resource services, not a promise that every service has a public request API or a dedicated Settings pane. For services without a supported request API, the tool reports that a feature-specific native implementation or user/admin action is required. It must never report a grant based only on a purpose string, entitlement, catalog entry, or Settings link.
+
+Official reference: [Apple — Resetting access to protected resources in macOS](https://developer.apple.com/documentation/Xcode/resetting-access-to-protected-resources-in-macOS).
