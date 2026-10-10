@@ -203,7 +203,10 @@ function permissionGrantKey(permission, frameUrl) {
 }
 
 function installPermissionHandlers() {
-  const appSession = session.defaultSession;
+  const appSession = session && session.defaultSession;
+  // Electron always provides defaultSession in production. Tests and minimal
+  // embeddings may omit it, so leave permissions unavailable rather than fail startup.
+  if (!appSession || typeof appSession.setPermissionRequestHandler !== 'function') return;
   appSession.setPermissionRequestHandler(async (webContents, permission, callback, details = {}) => {
     const requestingUrl = details.requestingUrl ||
       (webContents && webContents.getURL ? webContents.getURL() : '');
@@ -252,7 +255,7 @@ function installPermissionHandlers() {
     }
   });
 
-  appSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+  if (typeof appSession.setPermissionCheckHandler === 'function') appSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
     const origin = requestingOrigin || (webContents && webContents.getURL ? webContents.getURL() : '');
     if (!isTrustedAppFrame(origin)) return false;
     if (!WEB_PERMISSION_LABELS[permission]) return false;
@@ -572,9 +575,8 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
       }
       case 'processList': {
         if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
-        const { stdout } = await new Promise((resolve, reject) => {
-          execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
-          resolve({ stdout: execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 }) });
+        const stdout = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], {
+          encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024,
         });
         return { success: true, output: stdout };
       }
