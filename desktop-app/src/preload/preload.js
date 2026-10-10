@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // System Information
   getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
+
+  // macOS permission status and consent/settings helpers.
+  getMacOSPermissionsStatus: () => ipcRenderer.invoke('macos-permissions-status'),
+  requestMacOSMediaAccess: (mediaType) => ipcRenderer.invoke('macos-request-media-access', mediaType),
+  openMacOSPrivacySettings: (permission) => ipcRenderer.invoke('macos-open-privacy-settings', permission),
   
   // Process Management
   spawnProcess: (command, args, options) => 
