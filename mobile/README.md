@@ -156,3 +156,15 @@ npm run build:phone-brain     # -> mobile/brain/bundle/neuroclaw-brain.js
 - **Not trained yet.** Until the network is trained to write replies, the phone answers "one brain has nothing trained to say here yet." plus what OneBrain recalls, the same as the PC does.
 - **Saved state is about 4 MB.** It is saved when the app goes to the background, not after every message.
 - **The camera captures only when you tap.** There is no background recording. If you point it at people, they are in your training data, so ask them first.
+
+
+## Root access on Android
+
+The Android app includes optional root-aware tools for devices that are already rooted. **Unlocking the bootloader alone does not grant root**; the device needs a working root implementation such as a supported `su` manager, and that manager must authorize NeuroClaw. Bootloader unlocking commonly wipes device data and can weaken device security.
+
+- **Check root indicators** reports visible `su`/Magisk indicators without invoking `su`; these indicators are not proof that root works.
+- **Request root authorization** runs only `id` through `su` so the installed root manager can show its authorization UI and the app can verify whether the effective UID is 0.
+- **Audit root permissions** reports effective identity, SELinux mode, build flags, Linux capability masks, and a bounded mount list.
+- The agent bridge exposes read-only root tools for installed package paths, process inventory, system properties, mounts, and a bounded recent log excerpt. System logs may contain private data.
+
+The app does not unlock the bootloader, root the phone, bypass the root manager, or automatically obtain Android signature/privileged permissions. SELinux, Android's permission model, hardware-backed security, and vendor restrictions can still deny operations even to a root process. These source changes have not been built or tested on a rooted device.
