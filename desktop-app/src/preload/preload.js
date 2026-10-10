@@ -196,6 +196,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openPath: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'openPath', args),
     systemSettings: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'systemSettings', args),
     adminOperation: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'adminOperation', args),
+
   },
 
   // Event Listeners
