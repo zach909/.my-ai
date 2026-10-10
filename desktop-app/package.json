@@ -1,7 +1,7 @@
 {
   "name": "neuroclaw-desktop",
   "version": "1.0.0",
-  "description": "NeuroClaw \u2014 local-first AI agent, powered by the OneBrain neural mesh",
+  "description": "NeuroClaw — local-first AI agent, powered by the OneBrain neural mesh",
   "main": "src/main/main.js",
   "scripts": {
     "start": "node scripts/doctor.mjs && electron .",
@@ -63,7 +63,29 @@
         }
       ],
       "icon": "assets/icon.icns",
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "extendInfo": {
+        "NSLocationWhenInUseUsageDescription": "NeuroClaw uses your location only when you enable location-aware features.",
+        "NSContactsUsageDescription": "NeuroClaw accesses contacts only when you enable a feature that needs them.",
+        "NSCalendarsUsageDescription": "NeuroClaw accesses calendars only when you enable calendar features.",
+        "NSRemindersUsageDescription": "NeuroClaw accesses reminders only when you enable reminder features.",
+        "NSPhotoLibraryUsageDescription": "NeuroClaw accesses your photo library only when you choose a photo-based feature.",
+        "NSCameraUsageDescription": "NeuroClaw uses the camera only when you start a camera feature.",
+        "NSMicrophoneUsageDescription": "NeuroClaw uses the microphone only when you start a voice feature.",
+        "NSSpeechRecognitionUsageDescription": "NeuroClaw uses speech recognition only when you enable voice transcription.",
+        "NSBluetoothAlwaysUsageDescription": "NeuroClaw uses Bluetooth only when you enable a Bluetooth feature.",
+        "NSLocalNetworkUsageDescription": "NeuroClaw uses your local network to discover or connect to devices you explicitly choose.",
+        "NSAppleEventsUsageDescription": "NeuroClaw can automate other apps only when you enable an automation feature.",
+        "NSAppleMusicUsageDescription": "NeuroClaw accesses media and Apple Music data only when you enable a media feature.",
+        "NSHomeKitUsageDescription": "NeuroClaw accesses HomeKit accessories only when you enable a smart-home feature.",
+        "NSDesktopFolderUsageDescription": "NeuroClaw accesses Desktop files only when you grant access.",
+        "NSDocumentsFolderUsageDescription": "NeuroClaw accesses Documents files only when you grant access.",
+        "NSDownloadsFolderUsageDescription": "NeuroClaw accesses Downloads files only when you grant access.",
+        "NSNetworkVolumesUsageDescription": "NeuroClaw accesses network volumes only when you grant access.",
+        "NSRemovableVolumesUsageDescription": "NeuroClaw accesses removable volumes only when you grant access."
+      },
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
     },
     "linux": {
       "target": [
