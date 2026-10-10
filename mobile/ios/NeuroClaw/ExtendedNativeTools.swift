@@ -4,9 +4,11 @@ import CoreBluetooth
 import CoreLocation
 import CoreMotion
 import CoreTelephony
+import Contacts
 import EventKit
 import Foundation
 import HealthKit
+import HomeKit
 import Intents
 import LocalAuthentication
 import MediaPlayer
@@ -271,13 +273,132 @@ enum ExtendedNativeTools {
             return (200, ["authorization": settings.authorizationStatus.rawValue, "alerts": settings.alertSetting.rawValue, "sounds": settings.soundSetting.rawValue, "badges": settings.badgeSetting.rawValue])
         case "voice_activation.get_status", "voice_activation.request":
             return (200, ["speech_authorization": SFSpeechRecognizer.authorizationStatus().rawValue, "siri_setup": "Use App Intents and Shortcuts; apps cannot enable always-listening activation themselves."])
+        case "contacts.create":
+            return await createContact(arguments)
+        case "contacts.update":
+            return await updateContact(arguments)
+        case "calendar.create_event":
+            return await saveCalendarEvent(arguments, identifier: nil)
+        case "calendar.update_event":
+            return await saveCalendarEvent(arguments, identifier: arguments["identifier"] as? String)
+        case "calendar.delete_event":
+            return await deleteCalendarEvent(arguments)
+        case "reminders.create":
+            return await saveReminder(arguments)
+        case "reminders.complete":
+            return await completeReminder(arguments)
+        case "reminders.delete":
+            return await deleteReminder(arguments)
         case "homekit.get_status", "homekit.list_homes", "homekit.list_accessories", "homekit.control_accessory":
-            return (501, ["error": "homekit_integration_not_implemented", "detail": "HomeKit capability and a foreground authorization flow are required. No accessory was changed."])
-        case "camera.capture_photo", "microphone.record", "microphone.stop_recording", "photos.save", "files.read_selected", "files.export", "contacts.create", "contacts.update", "calendar.create_event", "calendar.update_event", "calendar.delete_event", "reminders.create", "reminders.complete", "reminders.delete", "network.local_discovery", "nearby.start_session", "nearby.stop_session":
-            return (501, ["error": "foreground_or_write_flow_required", "detail": "This tool is registered, but its user-facing native flow or write handler is not implemented yet. No device data was changed."])
+            return (501, ["error": "homekit_requires_foreground_setup", "detail": "HomeKit requires the entitlement and an app-owned manager lifecycle. No accessory was changed."])
+        case "camera.capture_photo", "microphone.record", "microphone.stop_recording", "photos.save", "files.read_selected", "files.export", "network.local_discovery", "nearby.start_session", "nearby.stop_session":
+            return (409, ["error": "foreground_or_capability_flow_required", "detail": "This operation requires a foreground UIKit flow, a configured entitlement, or a supported user-selected resource. No device data was changed."])
         default:
             return (404, ["error": "unknown_extended_tool", "name": name])
         }
+    }
+
+
+    private static func contactsStoreWithAccess() async -> CNContactStore? {
+        let store = CNContactStore()
+        let status = CNContactStore.authorizationStatus(for: .contacts)
+        if status == .authorized { return store }
+        guard status == .notDetermined else { return nil }
+        let granted = await withCheckedContinuation { c in store.requestAccess(for: .contacts) { ok, _ in c.resume(returning: ok) } }
+        return granted ? store : nil
+    }
+
+    private static func createContact(_ a: [String: Any]) async -> (Int, [String: Any]) {
+        guard let given = a["given_name"] as? String, !given.isEmpty else { return (400, ["error": "given_name_required"]) }
+        guard let store = await contactsStoreWithAccess() else { return (403, ["error": "contacts_permission_denied"]) }
+        let c = CNMutableContact(); c.givenName = given; c.familyName = a["family_name"] as? String ?? ""
+        if let p = a["phone"] as? String, !p.isEmpty { c.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: p))] }
+        if let e = a["email"] as? String, !e.isEmpty { c.emailAddresses = [CNLabeledValue(label: CNLabelHome, value: e as NSString)] }
+        let req = CNSaveRequest(); req.add(c, toContainerWithIdentifier: nil)
+        do { try store.execute(req); return (200, ["ok": true, "identifier": c.identifier]) }
+        catch { return (500, ["error": "contact_create_failed", "detail": error.localizedDescription]) }
+    }
+
+    private static func updateContact(_ a: [String: Any]) async -> (Int, [String: Any]) {
+        guard let id = a["identifier"] as? String, !id.isEmpty else { return (400, ["error": "identifier_required"]) }
+        guard let store = await contactsStoreWithAccess() else { return (403, ["error": "contacts_permission_denied"]) }
+        do {
+            let original = try store.unifiedContact(withIdentifier: id, keysToFetch: [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactPhoneNumbersKey, CNContactEmailAddressesKey] as [CNKeyDescriptor])
+            let c = original.mutableCopy() as! CNMutableContact
+            if let v = a["given_name"] as? String { c.givenName = v }
+            if let v = a["family_name"] as? String { c.familyName = v }
+            if let v = a["phone"] as? String { c.phoneNumbers = [CNLabeledValue(label: CNLabelPhoneNumberMain, value: CNPhoneNumber(stringValue: v))] }
+            if let v = a["email"] as? String { c.emailAddresses = [CNLabeledValue(label: CNLabelHome, value: v as NSString)] }
+            let req = CNSaveRequest(); req.update(c); try store.execute(req)
+            return (200, ["ok": true, "identifier": id])
+        } catch { return (500, ["error": "contact_update_failed", "detail": error.localizedDescription]) }
+    }
+
+    private static func eventStoreWithAccess(_ kind: EKEntityType) async -> EKEventStore? {
+        let store = EKEventStore()
+        let status = EKEventStore.authorizationStatus(for: kind)
+        if status == .authorized { return store }
+        if #available(iOS 17.0, *) {
+            if status == .fullAccess || (kind == .event && status == .writeOnly) { return store }
+        }
+        guard status == .notDetermined else { return nil }
+        let granted = await withCheckedContinuation { c in store.requestAccess(to: kind) { ok, _ in c.resume(returning: ok) } }
+        return granted ? store : nil
+    }
+
+    private static func saveCalendarEvent(_ a: [String: Any], identifier: String?) async -> (Int, [String: Any]) {
+        guard let store = await eventStoreWithAccess(.event) else { return (403, ["error": "calendar_permission_denied"]) }
+        let event: EKEvent
+        if let id = identifier {
+            guard let found = store.event(withIdentifier: id) else { return (404, ["error": "event_not_found"]) }
+            event = found
+        } else {
+            guard let title = a["title"] as? String, !title.isEmpty, dateArg(a["start"]) != nil, dateArg(a["end"]) != nil else { return (400, ["error": "title_and_valid_start_end_required"]) }
+            event = EKEvent(eventStore: store); event.calendar = store.defaultCalendarForNewEvents
+        }
+        if let v = a["title"] as? String { event.title = v }
+        if let v = dateArg(a["start"]) { event.startDate = v }
+        if let v = dateArg(a["end"]) { event.endDate = v }
+        if let v = a["notes"] as? String { event.notes = v }
+        if let v = a["location"] as? String { event.location = v }
+        guard let start = event.startDate, let end = event.endDate, end > start else { return (400, ["error": "end_must_be_after_start"]) }
+        do { try store.save(event, span: .thisEvent); return (200, ["ok": true, "identifier": event.eventIdentifier ?? ""]) }
+        catch { return (500, ["error": "calendar_save_failed", "detail": error.localizedDescription]) }
+    }
+
+    private static func deleteCalendarEvent(_ a: [String: Any]) async -> (Int, [String: Any]) {
+        guard let id = a["identifier"] as? String, !id.isEmpty else { return (400, ["error": "identifier_required"]) }
+        guard let store = await eventStoreWithAccess(.event) else { return (403, ["error": "calendar_permission_denied"]) }
+        guard let event = store.event(withIdentifier: id) else { return (404, ["error": "event_not_found"]) }
+        do { try store.remove(event, span: .thisEvent); return (200, ["ok": true, "identifier": id]) }
+        catch { return (500, ["error": "calendar_delete_failed", "detail": error.localizedDescription]) }
+    }
+
+    private static func saveReminder(_ a: [String: Any]) async -> (Int, [String: Any]) {
+        guard let title = a["title"] as? String, !title.isEmpty else { return (400, ["error": "title_required"]) }
+        guard let store = await eventStoreWithAccess(.reminder) else { return (403, ["error": "reminders_permission_denied"]) }
+        let r = EKReminder(eventStore: store); r.title = title; r.calendar = store.defaultCalendarForNewReminders()
+        r.notes = a["notes"] as? String
+        if let due = dateArg(a["due"]) { r.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due) }
+        do { try store.save(r, commit: true); return (200, ["ok": true, "identifier": r.calendarItemIdentifier]) }
+        catch { return (500, ["error": "reminder_create_failed", "detail": error.localizedDescription]) }
+    }
+
+    private static func completeReminder(_ a: [String: Any]) async -> (Int, [String: Any]) {
+        guard let id = a["identifier"] as? String, !id.isEmpty else { return (400, ["error": "identifier_required"]) }
+        guard let store = await eventStoreWithAccess(.reminder) else { return (403, ["error": "reminders_permission_denied"]) }
+        guard let r = store.calendarItem(withIdentifier: id) as? EKReminder else { return (404, ["error": "reminder_not_found"]) }
+        r.isCompleted = true; r.completionDate = Date()
+        do { try store.save(r, commit: true); return (200, ["ok": true, "identifier": id, "completed": true]) }
+        catch { return (500, ["error": "reminder_complete_failed", "detail": error.localizedDescription]) }
+    }
+
+    private static func deleteReminder(_ a: [String: Any]) async -> (Int, [String: Any]) {
+        guard let id = a["identifier"] as? String, !id.isEmpty else { return (400, ["error": "identifier_required"]) }
+        guard let store = await eventStoreWithAccess(.reminder) else { return (403, ["error": "reminders_permission_denied"]) }
+        guard let r = store.calendarItem(withIdentifier: id) as? EKReminder else { return (404, ["error": "reminder_not_found"]) }
+        do { try store.remove(r, commit: true); return (200, ["ok": true, "identifier": id]) }
+        catch { return (500, ["error": "reminder_delete_failed", "detail": error.localizedDescription]) }
     }
 
     private static func limitation(_ message: String) -> (Int, [String: Any]) { (501, ["error": "ios_platform_limit", "detail": message]) }
