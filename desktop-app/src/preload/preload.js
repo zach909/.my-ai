@@ -80,6 +80,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     'webBrowserPublicKeyCredentialService',
     'energyKitGuidanceService',
     'externalCameraMediaService',
+    'mainCamera',
     'systemExtensionApproval',
     'driverExtensionApproval',
     'networkExtensionConfiguration',
