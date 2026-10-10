@@ -27,6 +27,11 @@ import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndS
 import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/core/wiki-remote.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
+import { startAutoOffload } from '../models && skills/core/store-offload.js';
+import { startScreenDonor } from '../models && skills/core/data-donor.js';
+import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
+import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
+import { SHARING_PAGE } from './sharing-page.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
 import {
@@ -256,13 +261,13 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <title>Neuroclaw Terminal</title>
 <style>
   :root {
-    --primary: #4a7dff;
-    --primary-light: #7d9fff;
-    --secondary: #e8eaed;
-    --bg-dark: #0b0d10;
-    --bg-light: #14171c;
-    --border: #232830;
-    --text: #e8eaed;
+    --primary: #ff9a84;
+    --primary-light: #ffc4b4;
+    --secondary: #f8ede9;
+    --bg-dark: #110c0e;
+    --bg-light: #1b1216;
+    --border: rgba(255, 228, 218, 0.2);
+    --text: #f8ede9;
     --blur-radius: 40px;
     --saturation: 1.8;
     --contrast: 1.15;
@@ -273,7 +278,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   body {
     background: var(--bg-dark);
     color: var(--text);
-    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-family: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
     height: 100vh;
     display: flex;
     flex-direction: column;
@@ -284,7 +289,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     background: rgba(20, 23, 28, 0.7);
     padding: 16px 24px;
     border-bottom: 1px solid var(--border);
-    border-radius: 0 0 20px 20px;
+    border-radius: 0 0 34px 34px;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -331,8 +336,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   .message {
     position: relative;
     max-width: 85%;
-    padding: 12px 16px;
-    border-radius: 16px;
+    padding: 12px 18px;
+    border-radius: 24px;
     line-height: 1.6;
     font-size: 14px;
     animation: morphicExpand 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -346,7 +351,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     content: '';
     position: absolute;
     inset: 0;
-    border-radius: 16px;
+    border-radius: 24px;
     background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
     pointer-events: none;
   }
@@ -403,7 +408,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   .edit-actions button:hover {
     background: var(--primary-light);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(74, 125, 255, 0.3);
+    box-shadow: 0 4px 12px rgba(255, 154, 132, 0.3);
   }
 
   .edited-tag {
@@ -417,7 +422,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     margin-top: 10px;
     border-left: 3px solid var(--primary);
     padding: 8px 12px;
-    background: rgba(74, 125, 255, 0.05);
+    background: rgba(255, 154, 132, 0.05);
     border-radius: 0 8px 8px 0;
     font-size: 12px;
     color: var(--text);
@@ -463,8 +468,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 
   .message.user {
     align-self: flex-end;
-    background: rgba(74, 125, 255, 0.1);
-    border-color: rgba(74, 125, 255, 0.3);
+    background: rgba(255, 154, 132, 0.1);
+    border-color: rgba(255, 154, 132, 0.3);
   }
 
   .message.ai {
@@ -474,8 +479,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 
   .message.system {
     align-self: center;
-    background: rgba(74, 125, 255, 0.05);
-    border-color: rgba(74, 125, 255, 0.2);
+    background: rgba(255, 154, 132, 0.05);
+    border-color: rgba(255, 154, 132, 0.2);
     color: var(--text);
     opacity: 0.8;
     font-style: italic;
@@ -511,11 +516,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     background: rgba(11, 13, 16, 0.5);
     border: 1px solid var(--border);
     color: var(--text);
-    padding: 12px 16px;
+    padding: 12px 20px;
     font-family: inherit;
     font-size: 14px;
     outline: none;
-    border-radius: 12px;
+    border-radius: 999px;
     transition: all 0.2s;
     backdrop-filter: blur(10px);
   }
@@ -523,8 +528,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   #input:focus {
     border-color: var(--primary);
     background: rgba(11, 13, 16, 0.7);
-    box-shadow: 0 0 0 3px rgba(74, 125, 255, 0.1),
-                0 2px 8px rgba(74, 125, 255, 0.15);
+    box-shadow: 0 0 0 3px rgba(255, 154, 132, 0.1),
+                0 2px 8px rgba(255, 154, 132, 0.15);
   }
 
   #input:disabled {
@@ -537,27 +542,30 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     cursor: pointer;
     font-family: inherit;
     font-size: 14px;
-    border-radius: 12px;
+    border-radius: 999px;
+    backdrop-filter: blur(12px);
     transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     font-weight: 500;
     letter-spacing: 0.3px;
   }
 
   #send-btn {
-    background: var(--primary);
-    color: white;
-    padding: 12px 24px;
-    box-shadow: 0 4px 12px rgba(74, 125, 255, 0.3);
+    background: rgba(255, 154, 132, 0.16);
+    color: var(--primary-light);
+    border: 1px solid rgba(255, 154, 132, 0.5);
+    padding: 12px 26px;
+    box-shadow: 0 1px 0 rgba(255, 220, 208, 0.3) inset, 0 8px 22px rgba(255, 120, 95, 0.18);
   }
 
   #send-btn:hover {
-    background: var(--primary-light);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(74, 125, 255, 0.4);
+    background: rgba(255, 154, 132, 0.28);
+    border-color: rgba(255, 154, 132, 0.8);
+    transform: translateY(-2px) scale(1.03);
+    box-shadow: 0 1px 0 rgba(255, 220, 208, 0.4) inset, 0 10px 28px rgba(255, 120, 95, 0.3);
   }
 
   #send-btn:active {
-    transform: translateY(0);
+    transform: translateY(0) scale(0.95);
   }
 
   #send-btn:disabled {
@@ -567,7 +575,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   }
 
   #clear-btn {
-    background: rgba(232, 234, 237, 0.1);
+    background: rgba(255, 238, 230, 0.07);
     color: var(--text);
     padding: 8px 16px;
     border: 1px solid var(--border);
@@ -575,7 +583,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   }
 
   #clear-btn:hover {
-    background: rgba(74, 125, 255, 0.2);
+    background: rgba(255, 154, 132, 0.2);
     border-color: var(--primary);
     color: var(--primary);
     opacity: 1;
@@ -637,106 +645,12 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   }
 
   ::-webkit-scrollbar-thumb {
-    background: rgba(74, 125, 255, 0.3);
+    background: rgba(255, 154, 132, 0.3);
     border-radius: 4px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(74, 125, 255, 0.5);
-  }
-
-  #background-canvas {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, rgba(11, 13, 16, 0.95) 0%, rgba(14, 17, 24, 0.95) 100%);
-    pointer-events: none;
-    z-index: 0;
-    overflow: hidden;
-  }
-
-  .ring-container {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 300px;
-    height: 300px;
-    perspective: 1200px;
-  }
-
-  .ring {
-    position: relative;
-    width: 100%;
-    height: 100%;
-    animation: spinRingVertical 8s linear infinite;
-    transform-style: preserve-3d;
-  }
-
-  .ring-element {
-    position: absolute;
-    width: 200px;
-    height: 200px;
-    border: 3px solid var(--primary);
-    border-radius: 50%;
-    top: 50%;
-    left: 50%;
-    transform: translateX(-50%) translateY(-50%);
-    opacity: 0.3;
-    box-shadow: 0 0 30px rgba(74, 125, 255, 0.5), inset 0 0 30px rgba(74, 125, 255, 0.2);
-  }
-
-  .ring-element:nth-child(1) {
-    width: 200px;
-    height: 200px;
-    animation: orbitRing 8s linear infinite;
-  }
-
-  .ring-element:nth-child(2) {
-    width: 150px;
-    height: 150px;
-    opacity: 0.5;
-    animation: orbitRing 6s linear infinite reverse;
-  }
-
-  .ring-element:nth-child(3) {
-    width: 100px;
-    height: 100px;
-    opacity: 0.7;
-    animation: orbitRing 4s linear infinite;
-  }
-
-  .sphere {
-    position: absolute;
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    top: 50%;
-    left: 50%;
-    transform: translateX(-50%) translateY(-50%) translateZ(0);
-    background: radial-gradient(135deg at 35% 35%, rgba(74, 125, 255, 0.9) 0%, rgba(74, 125, 255, 0.5) 50%, rgba(74, 125, 255, 0.1) 100%);
-    box-shadow: 0 0 40px rgba(74, 125, 255, 0.8),
-                inset -8px -8px 20px rgba(0, 0, 0, 0.4),
-                inset 4px 4px 12px rgba(255, 255, 255, 0.2);
-    animation: sphereFloat 3s ease-in-out infinite;
-  }
-
-  body {
-    position: relative;
-  }
-
-  body::before {
-    content: '';
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, rgba(11, 13, 16, 0.95) 0%, rgba(14, 17, 24, 0.95) 100%);
-    z-index: 0;
-    pointer-events: none;
+    background: rgba(255, 154, 132, 0.5);
   }
 
   #header, #chat-container, #input-area {
@@ -744,33 +658,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     z-index: 1;
   }
 
-  @keyframes spinRingVertical {
-    from { transform: rotateY(0deg); }
-    to { transform: rotateY(360deg); }
-  }
-
-  @keyframes orbitRing {
-    from { transform: translateX(-50%) translateY(-50%) rotateX(90deg) rotateZ(0deg); }
-    to { transform: translateX(-50%) translateY(-50%) rotateX(90deg) rotateZ(360deg); }
-  }
-
-  @keyframes sphereFloat {
-    0%, 100% { transform: translateX(-50%) translateY(-50%) translateZ(0) scale(1); }
-    50% { transform: translateX(-50%) translateY(-50%) translateZ(20px) scale(1.05); }
-  }
 </style>
 </head>
 <body>
-<div id="background-canvas">
-  <div class="ring-container">
-    <div class="ring">
-      <div class="ring-element"></div>
-      <div class="ring-element"></div>
-      <div class="ring-element"></div>
-    </div>
-    <div class="sphere"></div>
-  </div>
-</div>
 <div id="header">
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
   <div style="display:flex; align-items:center; gap:15px;">
@@ -1247,7 +1137,7 @@ export function isSharedChatPublicRoute(pathname: string, method: string): boole
 // Only these prefixes are served: dist/ also holds the compiled backend.
 const DASHBOARD_DIR = fileURLToPath(new URL('..', import.meta.url));
 const DASHBOARD_PAGES = ['/app', '/builder', '/desktop'];
-const DASHBOARD_FILES = new Set(['/favicon.svg', '/icon.png', '/icon.svg', '/icons.svg', '/robots.txt', '/welcome.html']);
+const DASHBOARD_FILES = new Set(['/favicon.svg', '/robots.txt', '/welcome.html']);
 const DASHBOARD_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
@@ -1293,6 +1183,8 @@ async function serveDashboard(req: http.IncomingMessage, res: http.ServerRespons
   let body: Buffer;
   try { body = await readFile(file); } catch { return false; }
   const ext = path.extname(file).toLowerCase();
+  // Every page gets the ambient ring behind it, the built dashboard included.
+  if (ext === '.html') body = Buffer.from(injectAmbient(body.toString('utf8')), 'utf8');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Content-Security-Policy', DASHBOARD_CSP);
@@ -1427,6 +1319,7 @@ export class WebServer {
   private runner: NeuroclawRunner;
   private launcher: AppLauncher;
   private server: http.Server | null = null;
+  private stopScreenDonor: (() => void) | null = null;
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
@@ -1566,6 +1459,18 @@ export class WebServer {
     // generic store catalogue. Pull their manifests too so uploaded packages
     // are visible on a fresh device; payloads remain on-demand.
     await pullSkillUploadCatalog().catch(() => {});
+    // Downloaded skills, plugins and mods that nothing has used for a while are
+    // moved off this device (once the store branch is confirmed to hold them)
+    // and download again on demand. NEUROCLAW_AUTO_OFFLOAD=0 turns it off.
+    startAutoOffload();
+    // The data donor's screen sampler. It does nothing until the owner switches
+    // the donor and the screen source on, and the desktop layer's own access
+    // gate (screen.observe) still decides whether a screenshot may be taken.
+    this.stopScreenDonor = startScreenDonor(async () => {
+      const { DesktopControl } = await import('../models && skills/core/desktop-control.js');
+      const { sharedAccessManager } = await import('../models && skills/core/access-settings.js');
+      return new DesktopControl(sharedAccessManager()).screenshot();
+    });
     // Same reasoning, same placement: loading every saved extension is
     // real work (parsing N files, remembering M neurons) that only makes
     // sense to pay once per actual live server process, not once per
@@ -1652,22 +1557,28 @@ export class WebServer {
 <style>
   :root { color-scheme: dark; }
   body { margin:0; min-height:100vh; display:grid; place-items:center;
-         background:#0b0d10; color:#e8eaed;
-         font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-  form { width:min(360px,90vw); padding:28px; background:#14171c;
-         border:1px solid #232830; border-radius:14px; }
+         background:#110c0e; color:#f8ede9;
+         font:15px/1.5 ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif; }
+  form { width:min(360px,90vw); padding:30px; background:rgba(255,240,232,.08);
+         border:1px solid rgba(255,228,218,.2); border-radius:32px;
+         backdrop-filter:blur(26px) saturate(1.5); -webkit-backdrop-filter:blur(26px) saturate(1.5);
+         box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 30px 80px rgba(0,0,0,.5), 0 0 90px rgba(255,140,110,.12); }
   h1 { margin:0 0 4px; font-size:19px; }
-  p.sub { margin:0 0 20px; color:#9aa3af; font-size:13px; }
-  label { display:block; margin:14px 0 6px; font-size:13px; color:#c5ccd6; }
-  input { width:100%; box-sizing:border-box; padding:10px 12px; font-size:15px;
-          background:#0b0d10; color:#e8eaed; border:1px solid #2b313a; border-radius:8px; }
-  input:focus { outline:2px solid #4a7dff; outline-offset:1px; }
-  button { width:100%; margin-top:20px; padding:11px; font-size:15px; font-weight:600;
-           background:#4a7dff; color:#fff; border:0; border-radius:8px; cursor:pointer; }
+  p.sub { margin:0 0 20px; color:rgba(248,237,233,.62); font-size:13px; }
+  label { display:block; margin:14px 0 6px; font-size:13px; color:rgba(248,237,233,.8); }
+  input { width:100%; box-sizing:border-box; padding:11px 18px; font-size:15px;
+          background:rgba(20,12,14,.4); color:#f8ede9; border:1px solid rgba(255,228,218,.2); border-radius:999px; }
+  input:focus { outline:none; border-color:rgba(255,154,132,.7); box-shadow:0 0 0 4px rgba(255,154,132,.14); }
+  button { width:100%; margin-top:20px; padding:12px; font-size:15px; font-weight:700;
+           background:rgba(255,154,132,.16); color:#ffc4b4; border:1px solid rgba(255,154,132,.5); border-radius:999px; cursor:pointer;
+           box-shadow:0 1px 0 rgba(255,220,208,.3) inset, 0 8px 22px rgba(255,120,95,.18);
+           transition:transform .3s cubic-bezier(.34,1.56,.64,1), background .2s, border-color .2s; }
+  button:hover { background:rgba(255,154,132,.28); border-color:rgba(255,154,132,.8); transform:translateY(-2px); }
+  button:active { transform:scale(.97); }
   button[disabled] { opacity:.6; cursor:default; }
   .msg { margin-top:14px; font-size:13px; min-height:1.2em; }
-  .msg.bad { color:#ff8080; }
-  .msg.good { color:#7ddb9a; }
+  .msg.bad { color:#ff9aa8; }
+  .msg.good { color:#8fe3a8; }
   .hidden { display:none; }
 </style>
 </head>
@@ -1821,6 +1732,8 @@ export class WebServer {
     if (!this.server) throw new Error('Server not running');
     this.pytorchWorker.shutdown();
     this.selfImprovementServer.shutdown();
+    this.stopScreenDonor?.();
+    this.stopScreenDonor = null;
     return new Promise<void>((resolve) => {
       this.server?.close(() => { this.server = null; resolve(); });
     });
@@ -1846,7 +1759,7 @@ export class WebServer {
   private sendHtml(res: http.ServerResponse, html: string): void {
     this.setSecurityHeaders(res);
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
+    res.end(injectAmbient(html));
   }
 
   /**
@@ -2343,12 +2256,17 @@ export class WebServer {
       isWikiPublicRoute(pathname, method) ||
       isStorePublicRoute(pathname, method) ||
       isSharedChatPublicRoute(pathname, method) ||
-      isAuthPublicRoute(pathname, method);
+      isAuthPublicRoute(pathname, method) ||
+      // Apps and borrowers carry a bearer token, not a login; corona-routes.ts
+      // checks it on every request, so the password gate has nothing to add.
+      isCoronaApiRoute(pathname) ||
+      isAmbientRoute(pathname, method);
 
     // Bound remotely with no password set: only the login page answers, and
     // even the things that are normally public stay shut. An instance nobody
     // has claimed yet should not be publishing chat rooms to the internet.
-    if (this.setupOnly && !isAuthPublicRoute(pathname, method)) {
+    // (The ambient CSS and script are the login page's own look, so they answer too.)
+    if (this.setupOnly && !isAuthPublicRoute(pathname, method) && !isAmbientRoute(pathname, method)) {
       this.requireAuth(req, res);
       return;
     }
@@ -2360,8 +2278,26 @@ export class WebServer {
 
     // ── Logging in ──────────────────────────────────────────────────────
 
+    // Data donor, lending and borrowing compute, and apps: one page, behind the normal gate.
+    if (pathname === '/sharing' && method === 'GET') {
+      this.sendHtml(res, SHARING_PAGE);
+      return;
+    }
+
     if (pathname === '/login' && method === 'GET') {
       this.sendHtml(res, this.loginPage());
+      return;
+    }
+
+    // The ring behind every page (ambient.ts). Plain text, no secrets.
+    if (isAmbientRoute(pathname, method)) {
+      this.setSecurityHeaders(res);
+      const css = pathname === '/ambient.css';
+      res.writeHead(200, {
+        'Content-Type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(method === 'HEAD' ? undefined : css ? AMBIENT_CSS : AMBIENT_JS);
       return;
     }
 
@@ -2504,6 +2440,24 @@ export class WebServer {
     if (pathname === '/' && method === 'GET') {
       this.sendHtml(res, HTML_TEMPLATE);
       return;
+    }
+
+    // ── Apps, compute sharing, data donor ───────────────────────────────
+    // See corona-routes.ts: owner routes behind the normal gate, plus the
+    // token-checked /api/corona/v1 API that apps and borrowers call.
+    if (pathname.startsWith('/api/corona-apps') || pathname.startsWith('/api/compute') ||
+        pathname.startsWith('/api/donor') || isCoronaApiRoute(pathname)) {
+      const handled = await handleCoronaRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        chat: message => this.runner.generate(message),
+        status: () => {
+          const st = this.runner.getStatus();
+          return { running: st.running, uptime: Math.floor(st.uptime) };
+        },
+      });
+      if (handled) return;
     }
 
     // ── The public store ────────────────────────────────────────────────
@@ -2654,6 +2608,68 @@ export class WebServer {
       try {
         const { updateInstalls } = await import('../models && skills/core/store-install.js');
         this.sendJson(res, await updateInstalls());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // ── Net skills: switching them on and off ───────────────────────────
+    // A skill is switched off automatically when its record of predicting what
+    // an input is about stays poor, and back on when it recovers. "mode" is the
+    // owner's override: "auto" follows the record, "on" and "off" ignore it.
+    if (pathname === '/api/net-skills/accuracy' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { gate: system.skillLedger.gate, skills: system.netSkillAccuracy() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/net-skills/switch' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { id?: unknown; mode?: unknown } | null;
+        if (typeof body?.id !== 'string' || !(body.mode === 'auto' || body.mode === 'on' || body.mode === 'off')) {
+          this.sendJson(res, { error: 'Expected { id: string, mode: "auto" | "on" | "off" }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        if (!system.setNetSkillSwitch(body.id, body.mode)) {
+          this.sendJson(res, { error: `There is no net skill "${body.id}".` }, 404);
+          return;
+        }
+        this.sendJson(res, system.skillLedger.status(body.id));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // ── Offloading downloaded items that have gone unused ───────────────
+    // GET lists what is idle (disk only, nothing is checked or removed).
+    // POST runs an offload now: { dryRun?: boolean, idleDays?: number }. An
+    // item is only removed once the store branch is confirmed to hold it, and
+    // is downloaded again the next time anything asks for it.
+    if (pathname === '/api/store/offload' && method === 'GET') {
+      try {
+        const { listOffloadCandidates, configuredIdleDays } = await import('../models && skills/core/store-offload.js');
+        this.sendJson(res, { idleDays: configuredIdleDays(), idle: listOffloadCandidates() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/store/offload' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { dryRun?: unknown; idleDays?: unknown } | null;
+        const { offloadIdle } = await import('../models && skills/core/store-offload.js');
+        const idleDays = typeof body?.idleDays === 'number' && body.idleDays >= 0 ? body.idleDays : undefined;
+        this.sendJson(res, await offloadIdle({ dryRun: body?.dryRun === true, idleDays }));
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
       }

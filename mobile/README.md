@@ -26,6 +26,9 @@ No APK, no Xcode. The web app is installable and opens offline-capable from your
 
 Notes: browsers only offer install over HTTPS or `localhost`, so over plain LAN HTTP use Android's **Add to Home screen** shortcut, or put the PC behind an HTTPS tunnel. The service worker (`public/sw.js`) is registered in production builds only (`npm run build`). It never caches `/api/*`. The PWA does not run the on-phone brain or the floating bubble; use the native apps below for those.
 
+## No SDK or Mac? Let GitHub build it
+
+The **Mobile apps** workflow (`.github/workflows/mobile.yml`) builds both apps on GitHub's runners. In the repo: **Actions → Mobile apps → Run workflow**, then download the APK (`neuroclaw-android-debug-apk`) from the run. The iOS job is an unsigned simulator build that checks the Swift code compiles; installing on a real iPhone still needs Xcode and your Apple ID team (see section 3).
 ## Letting the PC's agent reach the phone (the agent bridge)
 
 The desktop layer on the PC (`models && skills/core/desktop-control.ts`) can be pointed at a phone. The phone app serves a small token-protected HTTP API on port 7862 (contract: `PhoneBackend` in `models && skills/core/desktop/backends.ts`).
@@ -38,6 +41,21 @@ The desktop layer on the PC (`models && skills/core/desktop-control.ts`) can be 
 3. The boundary is the same as on a desktop: the agent can **see** every window it is told about and **screenshot**, but can only **type, tap or close** NeuroClaw's own windows, and the app refuses anything else itself rather than trusting the PC.
 
 Neither app's bridge could be compiled or run where it was written (no Android SDK or Xcode), so expect small build fixes the first time.
+
+## Native Android device tools
+
+When the Android **Agent bridge** is enabled in Accessibility settings, the app exposes a token-protected native tool API on port **7862**. Requests require the bridge token as a bearer token. By default the bridge listens only on the phone itself; enable the Wi-Fi bridge only when you intend the PC to connect.
+
+- `GET /v1/tools` returns the available tool names, descriptions, and associated runtime permission.
+- `POST /v1/tools/{name}` executes one tool with a JSON object body.
+- Example request: `POST /v1/tools/device_info` with `Authorization: Bearer <token>`.
+- For arguments, use JSON fields such as `{"query":"Alex"}` for `search_contacts`, `{"limit":10}` for list tools, `{"number":"+15551234567"}` for `dial_number`, and `{"to":"person@example.com","subject":"Hello","body":"Message"}` for `compose_email`.
+
+Available tools include device and network status; a full audit of every permission declared by this app, including grant state and protection classification; checking an individual declared permission; account and sensor inventory; active notification listing after the user enables notification-listener access; contact search/list; calendar event list and opening the event editor; cached location; photo/video/audio metadata; call-log reading; dialer, SMS and email composers; installed-app listing and launching; Bluetooth status; voice-recognition UI; camera and screen-capture consent flows; and shortcuts to app permissions, all-files access, overlay, modify-settings, usage, notifications, accessibility, battery, exact-alarm, unknown-app installation, Do Not Disturb, NFC, Wi-Fi, Bluetooth and privacy settings.
+
+The **Grant all runtime permissions** flow discovers dangerous permissions from the device's Package Manager for every permission declared in the installed app manifest, with a fallback list for common Android versions. The permission audit lists all manifest declarations and checks supported special-access states. Selected-photo access is included in the request list and photo enumeration. Android settings routes include accessibility, notification-listener, full-screen notification, overlay, all-files, usage, exact-alarm, install-source, battery, and system-settings access. Android can still withhold restricted or role-bound permissions; this does not mean every system permission can be granted to a third-party app. The main screen also has an explicit audit button that lists each declared permission and checks user-controlled special access, and the notification listener can read active notifications only after the user enables it in Settings. The manifest also declares additional phone/SMS and Android 14 selected-media permissions. Background location and background body sensors are requested separately where Android requires separate consent. The permission audit enumerates permissions declared by this app, while the device permission catalogue reports permission definitions the OS exposes. Android has system/signature/privileged permissions that ordinary apps cannot receive; some capabilities require default-app roles, device-owner management, OEM/system signing, or user-approved system UI. Manifest declaration alone does not grant access.
+
+Sensitive actions remain under Android/user control: SMS, calls, email, and calendar creation open a composer/editor rather than silently sending or saving; screen capture still requires Android's consent flow; missing runtime permissions return a permission error rather than being bypassed. Tools that depend on special access can only work after the person enables that access in Android Settings. The catalog is a native bridge API; the phone's neural-network chat loop does not automatically invoke every tool merely because it is listed.
 
 ## What sync does
 
@@ -95,6 +113,9 @@ Pick your Apple ID team under **Signing & Capabilities**, then run it on your ph
 
 ## Permissions, voice and screen (Android)
 
+The Android module now targets API 36 to meet Google Play's target-level submission requirement for new apps and updates from 31 August 2026. This SDK-target change still needs a successful CI build and device testing before the APK should be treated as release-ready.
+
+- **Permission catalog audit**: the Android bridge exposes `permission_catalog`, which combines permission constants in the Android SDK used to compile the app with permission definitions returned by the device's Package Manager. It reports which entries are defined on the device, declared by this app, granted, and their known protection level. `permission_audit` separately audits permissions actually declared in the app manifest. Android does not expose a guaranteed universal catalogue: OEM/vendor permissions, hidden definitions, and permissions newer than the compile SDK may remain undiscovered. A listed permission is not necessarily grantable to an ordinary app.
 - **Grant all permissions** (main screen): asks for every dangerous permission the app declares (mic, camera, contacts, calendar, call log, phone, SMS, location, sensors, Bluetooth, nearby Wi-Fi, media) in one batch, instead of one at a time as each feature happens to be tapped. Declaring a permission never uses it by itself — each button below only does something once its own permission is actually granted.
 - **🎙 (mic button, in chat):** voice-to-text. Tap to start listening, tap again to stop; the words land in the message box. Needs `RECORD_AUDIO`, granted by **Grant all permissions** or the system prompt.
 - **Screen button (in chat):** a one-shot screenshot, uploaded to the PC the same way a tapped **Photo** is (`~/.neuroclaw/captures/`, tagged "Screenshot"). Android requires a fresh consent dialog *every* capture — there is no way to make this silent or "always on" without leaving the OS's own screen-recording indicator up continuously, which this app does not do. Each tap is its own grant, taken and released immediately.
@@ -135,3 +156,17 @@ npm run build:phone-brain     # -> mobile/brain/bundle/neuroclaw-brain.js
 - **Not trained yet.** Until the network is trained to write replies, the phone answers "one brain has nothing trained to say here yet." plus what OneBrain recalls, the same as the PC does.
 - **Saved state is about 4 MB.** It is saved when the app goes to the background, not after every message.
 - **The camera captures only when you tap.** There is no background recording. If you point it at people, they are in your training data, so ask them first.
+
+
+## Root access on Android
+
+The Android app includes optional root-aware tools for devices that are already rooted. **Unlocking the bootloader alone does not grant root**; the device needs a working root implementation such as a supported `su` manager, and that manager must authorize NeuroClaw. Bootloader unlocking commonly wipes device data and can weaken device security.
+
+- **Check root indicators** reports visible `su`/Magisk indicators without invoking `su`; these indicators are not proof that root works.
+- **Request root authorization** runs only `id` through `su` so the installed root manager can show its authorization UI and the app can verify whether the effective UID is 0.
+- **Audit root permissions** reports effective identity, SELinux mode, build flags, Linux capability masks, and a bounded mount list.
+- The agent bridge exposes read-only root diagnostics for installed package paths, process inventory, system properties, mounts, and a bounded recent log excerpt. System logs may contain private data.
+- **Grant eligible declared runtime permissions using root** explicitly attempts each permission in the installed manifest that Android classifies as dangerous and that is not already granted. Signature, privileged, role-restricted, and OEM-controlled permissions are skipped.
+- **Grant eligible special AppOps using root** explicitly attempts a fixed list of special-access AppOps such as overlay, write-settings, usage access, all-files access, notifications, and background execution. Android/OEM versions may reject operations, and a successful AppOps write does not guarantee the associated feature is enabled.
+
+The app does not unlock the bootloader, root the phone, bypass the root manager, or automatically obtain Android signature/privileged permissions. SELinux, Android's permission model, hardware-backed security, and vendor restrictions can still deny operations even to a root process. These source changes have not been built or tested on a rooted device.

@@ -26,6 +26,9 @@ export default defineConfig({
     include: ['test/**/*.test.ts'],
     env: {
       NEUROCLAW_GENERATED_DIR: mkdtempSync(join(tmpdir(), 'neuroclaw-vitest-generated-')),
+      // Net-skill prediction records are per-machine state; a test run must
+      // not write them into the working tree.
+      NEUROCLAW_SKILL_ACCURACY_FILE: join(mkdtempSync(join(tmpdir(), 'neuroclaw-vitest-skills-')), 'net-skill-accuracy.json'),
     },
   },
 });

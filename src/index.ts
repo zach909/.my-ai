@@ -45,6 +45,8 @@ import { SelfModel } from "../models && skills/core/self-model.js";
 import { SelfImprovement } from "../models && skills/core/self-improvement.js";
 import { AutonomousLearner } from "../models && skills/core/autonomous-learner.js";
 import { PredictionEngine } from "../models && skills/core/prediction-engine.js";
+import { SkillAccuracyLedger, type SkillStatus, type SkillSwitch } from "../models && skills/core/net-skill-accuracy.js";
+import type { NetSkillRouter } from "../models && skills/core/net-skill-router.js";
 import { DiscoveryEngine } from "../models && skills/core/discovery-engine.js";
 import { ArchitectureMapper, Bottleneck, WasteReport, ComponentType } from "../models && skills/core/architecture-mapper.js";
 import { PerformanceMonitor, ComponentMetrics, SystemHealth } from "../models && skills/core/performance-monitor.js";
@@ -143,8 +145,8 @@ function formatToolReply(events: Array<{ plugin: string; tool: string; ok: boole
   }).join("\n\n");
 }
 
-/** Highest Zip Loop neuron id (the toggle out): the mesh needs more neurons than this. */
-const ZIP_BIT_NEURONS = 7;
+/** Highest Zip Loop neuron id (the ramp out, zipLoopIdsFor()): the mesh needs more neurons than this. */
+const ZIP_BIT_NEURONS = 5;
 
 const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
@@ -271,6 +273,8 @@ export class NeuroclawSystem {
   improvement: SelfImprovement;
   learner: AutonomousLearner;
   predictor: PredictionEngine;
+  /** How well each net skill has predicted before, and which are switched off for it. Shared by every router below. */
+  readonly skillLedger: SkillAccuracyLedger;
   discovery: DiscoveryEngine;
   /** Self-improvement framework Phase 1 (Steps 1-7): real component/dependency map, kept in sync with measured performance below. */
   architecture: ArchitectureMapper;
@@ -342,6 +346,16 @@ export class NeuroclawSystem {
     // neurons in the same all-to-all mesh as everything else, so a plugin
     // firing genuinely propagates into the rest of the network.
     this.pluginRegistry = new PluginRegistry(new NetSkillMesh(2, this.llm.mesh));
+    // One ledger for all three routers (the language brain's, the pipeline's
+    // and the plugin registry's), so a skill switched off for predicting badly
+    // is off everywhere, and what was learned survives a restart.
+    this.skillLedger = new SkillAccuracyLedger();
+    this.skillLedger.persistTo(
+      process.env.NEUROCLAW_SKILL_ACCURACY_FILE ?? join(process.cwd(), "extension-builder", "net-skill-accuracy.json"),
+    );
+    this.llm.skillRouter.setLedger(this.skillLedger);
+    this.pluginRegistry.getSkillMesh().getRouter().setLedger(this.skillLedger);
+    this.pipeline.setSkillLedger(this.skillLedger);
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     // A doorway is made per feed rather than held: the pipeline builds its
@@ -961,6 +975,7 @@ export class NeuroclawSystem {
           error: `withheld by the alignment check: ${verdict.reasons.join("; ")}`, startedAt: Date.now(), endedAt: Date.now(),
         };
       const text = formatToolReply([event], routed.why);
+      this.judgeSkills(input, [{ plugin: event.plugin, ok: event.ok }]);
       return {
         answered: true, via: "router", text,
         toolCalls: [{ plugin: event.plugin, tool: event.tool, ok: event.ok, ...(event.error ? { error: event.error } : {}) }],
@@ -982,6 +997,7 @@ export class NeuroclawSystem {
     }
     const toolCalls = events.map(c => ({ plugin: c.plugin, tool: c.tool, ok: c.ok, ...(c.error ? { error: c.error } : {}) }));
     if (events.length > 0) {
+      this.judgeSkills(input, toolCalls);
       return { answered: true, via: "network", text: formatToolReply(events, "the network fired the tool's neuron"), toolCalls };
     }
 
@@ -990,6 +1006,52 @@ export class NeuroclawSystem {
       return { answered: false, via: "none", text: "", toolCalls };
     }
     return { answered: true, via: "brain", text, toolCalls };
+  }
+
+  /** Every router in the system. They share one ledger, but each holds its own regions. */
+  private skillRouters(): NetSkillRouter[] {
+    return [this.llm.skillRouter, this.pluginRegistry.getSkillMesh().getRouter(), this.pipeline.getSkillRouter()]
+      .filter((r, i, all): r is NetSkillRouter => r != null && all.indexOf(r) === i);
+  }
+
+  /**
+   * Tell the routers how they did. The outcome is the plugins whose tools ran
+   * and succeeded for this input -- the one place a turn says what it really
+   * needed. Only plugins are judged: a net skill with no such signal is not
+   * scored, because nothing could ever mark it right.
+   */
+  private judgeSkills(input: string, calls: Array<{ plugin: string; ok: boolean }>): void {
+    try {
+      const actual = new Set(calls.filter(c => c.ok).map(c => c.plugin));
+      if (actual.size === 0) return;
+      const inScope = (id: string): boolean => this.pluginRegistry.getPlugin(id) !== undefined;
+      for (const router of this.skillRouters()) {
+        for (const r of router.judge(input, actual, inScope)) {
+          if (r.flipped) {
+            console.log(`[net-skills] "${r.id}" switched ${r.flipped} by its prediction record (${this.skillLedger.status(r.id).reason})`);
+          }
+        }
+      }
+    } catch (err) {
+      // Scoring is bookkeeping; it must never cost the user their answer.
+      console.warn("[net-skills] could not score this turn:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  /** Every net skill region with its prediction record, and whether it is running. */
+  netSkillAccuracy(): Array<SkillStatus & { name: string }> {
+    const byId = new Map<string, SkillStatus & { name: string }>();
+    for (const router of this.skillRouters()) {
+      for (const s of router.getAccuracy()) if (!byId.has(s.id)) byId.set(s.id, s);
+    }
+    return Array.from(byId.values()).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** Turn one net skill on or off by hand, or hand it back to its prediction record ("auto"). False for an unknown skill. */
+  setNetSkillSwitch(id: string, mode: SkillSwitch): boolean {
+    if (!this.skillRouters().some(r => r.has(id))) return false;
+    this.skillLedger.setSwitch(id, mode);
+    return true;
   }
 
   async processQuery(input: string): Promise<string> {

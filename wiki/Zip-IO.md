@@ -2,21 +2,21 @@
 
 The AI receives compressed ("zipped") inputs and produces compressed outputs, both operating as circular buffers — when storage reaches capacity, the oldest information is overwritten, so the system runs continuously without needing unlimited memory. The design notes' theoretical example: "a 200,000 GB knowledge base processed efficiently through compression."
 
-## The doorway neurons: 0, 1, send and toggle
+## The doorway neurons: 0, 1 and the ramp
 
-The Zip Loop talks to the mesh through four neurons on each side (`ZipLoopInterface`, `ZIP_LOOP_DEFAULT_IDS` in `models && skills/core/onebrain.ts`):
+The live Zip Loop talks to the mesh through three neurons on each side (`ZipLoopInterface`, `zipLoopIdsFor()` in `models && skills/core/onebrain.ts`):
 
 | Side | Neurons |
 |---|---|
-| Input | `bit0In` (0), `bit1In` (1), `sendIn` (4), `toggleIn` (6) |
-| Output | `bit0Out` (2), `bit1Out` (3), `sendOut` (5), `toggleOut` (7) |
+| Input | `bit0In` (0), `bit1In` (1), ramp in (4) |
+| Output | `bit0Out` (2), `bit1Out` (3), ramp out (5) |
 
-A data neuron alone cannot say how many bits it means: holding the 0 neuron for three ticks could be "0", "00" or "000". **Send** is the clock that settles it. It alternates between off and fully on, and a bit exists only where send fires:
+A data neuron alone cannot say how many bits it means: holding the 0 neuron for three ticks could be "0", "00" or "000". The **ramp** settles it. It goes from max to min and back, changing level on every bit, so every bit is a flip and "00" is two flips where "0" is one:
 
-- **Input**: every bit is two ticks. First the data neuron alone (send off: the bit is being set up), then the data neuron with send on (the bit is committed). "00" goes in as `0 → send → 0 → send`.
-- **Output**: a bit is read only on the tick `sendOut` turns on, and its value is whichever of `bit0Out`/`bit1Out` is higher at that moment. Holding send on does not repeat the bit. If send does not fire within 3 read ticks, the network has stopped sending: the byte reads as nothing, which is what lets a run end when the network decides it is done.
+- **Input**: one tick per bit. The data neuron is driven, and the ramp is driven at max on even bits (the first, third, ...) and left at min on odd ones. Each message starts at max again.
+- **Output**: one read tick per bit. A bit exists on every tick the ramp out changes level from the tick before (the message starts from a resting min), and its value is whichever of `bit0Out`/`bit1Out` is higher at that moment. If the ramp stops flipping within 3 read ticks, the network has stopped sending: the byte reads as nothing, which is what lets a run end when the network decides it is done.
 
-**Toggle** flips level on every bit and restarts low each message, so a bit's place is carried by the neuron itself: "0" is one bit at low, "00" is low then high. On output, a toggle flip while send is held on counts as a new bit, so equal bits in a row don't collapse when send never drops. The live mesh gets neurons 6 and 7 from `zipLoopIdsFor()`; a mesh too small to hold them gets the plain six.
+`ZipLoopInterface` still supports the older clock for callers that pass those ids: a send neuron (off while a bit is set up, on to commit it, two ticks per bit), optionally with a toggle that flips per bit. The live mesh doesn't use them.
 
 ## Overview
 

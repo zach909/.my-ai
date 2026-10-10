@@ -5,9 +5,25 @@ The owner has said this many times and it must never need saying again.
 - **Never add third-party code of any kind.** No npm, pip or cargo packages; no vendored or cloned source; no SDKs, CLIs, apps or models; no `npm install <pkg>` or `pip install` to make something work, not even "just to test". Write it with Node built-ins, the Python standard library, and this project's own modules.
 - **If a task seems to need third-party code, stop and ask.** Do not pick a library and add it. Do not add a dependency to get past a failing step.
 - **The only exceptions are ones the owner named:** web search through an open-source SearXNG instance, and an Ollama model reached over HTTP. Both are services the owner runs; nothing from them is vendored or imported. Everything else needs a fresh yes.
-- **No tokenizer.** Text enters the mesh as its UTF-8 bytes through the Zip Loop, and audio and images enter as the bits they already are. Do not add word or subword tokenizers, outside embeddings, or speech-to-text (no Whisper, Vosk, Wispr Flow or similar).
+- **No tokenizer.** Text, audio, and images all enter the mesh as the raw bits they are through the Zip Loop. Do not add word or subword tokenizers, outside embeddings, or speech-to-text (no Whisper, Vosk, Wispr Flow or similar).
 - **Check before claiming.** Before saying something is or is not third-party, or is or is not in the repo, look at the files. Do not describe code from memory.
 - Already present and not to be added to: `typescript`, `@types/node` and `vitest` as build and test tools. Known leftovers still to be removed: `torch` imports in `model && skills manager/neurolang.py` and the `torch`, `numpy`, `sentencepiece` lines in that folder's `requirements.txt`.
+
+# VISUAL STYLE (standing rule from the owner: this is the look for everything)
+
+The owner chose the look of the terminal page at `/` (`HTML_TEMPLATE` in `interface/web-server.ts`) plus the ring behind it, and wants it on every page and every new page. The code is the source of truth; this is what it currently is. Do not drift from it, and do not restyle a page in another look.
+
+- **Where it lives.** `interface/ambient.ts` holds the shared CSS and the ring drawing. The server adds it to every HTML response (`injectAmbient()`, `/ambient.css`, `/ambient.js`), so a new page gets the ring and background without asking. Pages only need to use the same tokens and shapes below.
+- **Palette: soft coral on warm dark, no blue anywhere.** Ground `#110c0e` fading to `#1b1216`. Text `#f8ede9`, dimmed `rgba(248,237,233,.62)`. Accent coral `#ff9a84`, soft `#ffc4b4`, deep `#e8705a`. Lines `rgba(255,228,218,.2)`. Glass fill `rgba(255,240,232,.07-.08)`. Online green `#8fe3a8`, error pink `#ff9aa8`. Never `#4a7dff`, indigo, cyan or any other blue.
+- **Everything round and soft.** Panels 32-36px radius, chat bubbles 24px, inputs and buttons fully pill-shaped (999px). No sharp corners, soft deep shadows with a faint coral glow.
+- **Surfaces are glass.** Translucent fill, `backdrop-filter: blur(26px) saturate(1.5)`, a 1px line border, a 1px light inner top edge.
+- **Buttons are clear glass.** Neutral: `rgba(255,238,230,.07)` with the line border. Primary: coral glass, fill `rgba(255,154,132,.16)`, border `rgba(255,154,132,.5)`, text `#ffc4b4`. Hover: fill `.28`, lift 2px and scale 1.03. Press: scale .95. Spring easing `cubic-bezier(.34,1.56,.64,1)`.
+- **Type.** System rounded stack: `ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif`. No web fonts, nothing fetched.
+- **The ring.** One continuous coral cord, never separate links, blocks or pins. It is one smooth wave with no corners: six rises and six dips like the crown ring in the owner's model (the clay-render video), never plates or blocks. It is a barrel, not lopsided: top and bottom tips tucked in 10%, the middle eased out 4%. It flips end over end around a glowing sphere in the centre (it does not spin flat about its own axis) with a slow wobble. The centre is a sphere, not an icon: the AI's cat icon (`interface/ai-icon.ts`, served at `/ai-icon.jpg`) is only the page icon in the browser tab. One colour. It speeds up while someone types or sends, and leans a little toward the pointer. Drawn with the browser's own Canvas 2D, no 3D library.
+- **Motion is smooth.** Ease everything (exponential smoothing, no snapping), springy entrances, drifting coral glow behind. Respect `prefers-reduced-motion`.
+- **Stand-alone pages** (the desktop app's `loading.html` and `index.html`, the extension popup, the launcher pages in `scripts/launcher.mjs`, the older pages in `interface/`) cannot be served by the backend, so each loads its own generated copy of the look. After changing `interface/ambient.ts`, run `npx tsc -p tsconfig.backend.json && node scripts/sync-ambient.mjs`; `test/core/ambient-copies.test.ts` fails if a copy has drifted. A page opts in with `<body class="nc-soft">` and can use `nc-glass`, `nc-btn` (`primary`), `nc-input` and `nc-dim` from the same stylesheet. The native phone screens have no colours of their own; the phone shows `/app` in a web view, which already has the look.
+- **The built dashboard** (`dist/app`, React tokens) is remapped to the same palette, rounder and see-through, from the same stylesheet.
+- **Not allowed:** blue, chunky or blocky links, hard corners, a second ring or competing background on a page, any third-party library or font for the look (see the first section).
 
 # Docker Dev Environment
 
@@ -46,11 +62,11 @@ reasoning. This is a standing rule, not a one-time answer to one request.
   `SpeechRecognizer`, iOS `SFSpeechRecognizer`/`AVAudioEngine` via `Speech`/
   `AVFoundation`) purely to turn speech into a text string in the input box.
   That string then goes through `brain.send(text)` exactly like typed text —
-  through the real byte-level Zip Loop, no tokenizer, nothing short-circuited.
+  through the real bit-level Zip Loop, no tokenizer, nothing short-circuited.
 - Before adding any new dependency (npm, pip, Gradle, CocoaPods/SPM) ask
   whether it does cognition/understanding work the mesh should be doing
   instead. If so, don't add it — extend the mesh/Zip Loop/skills instead,
   even if that's slower or more work.
 - There is no tokenizer anywhere in this repo (`tokenizer.js` was deleted,
-  not disabled) and it must stay that way: text is raw UTF-8 bytes through
+  not disabled) and it must stay that way: text is raw bits through
   the Zip Loop everywhere, always.
