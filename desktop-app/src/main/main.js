@@ -41,6 +41,7 @@ function isBlockedCommand(cmd) {
 let mainWindow;
 let backendProcess;
 let appServer;
+const ownedCapabilityProcesses = new Map();
 
 /**
  * Where the built app (dist/interface/main.js + dist/index.html) lives.
@@ -531,6 +532,19 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         fs.writeFileSync(result.filePath, args.content, { encoding: 'utf8', flag: 'w' });
         return { success: true, path: result.filePath };
       }
+      case 'clipboardRead': {
+        const { clipboard } = require('electron');
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          buttons: ['Read clipboard', 'Cancel'],
+          defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Sensitive permission',
+          message: 'Allow .my-ai to read the current clipboard text?',
+          detail: 'Clipboard contents can include private information. Only the current text value will be returned.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        return { success: true, text: clipboard.readText().slice(0, 1000000) };
+      }
       case 'clipboardWrite': {
         const { clipboard } = require('electron');
         if (typeof args.text !== 'string') return { success: false, error: 'text must be a string.' };
@@ -572,6 +586,48 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         }
         const error = await shell.openPath(args.path);
         return error ? { success: false, error } : { success: true };
+      }
+      case 'launchProcess': {
+        if (typeof args.executable !== 'string' || !args.executable.trim()) {
+          return { success: false, error: 'executable must be a non-empty path or command name.' };
+        }
+        if (!Array.isArray(args.args || []) || (args.args || []).length > 128 ||
+            (args.args || []).some((arg) => typeof arg !== 'string')) {
+          return { success: false, error: 'args must be an array of up to 128 strings.' };
+        }
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          buttons: ['Launch', 'Cancel'],
+          defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Launch external program',
+          message: 'Allow .my-ai to launch ' + path.basename(args.executable) + '?',
+          detail: 'Arguments: ' + (args.args || []).join(' ').slice(0, 1000) + '\\nThe program will run with your current Windows account permissions.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const child = spawn(args.executable, args.args || [], {
+          cwd: typeof args.cwd === 'string' && path.isAbsolute(args.cwd) ? args.cwd : process.cwd(),
+          shell: false,
+          windowsHide: false,
+          stdio: 'ignore',
+        });
+        const processToken = crypto.randomUUID();
+        ownedCapabilityProcesses.set(processToken, child);
+        child.once('exit', () => ownedCapabilityProcesses.delete(processToken));
+        child.once('error', () => ownedCapabilityProcesses.delete(processToken));
+        return { success: true, processToken, pid: child.pid };
+      }
+      case 'stopOwnedProcess': {
+        if (typeof args.processToken !== 'string' || !ownedCapabilityProcesses.has(args.processToken)) {
+          return { success: false, error: 'Unknown process token; only processes launched by this tool can be stopped.' };
+        }
+        const child = ownedCapabilityProcesses.get(args.processToken);
+        try {
+          const stopped = child.kill();
+          if (stopped) ownedCapabilityProcesses.delete(args.processToken);
+          return { success: stopped, error: stopped ? undefined : 'The process could not be stopped.' };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
       }
       case 'processList': {
         if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
