@@ -41,7 +41,10 @@ object Permissions {
             add(Manifest.permission.READ_EXTERNAL_STORAGE); add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         add(Manifest.permission.BODY_SENSORS)
-        if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.BODY_SENSORS_BACKGROUND)
+        if (Build.VERSION.SDK_INT >= 34) {
+            add(Manifest.permission.BODY_SENSORS_BACKGROUND)
+            add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+        }
     }.distinct().toTypedArray()
 
     /** Android requires background location and background body sensors to be requested separately. */
