@@ -16,6 +16,8 @@
 	<true/>
 	<key>com.apple.developer.homekit</key>
 	<true/>
+	<key>com.apple.developer.nearby-interaction</key>
+	<true/>
 	<key>com.apple.developer.nfc.readersession.formats</key>
 	<array>
 		<string>NDEF</string>
