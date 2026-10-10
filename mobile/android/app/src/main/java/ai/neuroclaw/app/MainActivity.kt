@@ -9,15 +9,29 @@ import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * Setup and a full-screen chat. NeuroClaw runs on the phone; the PC address
- * and password are only for syncing. Also the "display over other apps"
- * permission, the floating bubble, and Sync now.
+ * Setup and full-screen chat, plus user-controlled Android runtime and special-access settings.
+ * Android requires the user to approve restricted capabilities in system UI; this app cannot silently grant them.
  */
 class MainActivity : Activity() {
     private lateinit var status: TextView
+
+    private fun settingsButton(label: String, action: String, appSpecific: Boolean = false): Button =
+        Button(this).apply {
+            text = label
+            setOnClickListener {
+                val intent = Intent(action)
+                if (appSpecific) intent.data = Uri.parse("package:$packageName")
+                try {
+                    startActivity(intent)
+                } catch (_: Exception) {
+                    status.text = "This settings page is unavailable on this Android version. Open Settings and search for: $label"
+                }
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -70,10 +84,10 @@ class MainActivity : Activity() {
             }
         }
         val grant = Button(this).apply {
-            text = "Grant all permissions"
+            text = "Grant all runtime permissions"
             setOnClickListener {
                 Permissions.requestAll(this@MainActivity)
-                status.text = "Requesting every permission NeuroClaw can use (mic, camera, contacts, location, SMS, calendar, and more) -- answer the system dialogs, then come back here."
+                status.text = "Requesting declared runtime permissions. Answer the system dialogs; some permissions require separate Settings pages or special eligibility."
             }
         }
         val sync = Button(this).apply {
@@ -86,11 +100,8 @@ class MainActivity : Activity() {
                 }
             }
         }
-        // The agent bridge: lets the PC-side agent see this phone's windows and
-        // screen and drive NeuroClaw's own. Android's own Accessibility screen
-        // is what turns it on, so nothing happens until you do that.
         val bridge = Button(this).apply {
-            text = "Agent bridge"
+            text = "Agent bridge / Accessibility"
             setOnClickListener { startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
         val bridgeLan = Button(this).apply {
@@ -106,7 +117,22 @@ class MainActivity : Activity() {
             setOnClickListener { startService(Intent(this@MainActivity, OverlayService::class.java).setAction(OverlayService.ACTION_STOP)) }
         }
 
-        setContentView(LinearLayout(this).apply {
+        val specialAccess = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        specialAccess.addView(TextView(this).apply { text = "\nAdvanced access (Android opens each system-controlled settings page):" })
+        specialAccess.addView(settingsButton("All files access", "android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION", true))
+        specialAccess.addView(settingsButton("Modify system settings", "android.settings.action.MANAGE_WRITE_SETTINGS", true))
+        specialAccess.addView(settingsButton("Usage access", "android.settings.USAGE_ACCESS_SETTINGS"))
+        specialAccess.addView(settingsButton("Notification access", "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+        specialAccess.addView(settingsButton("Unrestricted background data", "android.settings.IGNORE_BACKGROUND_DATA_RESTRICTIONS_SETTINGS", true))
+        specialAccess.addView(settingsButton("Ignore battery optimizations", "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", true))
+        specialAccess.addView(settingsButton("Install unknown apps", "android.settings.MANAGE_UNKNOWN_APP_SOURCES", true))
+        specialAccess.addView(settingsButton("Exact alarms / reminders", "android.settings.REQUEST_SCHEDULE_EXACT_ALARM", true))
+        specialAccess.addView(settingsButton("Do Not Disturb access", "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS"))
+        specialAccess.addView(settingsButton("App details / other controls", AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, true))
+        specialAccess.addView(settingsButton("Picture-in-picture settings", "android.settings.PICTURE_IN_PICTURE_SETTINGS", true))
+        specialAccess.addView(settingsButton("Screen capture consent", "android.settings.SETTINGS"))
+
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
             addView(url); addView(password)
@@ -114,19 +140,18 @@ class MainActivity : Activity() {
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
             addView(grant)
             addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
+            addView(specialAccess)
             addView(status)
             addView(ChatPanel(context), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        })
+        }
+        setContentView(ScrollView(this).apply { addView(content) })
 
-        // "Give it access to everything": ask for every permission up front, not
-        // one at a time as each feature happens to be tapped.
         Permissions.requestAll(this)
         refreshStatus()
     }
 
     override fun onPause() {
         super.onPause()
-        // Keep what the phone's network learned for the next launch.
         val brain = Shared.brain(this)
         Shared.io.execute { brain.phone.save() }
     }
@@ -143,7 +168,8 @@ class MainActivity : Activity() {
         status.text = buildString {
             append(if (brain.settings.configured) "PC for syncing: ${brain.settings.serverUrl}" else "PC: not set (everything stays on the phone)")
             append("\nOver other apps: $overlay")
-            append(if (missing.isEmpty()) "\nAll permissions granted." else "\n${missing.size} permission(s) not yet granted -- tap \"Grant all permissions\".")
+            append(if (missing.isEmpty()) "\nAll declared runtime permissions granted." else "\n${missing.size} declared runtime permission(s) not yet granted -- tap \"Grant all runtime permissions\".")
+            append("\nSpecial access is managed separately by Android in the buttons above.")
             append("\nAgent bridge: port ${BridgeServer.PORT}, token ${brain.settings.bridgeToken} (turn on in Accessibility settings; set NEUROCLAW_PHONE_BRIDGE_TOKEN on the PC to this token)")
             append("\n${brain.status()}")
         }
