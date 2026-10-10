@@ -2,6 +2,11 @@ package ai.neuroclaw.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlarmManager
+import android.app.AppOpsManager
+import android.app.Notification
+import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +19,7 @@ import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import android.telephony.TelephonyManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
@@ -25,6 +31,8 @@ import android.net.NetworkCapabilities
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 
 /**
  * Native, permission-aware tools exposed to the local agent through BridgeServer.
@@ -41,13 +49,37 @@ class DeviceTools(private val context: Context) {
                 .put("permission", permission ?: JSONObject.NULL))
         }
         add("device_info", "Read Android version, device model, locale, and app version.")
+        add("root_access_status", "Inspect root indicators and whether common su/Magisk locations exist; this does not itself request root authorization.")
+        add("root_authorization_request", "Ask the installed su/root manager to authorize this app by running a harmless UID check; the root manager controls whether access is granted.")
+        add("root_permission_audit", "With root-manager authorization, inspect effective UID, SELinux mode, build flags, Linux capability masks, and mounted filesystems.")
+        add("root_list_packages", "List installed package paths using the root manager; requires root-manager authorization.")
+        add("root_list_processes", "List running processes using the root manager; requires root-manager authorization.")
+        add("root_system_properties", "Read Android system properties using the root manager; requires root-manager authorization.")
+        add("root_mount_inventory", "Inspect mounted filesystems using the root manager; requires root-manager authorization.")
+        add("root_read_system_logs", "Read a bounded recent system log excerpt using the root manager; logs may contain private data.")
+        add("root_grant_declared_runtime_permissions", "With confirm=true and root-manager approval, grant every declared permission classified by Android as dangerous; signature/privileged permissions are skipped.")
+        add("root_grant_eligible_appops", "With confirm=true and root-manager approval, attempt a fixed list of app-specific special-access AppOps; Android/OEM policy may reject some operations.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
+        add("permission_audit", "Audit every permission declared in this installed app: grant state, protection level when available, and runtime/special-access classification.")
+        add("permission_catalog", "Enumerate Android permission constants available in this app compile SDK, including undeclared and privileged permissions, with declaration/grant/protection status.")
+        add("check_permission", "Check the grant state of one permission declared by this app.", "permission name supplied as an argument")
+        add("open_permission_settings", "Open this app's settings so the user can grant or revoke permissions.")
+        add("open_exact_alarm_settings", "Open the app's exact-alarm permission settings.")
+        add("open_unknown_app_settings", "Open the app's install-unknown-apps setting.")
+        add("open_dnd_settings", "Open Do Not Disturb policy access settings.")
+        add("open_nfc_settings", "Open Android NFC settings.")
+        add("open_privacy_settings", "Open Android privacy settings.")
         add("special_access_status", "Report app-specific special access that Android exposes through settings.")
         add("network_status", "Read current network type and whether Android reports internet connectivity.")
         add("list_accounts", "List account types and names visible to this app.", Manifest.permission.GET_ACCOUNTS)
         add("sensor_status", "List available device sensor types and names.")
         add("open_voice_recognition", "Open Android speech recognition UI; the user starts and controls listening.")
         add("open_notification_settings", "Open Android notification settings for this app.")
+        add("open_notification_listener_settings", "Open Android notification-listener access; the user must enable NeuroClaw.")
+        add("list_notifications", "List currently active notifications after the user enables notification-listener access.")
+        add("open_modify_settings", "Open Android permission settings for modifying system settings.")
+        add("open_picture_in_picture_settings", "Open Android picture-in-picture settings for this app.")
+        add("open_full_screen_intent_settings", "Open Android full-screen notification intent access settings where supported.")
         add("open_accessibility_settings", "Open Android Accessibility settings; enabling a service requires the user.")
         add("open_usage_settings", "Open Android usage-access settings.")
         add("open_all_files_settings", "Open Android all-files-access settings for this app.")
@@ -80,13 +112,37 @@ class DeviceTools(private val context: Context) {
         return try {
             when (name) {
                 "device_info" -> deviceInfo()
+                "root_access_status" -> rootAccessStatus()
+                "root_authorization_request" -> rootAuthorizationRequest()
+                "root_permission_audit" -> rootPermissionAudit()
+                "root_list_packages" -> rootReadOnly("packages")
+                "root_list_processes" -> rootReadOnly("processes")
+                "root_system_properties" -> rootReadOnly("properties")
+                "root_mount_inventory" -> rootReadOnly("mounts")
+                "root_read_system_logs" -> rootReadOnly("logs")
+                "root_grant_declared_runtime_permissions" -> rootGrantDeclaredRuntimePermissions(args)
+                "root_grant_eligible_appops" -> rootGrantEligibleAppOps(args)
                 "permission_status" -> permissionStatus()
+                "permission_audit" -> permissionAudit()
+                "permission_catalog" -> permissionCatalog()
+                "check_permission" -> checkPermission(args.optString("permission", ""))
+                "open_permission_settings" -> openSystemSettings("app")
+                "open_exact_alarm_settings" -> openSystemSettings("alarms")
+                "open_unknown_app_settings" -> openSystemSettings("unknown_apps")
+                "open_dnd_settings" -> openSystemSettings("dnd")
+                "open_nfc_settings" -> openSystemSettings("nfc")
+                "open_privacy_settings" -> openSystemSettings("privacy")
                 "special_access_status" -> specialAccessStatus()
                 "network_status" -> networkStatus()
                 "list_accounts" -> listAccounts()
                 "sensor_status" -> sensorStatus()
                 "open_voice_recognition" -> openVoiceRecognition()
                 "open_notification_settings" -> openSystemSettings("notification")
+                "open_notification_listener_settings" -> openSystemSettings("notification_listener")
+                "list_notifications" -> listNotifications()
+                "open_modify_settings" -> openSystemSettings("modify_settings")
+                "open_picture_in_picture_settings" -> openSystemSettings("picture_in_picture")
+                "open_full_screen_intent_settings" -> openSystemSettings("full_screen_intent")
                 "open_accessibility_settings" -> openSystemSettings("accessibility")
                 "open_usage_settings" -> openSystemSettings("usage")
                 "open_all_files_settings" -> openSystemSettings("files")
@@ -123,6 +179,232 @@ class DeviceTools(private val context: Context) {
         } catch (e: Exception) {
             JSONObject().put("ok", false).put("error", e.message ?: "Tool failed")
         }
+    }
+
+
+    /**
+     * Root is not implied by bootloader unlock. This check only reports local
+     * indicators and deliberately does not invoke su, which could trigger a
+     * root-manager authorization prompt.
+     */
+    private fun rootAccessStatus(): JSONObject {
+        val suPaths = listOf(
+            "/system/bin/su", "/system/xbin/su", "/sbin/su",
+            "/system_ext/bin/su", "/vendor/bin/su", "/debug_ramdisk/su"
+        )
+        val found = JSONArray()
+        suPaths.filter { java.io.File(it).exists() }.forEach { found.put(it) }
+        val magiskIndicators = listOf(
+            "/data/adb/magisk", "/data/adb/modules", "/sbin/.magisk",
+            "/debug_ramdisk/.magisk"
+        )
+        val magiskFound = JSONArray()
+        magiskIndicators.filter { java.io.File(it).exists() }.forEach { magiskFound.put(it) }
+        return ok(JSONObject()
+            .put("test_keys_build_indicator", Build.TAGS?.contains("test-keys") == true)
+            .put("build_tags", Build.TAGS ?: JSONObject.NULL)
+            .put("su_binary_paths_found", found)
+            .put("magisk_paths_visible_without_root", magiskFound)
+            .put("root_authorization_verified", false)
+            .put("note", "These indicators are not proof of root. Use root_authorization_request to ask the installed root manager and verify effective UID 0. Bootloader unlock alone is not root access."))
+    }
+
+    private fun rootAuthorizationRequest(): JSONObject {
+        val result = runRootCommand("id", 30)
+        val isRoot = result.exitCode == 0 && Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        return JSONObject()
+            .put("ok", isRoot)
+            .put("root_authorized", isRoot)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("note", if (isRoot) "The su manager granted root for this invocation." else "Root was not granted, su is unavailable, or the request timed out. Check the root manager on-device.")
+    }
+
+    private fun rootPermissionAudit(): JSONObject {
+        val command = "id; printf '\\nSELINUX='; getenforce 2>/dev/null; " +
+            "printf '\\nBUILD_TYPE='; getprop ro.build.type; " +
+            "printf '\\nDEBUGGABLE='; getprop ro.debuggable; " +
+            "printf '\\nCAPABILITIES\\n'; grep -E '^(Cap(Inh|Prm|Eff|Bnd|Amb)|NoNewPrivs):' /proc/self/status; " +
+            "printf '\\nMOUNTS\\n'; mount | head -n 120"
+        val result = runRootCommand(command, 10)
+        val isRoot = result.exitCode == 0 && Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        return JSONObject()
+            .put("ok", isRoot)
+            .put("root_authorized", isRoot)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("audit", result.output)
+            .put("note", "The output reflects the root command's effective credentials and Android SELinux policy; it does not mean every privileged operation is permitted.")
+    }
+
+    /**
+     * Root-backed operations are intentionally fixed and read-only. This keeps
+     * the agent from turning a remembered su grant into an unrestricted shell.
+     */
+    private fun rootReadOnly(operation: String): JSONObject {
+        val command = when (operation) {
+            "packages" -> "id; pm list packages -f | head -n 500"
+            "processes" -> "id; ps -A | head -n 300"
+            "properties" -> "id; getprop | head -n 500"
+            "mounts" -> "id; mount | head -n 300"
+            "logs" -> "id; logcat -d -t 200"
+            else -> return JSONObject().put("ok", false).put("error", "Unsupported root operation.")
+        }
+        val result = runRootCommand(command, 15)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        return JSONObject()
+            .put("ok", result.exitCode == 0 && !result.timedOut && isRoot)
+            .put("root_authorized", isRoot)
+            .put("operation", operation)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("output_truncated", result.truncated)
+            .put("privacy_note", if (operation == "logs") "System logs can include personal data, tokens, and app activity." else JSONObject.NULL)
+    }
+
+    private fun rootGrantDeclaredRuntimePermissions(args: JSONObject): JSONObject {
+        if (!args.optBoolean("confirm", false)) {
+            return JSONObject().put("ok", false)
+                .put("error", "Explicit confirmation is required. Review the sensitive permissions and call again with confirm=true.")
+        }
+        val flags = if (Build.VERSION.SDK_INT >= 33)
+            PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
+        else null
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= 33)
+            appContext.packageManager.getPackageInfo(appContext.packageName, flags!!)
+        else appContext.packageManager.getPackageInfo(appContext.packageName, PackageManager.GET_PERMISSIONS)
+        val declared = info.requestedPermissions ?: emptyArray()
+        val eligible = declared.distinct().filter { permission ->
+            try {
+                @Suppress("DEPRECATION")
+                val permissionInfo = appContext.packageManager.getPermissionInfo(permission, 0)
+                (permissionInfo.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) ==
+                    android.content.pm.PermissionInfo.PROTECTION_DANGEROUS
+            } catch (_: Exception) { false }
+        }
+        val missing = eligible.filter { !granted(it) }
+        if (missing.isEmpty()) {
+            return ok(JSONObject().put("already_granted", eligible.size)
+                .put("attempted", 0).put("message", "All declared dangerous runtime permissions are already granted or none are eligible."))
+        }
+        val safePackage = appContext.packageName
+        val commands = missing.joinToString("; ") { permission ->
+            if (!permission.matches(Regex("[A-Za-z0-9_.]+"))) return@joinToString ""
+            "pm grant $safePackage $permission && echo GRANTED:$permission || echo FAILED:$permission"
+        }.trim(';', ' ', '\t')
+        if (commands.isBlank()) return JSONObject().put("ok", false).put("error", "No valid grant commands were generated.")
+        val result = runRootCommand("id; $commands", 25)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        val grantedRows = JSONArray()
+        val failedRows = JSONArray()
+        for (permission in missing) {
+            when {
+                result.output.contains("GRANTED:$permission") -> grantedRows.put(permission)
+                result.output.contains("FAILED:$permission") -> failedRows.put(permission)
+                else -> failedRows.put(permission)
+            }
+        }
+        return JSONObject()
+            .put("ok", isRoot && failedRows.length() == 0 && !result.timedOut)
+            .put("root_authorized", isRoot)
+            .put("attempted", missing.size)
+            .put("granted", grantedRows)
+            .put("failed_or_unconfirmed", failedRows)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("note", "Only permissions declared by this app and classified as dangerous by Android were attempted. Signature, privileged, role-restricted, and OEM-controlled permissions are not granted by this operation.")
+    }
+
+    private fun rootGrantEligibleAppOps(args: JSONObject): JSONObject {
+        if (!args.optBoolean("confirm", false)) {
+            return JSONObject().put("ok", false)
+                .put("error", "Explicit confirmation is required. Call again with confirm=true only if you want to attempt these special-access overrides.")
+        }
+        val operations = listOf(
+            "SYSTEM_ALERT_WINDOW", "WRITE_SETTINGS", "GET_USAGE_STATS",
+            "MANAGE_EXTERNAL_STORAGE", "REQUEST_INSTALL_PACKAGES",
+            "SCHEDULE_EXACT_ALARM", "POST_NOTIFICATION",
+            "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+            "RUN_IN_BACKGROUND", "RUN_ANY_IN_BACKGROUND"
+        )
+        val commands = operations.joinToString("; ") { operation ->
+            "appops set ${appContext.packageName} $operation allow && echo GRANTED:$operation || echo FAILED:$operation"
+        }
+        val result = runRootCommand("id; $commands", 25)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        val grantedRows = JSONArray()
+        val failedRows = JSONArray()
+        for (operation in operations) {
+            if (result.output.contains("GRANTED:$operation")) grantedRows.put(operation)
+            else failedRows.put(operation)
+        }
+        return JSONObject()
+            .put("ok", isRoot && failedRows.length() == 0 && !result.timedOut)
+            .put("root_authorized", isRoot)
+            .put("attempted", operations.size)
+            .put("granted", grantedRows)
+            .put("failed_or_unconfirmed", failedRows)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("note", "AppOps names and behavior vary by Android release and OEM. A successful AppOps write does not guarantee that every related feature is enabled; verify special_access_status and Android Settings.")
+    }
+
+    private data class RootCommandResult(
+        val exitCode: Int,
+        val output: String,
+        val timedOut: Boolean,
+        val truncated: Boolean
+    )
+
+    private fun runRootCommand(command: String, timeoutSeconds: Int): RootCommandResult {
+        val process = try {
+            ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+        } catch (e: Exception) {
+            return RootCommandResult(-1, e.message ?: "Could not start su.", false, false)
+        }
+        val output = ByteArrayOutputStream()
+        var truncated = false
+        val reader = Thread {
+            try {
+                val input = process.inputStream
+                val buffer = ByteArray(2048)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    val remaining = 65536 - total
+                    if (remaining > 0) {
+                        val accepted = minOf(count, remaining)
+                        output.write(buffer, 0, accepted)
+                        total += accepted
+                    }
+                    if (count > remaining) truncated = true
+                }
+            } catch (_: Exception) { }
+        }
+        reader.isDaemon = true
+        reader.start()
+        val finished = try { process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS) } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!finished) {
+            process.destroy()
+            try { if (!process.waitFor(250, TimeUnit.MILLISECONDS)) process.destroyForcibly() } catch (_: Exception) { process.destroyForcibly() }
+        }
+        try { reader.join(500) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        val text = output.toString(Charsets.UTF_8.name())
+        return RootCommandResult(
+            if (finished) try { process.exitValue() } catch (_: Exception) { -1 } else -1,
+            text,
+            !finished,
+            truncated
+        )
     }
 
     private fun ok(value: JSONObject) = JSONObject().put("ok", true).put("value", value)
@@ -183,6 +465,10 @@ class DeviceTools(private val context: Context) {
     private fun openSystemSettings(which: String): JSONObject {
         val action = when (which) {
             "notification" -> Settings.ACTION_APP_NOTIFICATION_SETTINGS
+            "notification_listener" -> Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
+            "modify_settings" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_WRITE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "picture_in_picture" -> if (Build.VERSION.SDK_INT >= 26) Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "full_screen_intent" -> if (Build.VERSION.SDK_INT >= 34) "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT" else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
             "usage" -> Settings.ACTION_USAGE_ACCESS_SETTINGS
             "files" -> if (Build.VERSION.SDK_INT >= 30) Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
@@ -190,10 +476,17 @@ class DeviceTools(private val context: Context) {
             "overlay" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_OVERLAY_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "wifi" -> Settings.ACTION_WIFI_SETTINGS
             "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            "alarms" -> if (Build.VERSION.SDK_INT >= 31) Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "unknown_apps" -> if (Build.VERSION.SDK_INT >= 26) Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "dnd" -> Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
+            "nfc" -> Settings.ACTION_NFC_SETTINGS
+            "privacy" -> Settings.ACTION_PRIVACY_SETTINGS
+            "app" -> Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             else -> return JSONObject().put("ok", false).put("error", "Unknown settings page")
         }
         val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (which in setOf("notification", "files", "battery", "overlay")) intent.data = Uri.parse("package:${context.packageName}")
+        if (which in setOf("files", "battery", "overlay", "alarms", "unknown_apps", "app", "modify_settings", "picture_in_picture", "full_screen_intent")) intent.data = Uri.parse("package:${context.packageName}")
+        if (which == "notification") intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         context.startActivity(intent)
         return ok(JSONObject().put("opened_settings", which))
     }
@@ -210,10 +503,161 @@ class DeviceTools(private val context: Context) {
             .put("app_version", version))
     }
 
+
+    private fun permissionAudit(): JSONObject {
+        val rows = JSONArray()
+        val pm = appContext.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= 33)
+            android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong())
+        else null
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= 33) pm.getPackageInfo(appContext.packageName, flags!!)
+            else pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+        val declared = info.requestedPermissions ?: emptyArray()
+        for (permission in declared.distinct().sorted()) {
+            val granted = pm.checkPermission(permission, appContext.packageName) == PackageManager.PERMISSION_GRANTED
+            var protection = "unknown"
+            try {
+                @Suppress("DEPRECATION")
+                val pi = pm.getPermissionInfo(permission, 0)
+                protection = when (pi.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) {
+                    android.content.pm.PermissionInfo.PROTECTION_DANGEROUS -> "dangerous_runtime"
+                    android.content.pm.PermissionInfo.PROTECTION_NORMAL -> "normal_install"
+                    android.content.pm.PermissionInfo.PROTECTION_SIGNATURE -> "signature_or_privileged"
+                    else -> "special_or_other"
+                }
+            } catch (_: Exception) { }
+            rows.put(JSONObject().put("permission", permission).put("granted", granted).put("protection", protection))
+        }
+        return ok(JSONObject().put("permissions", rows).put("count", rows.length())
+            .put("note", "This lists permissions declared by this app, not every permission in Android or permissions granted to other apps."))
+    }
+
+    /**
+     * Enumerates the permission constants shipped in the compile SDK's Manifest.permission.
+     * This is broader than the app manifest audit, but cannot enumerate OEM/custom permissions
+     * or permissions introduced by a newer SDK than the one used to compile this app.
+     */
+    /**
+     * Broad on-device permission inventory. Combines constants in the compile SDK with
+     * permission definitions the OS PackageManager exposes on this device. OEM-defined
+     * permissions and permissions hidden by OS visibility/privilege boundaries may remain
+     * undiscoverable; this is an inventory, not a way to bypass permission enforcement.
+     */
+    private fun permissionCatalog(): JSONObject {
+        val pm = appContext.packageManager
+        val declared = try {
+            @Suppress("DEPRECATION")
+            val info = if (Build.VERSION.SDK_INT >= 33)
+                pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong()))
+            else pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+            info.requestedPermissions.orEmpty().toSet()
+        } catch (_: Exception) { emptySet<String>() }
+
+        data class PermissionRow(
+            val name: String,
+            var constant: String? = null,
+            var ownerPackage: String? = null,
+            var group: String? = null,
+            var protection: String = "unknown_or_not_defined_on_this_device"
+        )
+        val inventory = linkedMapOf<String, PermissionRow>()
+        val fields = Manifest.permission::class.java.fields
+            .filter { java.lang.reflect.Modifier.isStatic(it.modifiers) && it.type == String::class.java }
+            .sortedBy { it.name }
+        for (field in fields) {
+            val permission = try { field.get(null) as? String } catch (_: Exception) { null } ?: continue
+            val row = inventory.getOrPut(permission) { PermissionRow(permission) }
+            row.constant = field.name
+        }
+
+        var deviceDefinitionsAvailable = false
+        var queryError: String? = null
+        try {
+            @Suppress("DEPRECATION")
+            val defined = pm.queryPermissionsByGroup(null, 0)
+            for (pi in defined) {
+                val name = pi.name ?: continue
+                val row = inventory.getOrPut(name) { PermissionRow(name) }
+                row.ownerPackage = pi.packageName
+                row.group = pi.group
+                row.protection = when (pi.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) {
+                    android.content.pm.PermissionInfo.PROTECTION_DANGEROUS -> "dangerous_runtime"
+                    android.content.pm.PermissionInfo.PROTECTION_NORMAL -> "normal_install"
+                    android.content.pm.PermissionInfo.PROTECTION_SIGNATURE -> "signature_or_privileged"
+                    else -> "special_or_other"
+                }
+            }
+            deviceDefinitionsAvailable = true
+        } catch (e: Exception) {
+            queryError = e.javaClass.simpleName
+        }
+
+        var declaredCount = 0
+        var grantedCount = 0
+        var deviceDefinedCount = 0
+        val rows = JSONArray()
+        for (row in inventory.values.sortedBy { it.name }) {
+            val isDeclared = row.name in declared
+            val granted = isDeclared && pm.checkPermission(row.name, appContext.packageName) == PackageManager.PERMISSION_GRANTED
+            if (isDeclared) declaredCount++
+            if (granted) grantedCount++
+            if (row.ownerPackage != null) deviceDefinedCount++
+            rows.put(JSONObject()
+                .put("constant", row.constant ?: JSONObject.NULL)
+                .put("permission", row.name)
+                .put("defined_on_device", row.ownerPackage != null)
+                .put("defined_by_package", row.ownerPackage ?: JSONObject.NULL)
+                .put("group", row.group ?: JSONObject.NULL)
+                .put("declared_by_app", isDeclared)
+                .put("granted_to_app", granted)
+                .put("protection", row.protection))
+        }
+        val result = JSONObject()
+            .put("permissions", rows)
+            .put("count", rows.length())
+            .put("sdk_constants_count", fields.size)
+            .put("device_defined_count", deviceDefinedCount)
+            .put("device_definition_query_succeeded", deviceDefinitionsAvailable)
+            .put("declared_count", declaredCount)
+            .put("declared_and_granted_count", grantedCount)
+            .put("device_api_level", Build.VERSION.SDK_INT)
+            .put("coverage_note", "Combines compile-SDK Manifest.permission constants with permission definitions returned by this device's PackageManager. It cannot guarantee discovery of every OEM/vendor, hidden, newer-SDK, or privileged permission.")
+            .put("grant_note", "Inventory does not grant permissions. Runtime permissions need user approval; special access uses OS settings or consent; signature/privileged permissions require platform authorization and cannot be obtained by an ordinary app.")
+        if (queryError != null) result.put("device_definition_query_error", queryError)
+        return ok(result)
+    }
+
+    private fun checkPermission(permission: String): JSONObject {
+        if (!permission.startsWith("android.permission.") || permission.length > 180)
+            return JSONObject().put("ok", false).put("error", "Supply a fully qualified android.permission.* name.")
+        val declared = try {
+            val pi = if (Build.VERSION.SDK_INT >= 33)
+                appContext.packageManager.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong()))
+            else {
+                @Suppress("DEPRECATION")
+                appContext.packageManager.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+            }
+            pi.requestedPermissions?.contains(permission) == true
+        } catch (_: Exception) { false }
+        if (!declared) return ok(JSONObject().put("permission", permission).put("declared", false).put("granted", false))
+        return ok(JSONObject().put("permission", permission).put("declared", true)
+            .put("granted", appContext.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED))
+    }
+
     private fun permissionStatus(): JSONObject {
         val all = JSONArray()
-        for (p in Permissions.ALL) all.put(JSONObject().put("permission", p).put("granted", granted(p)))
-        return ok(JSONObject().put("permissions", all).put("count", all.length()))
+        val pm = appContext.packageManager
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= 33)
+            pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong()))
+        else pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+        for (p in info.requestedPermissions.orEmpty().distinct().sorted()) {
+            all.put(JSONObject().put("permission", p).put("granted", pm.checkPermission(p, appContext.packageName) == PackageManager.PERMISSION_GRANTED))
+        }
+        return ok(JSONObject().put("permissions", all).put("count", all.length())
+            .put("runtime_requestable", Permissions.ALL.size)
+            .put("note", "Lists every permission declared by this app; special and privileged permissions may not be grantable to ordinary apps."))
     }
 
     private fun contacts(query: String, offset: Int, limit: Int): JSONObject {
@@ -295,25 +739,76 @@ class DeviceTools(private val context: Context) {
     }
 
 
+    private fun listNotifications(): JSONObject {
+        val service = NeuroClawNotificationListener.current
+            ?: return ok(JSONObject().put("enabled", false).put("notifications", JSONArray())
+                .put("note", "Enable NeuroClaw notification access in Android Settings first."))
+        val rows = JSONArray()
+        val active = try { service.activeNotifications } catch (_: SecurityException) { emptyArray() }
+        for (item in active.take(100)) {
+            val extras = item.notification.extras
+            rows.put(JSONObject()
+                .put("package", item.packageName)
+                .put("id", item.id)
+                .put("posted_at_ms", item.postTime)
+                .put("title", extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "")
+                .put("text", (extras?.getCharSequence(Notification.EXTRA_TEXT)
+                    ?: extras?.getCharSequence(Notification.EXTRA_BIG_TEXT))?.toString() ?: ""))
+        }
+        return ok(JSONObject().put("enabled", true).put("notifications", rows).put("count", rows.length()))
+    }
+
     private fun specialAccessStatus(): JSONObject {
         val out = JSONObject()
             .put("overlay", Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(appContext))
             .put("modify_system_settings", Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(appContext))
             .put("notifications_post", Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS))
+            .put("app_notifications_enabled", (appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).areNotificationsEnabled())
         if (Build.VERSION.SDK_INT >= 30) out.put("all_files", android.os.Environment.isExternalStorageManager())
         if (Build.VERSION.SDK_INT >= 23) {
             val power = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             out.put("ignoring_battery_optimizations", power.isIgnoringBatteryOptimizations(appContext.packageName))
+            val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            out.put("notification_policy_access", notificationManager.isNotificationPolicyAccessGranted)
+            val appOps = appContext.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            out.put("usage_stats_access", appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), appContext.packageName
+            ) == AppOpsManager.MODE_ALLOWED)
+            val enabledListeners = Settings.Secure.getString(appContext.contentResolver, "enabled_notification_listeners").orEmpty().split(':')
+            out.put("notification_listener_access", enabledListeners.contains(
+                ComponentName(appContext, NeuroClawNotificationListener::class.java).flattenToString()
+            ))
+            val enabledAccessibility = Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':')
+            out.put("agent_bridge_accessibility_enabled", enabledAccessibility.contains(
+                ComponentName(appContext, AgentBridgeService::class.java).flattenToString()
+            ))
         }
+        if (Build.VERSION.SDK_INT >= 26) out.put("install_unknown_apps_allowed", appContext.packageManager.canRequestPackageInstalls())
+        if (Build.VERSION.SDK_INT >= 31) {
+            val alarms = appContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            out.put("schedule_exact_alarms_allowed", alarms.canScheduleExactAlarms())
+        }
+        if (Build.VERSION.SDK_INT >= 34) {
+            val notifications = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            out.put("full_screen_intent_allowed", notifications.canUseFullScreenIntent())
+        }
+        out.put("background_location", Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+        out.put("background_body_sensors", Build.VERSION.SDK_INT < 34 || granted(Manifest.permission.BODY_SENSORS_BACKGROUND))
         return ok(out)
     }
 
-    private fun mediaPermission(kind: String): String =
-        if (Build.VERSION.SDK_INT >= 33) when (kind) {
+    private fun mediaPermission(kind: String): String {
+        if (Build.VERSION.SDK_INT >= 34 && kind in setOf("image", "video") &&
+            !granted(if (kind == "video") Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_MEDIA_IMAGES) &&
+            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) {
+            return Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        }
+        return if (Build.VERSION.SDK_INT >= 33) when (kind) {
             "video" -> Manifest.permission.READ_MEDIA_VIDEO
             "audio" -> Manifest.permission.READ_MEDIA_AUDIO
             else -> Manifest.permission.READ_MEDIA_IMAGES
         } else Manifest.permission.READ_EXTERNAL_STORAGE
+    }
 
     private fun listMedia(uri: Uri, nameColumn: String, permission: String, limit: Int, key: String): JSONObject {
         requirePermission(permission)
@@ -343,7 +838,7 @@ class DeviceTools(private val context: Context) {
     }
 
     private fun listPhotos(limit: Int): JSONObject {
-        val imagePermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
+        val imagePermission = mediaPermission("image")
         requirePermission(imagePermission)
         val rows = JSONArray()
         appContext.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
@@ -417,5 +912,24 @@ class DeviceTools(private val context: Context) {
             .putExtra(if (screen) ScreenCaptureActivity.EXTRA_NOTE else CaptureActivity.EXTRA_NOTE, note)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         return ok(JSONObject().put("opened", if (screen) "screen_capture_consent" else "camera_capture"))
+    }
+}
+
+
+/** Receives notifications only after the person explicitly enables notification access in Settings. */
+class NeuroClawNotificationListener : NotificationListenerService() {
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        current = this
+    }
+
+    override fun onListenerDisconnected() {
+        if (current === this) current = null
+        super.onListenerDisconnected()
+    }
+
+    companion object {
+        @Volatile var current: NeuroClawNotificationListener? = null
+            private set
     }
 }
