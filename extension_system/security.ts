@@ -35,7 +35,7 @@ const SENSITIVE_PERMISSIONS: ReadonlySet<ExtensionPermission> = new Set([
   "linux-suid-sgid-sticky", "linux-acl-read", "linux-acl-write",
   "linux-extended-attributes", "linux-immutable-append-only", "linux-mount-unmount",
   "linux-removable-storage", "linux-user-group-read", "linux-user-group-admin",
-  "linux-sudo-admin", "linux-process-inspect", "linux-process-control",
+  "linux-sudo-admin", "linux-root-access-request", "linux-polkit-elevation", "linux-privileged-helper-manage", "linux-process-inspect", "linux-process-control",
   "linux-service-control", "linux-package-management", "linux-kernel-modules",
   "linux-sysctl", "linux-hostname-time-power", "linux-boot-configuration",
   "linux-scheduled-jobs", "linux-environment-variables", "linux-system-logs",
