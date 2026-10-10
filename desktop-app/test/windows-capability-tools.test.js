@@ -13,7 +13,7 @@ function check(condition, message) {
 
 const tools = listTools();
 const ids = tools.map((tool) => tool.id);
-check(tools.length >= 220, 'catalog covers 220+ individually named Windows capability tools');
+check(tools.length >= 230, 'catalog covers 230+ individually named Windows capability tools');
 const preload = fs.readFileSync(path.join(__dirname, '../src/preload/preload.js'), 'utf8');
 check(ids.every((id) => new RegExp('^\\s{4}' + id + ':\\s*\\(', 'm').test(preload)), 'every registry tool has an individual preload API method');
 check(new Set(ids).size === ids.length, 'every tool ID is unique');
@@ -35,6 +35,15 @@ check(getTool('fileAccessControl').implementation === 'native-windows', 'selecte
 check(getTool('aclPermissionCheck').implementation === 'native-windows', 'selected-path access check is implemented');
 check(getTool('windowsPermissionSettings').implementation === 'native', 'Windows privacy settings pages can be opened');
 check(getTool('windowsCapabilityManifest').implementation === 'native', 'manifest capability applicability is reported without claiming grants');
+check(getTool('windowsTokenPrivileges').implementation === 'native-windows', 'current token privileges can be inspected without changing them');
+check(getTool('windowsFirewallStatus').implementation === 'native-windows', 'firewall profile status is read-only');
+check(getTool('windowsDefenderStatus').implementation === 'native-windows', 'Defender status inspection is read-only');
+check(getTool('windowsServiceStatus').implementation === 'native-windows', 'service status inspection is available with validation');
+check(getTool('windowsServiceSecurityDescriptor').implementation === 'native-windows', 'service security descriptor inspection is available with validation');
+check(getTool('windowsAccountPolicy').implementation === 'native-windows', 'local account policy inspection is read-only');
+check(getTool('windowsNetworkShares').implementation === 'native-windows', 'network share inventory is read-only');
+check(getTool('windowsPowerShellExecutionPolicy').implementation === 'native-windows', 'execution policy inspection does not alter policy');
+
 check(getToolStatus('contacts').status === 'adapter-required', 'unsupported provider tools report adapter-required status');
 check(getTool('deleteFile').implementation === 'adapter-required', 'destructive file operations are not falsely marked available');
 check(getTool('revokeAppConsent').implementation === 'adapter-required', 'consent revocation is not falsely marked implemented');
