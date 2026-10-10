@@ -880,6 +880,42 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
           note: 'Reports the current process token only; this does not grant or change privileges.',
         };
       }
+      case 'uacElevationRequest': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const action = args.action || 'status';
+        if (action === 'status') {
+          const groups = execFileSync('whoami.exe', ['/groups'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+          return { success: true, elevated: /S-1-16-12288|S-1-16-16384/.test(groups), action: 'status' };
+        }
+        if (action !== 'relaunch-elevated') return { success: false, error: 'Only status and relaunch-elevated are supported.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Request administrator access', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Restart .my-ai as administrator?',
+          message: 'Windows will show a User Account Control (UAC) prompt.',
+          detail: 'If you approve, .my-ai will relaunch as administrator. This does not bypass UAC, grant SYSTEM privileges, or enable unrestricted access. Save your work first.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const executable = process.execPath;
+        const launchArgs = app.isPackaged ? [] : [app.getAppPath()];
+        const exe64 = Buffer.from(executable, 'utf8').toString('base64');
+        const args64 = Buffer.from(JSON.stringify(launchArgs), 'utf8').toString('base64');
+        const script = [
+          "$ErrorActionPreference = 'Stop'",
+          "$exe = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + exe64 + "'))",
+          "$raw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + args64 + "'))",
+          "$items = @(ConvertFrom-Json -InputObject $raw)",
+          "$quoted = @($items | ForEach-Object { '"' + ([string]$_).Replace('"', '\\"') + '"' })",
+          "try { Start-Process -FilePath $exe -ArgumentList ($quoted -join ' ') -Verb RunAs -ErrorAction Stop; exit 0 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
+        ].join('\n');
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
+        try {
+          execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 256 * 1024 });
+          app.quit();
+          return { success: true, requested: true, relaunching: true, note: 'Windows UAC decides whether elevation is granted.' };
+        } catch (error) {
+          return { success: false, status: 'elevation-not-started', error: String(error && error.message || error).slice(0, 2000), note: 'The current process remains unelevated; no UAC bypass was attempted.' };
+        }
+      }
       case 'fileAccessControl': {
         if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
         const selected = await dialog.showOpenDialog(mainWindow, {
