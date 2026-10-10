@@ -247,8 +247,8 @@ class DeviceTools(private val context: Context) {
             val granted = pm.checkPermission(permission, appContext.packageName) == PackageManager.PERMISSION_GRANTED
             var protection = "unknown"
             try {
-                val pi = if (Build.VERSION.SDK_INT >= 28) pm.getPermissionInfo(permission, 0)
-                    else @Suppress("DEPRECATION") pm.getPermissionInfo(permission, 0)
+                @Suppress("DEPRECATION")
+                val pi = pm.getPermissionInfo(permission, 0)
                 protection = when (pi.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) {
                     android.content.pm.PermissionInfo.PROTECTION_DANGEROUS -> "dangerous_runtime"
                     android.content.pm.PermissionInfo.PROTECTION_NORMAL -> "normal_install"
@@ -281,8 +281,17 @@ class DeviceTools(private val context: Context) {
 
     private fun permissionStatus(): JSONObject {
         val all = JSONArray()
-        for (p in Permissions.ALL) all.put(JSONObject().put("permission", p).put("granted", granted(p)))
-        return ok(JSONObject().put("permissions", all).put("count", all.length()))
+        val pm = appContext.packageManager
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= 33)
+            pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong()))
+        else pm.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+        for (p in info.requestedPermissions.orEmpty().distinct().sorted()) {
+            all.put(JSONObject().put("permission", p).put("granted", pm.checkPermission(p, appContext.packageName) == PackageManager.PERMISSION_GRANTED))
+        }
+        return ok(JSONObject().put("permissions", all).put("count", all.length())
+            .put("runtime_requestable", Permissions.ALL.size)
+            .put("note", "Lists every permission declared by this app; special and privileged permissions may not be grantable to ordinary apps."))
     }
 
     private fun contacts(query: String, offset: Int, limit: Int): JSONObject {
