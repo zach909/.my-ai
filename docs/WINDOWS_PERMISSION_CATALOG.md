@@ -138,3 +138,12 @@ const selected = await window.electronAPI.windowsTools.selectFile();
 The catalog includes a named tool for each capability. The first implemented tools include file/folder selection, bounded reads/writes through native dialogs, camera photo capture, microphone recording capped at 10 seconds, geolocation, clipboard read/write, notifications, network-interface information, system/environment information, Windows process listing, consent-gated program launch and stopping only app-owned processes, and opening URLs/paths.
 
 All camera, microphone, location, clipboard-read, and external-program operations are permission/consent sensitive. Camera and microphone streams are stopped after capture; returned media is passed back as a photo data URL or base64 audio recording. The tools that need provider/native adapters return `adapter-required` rather than claiming to work. See `desktop-app/src/main/windows-capability-tools.js` for the live registry and runtime status.
+
+
+## Expanded per-capability API inventory
+
+The registry now contains 168 individually named capability tools. Every registry ID is exposed as a separate method on `window.electronAPI.windowsTools`; use `list()` and `status(id)` to discover each capability and its reported implementation state. The full registry is the authoritative list of tool IDs.
+
+Examples of newly split capabilities include file create/update/move/rename/delete and monitoring; OneDrive/synced folders; audio/screen capture and OCR; camera/audio device enumeration; Ethernet, DNS, proxy, VPN and network metadata; app/window control; device/scanner/NFC metadata; Windows Update, Defender, encryption and Secure Boot status; startup entries, services, scheduled tasks, registry inspection/modification; credential/passkey provider flows; app permission state, consent history/revocation, audit logs, data export/deletion and backup/restore.
+
+**Important status distinction:** all 168 are registered and callable by name, but most newly cataloged tools intentionally return `adapter-required` or `admin-or-adapter-required` until their real Windows/provider implementation is written and tested. Registration is not permission granted, and it is not proof of functional support. The implemented main-process handlers remain the subset listed above; capability tests verify registry/API coverage and honest status reporting, not hardware integration or all Windows permission paths.
