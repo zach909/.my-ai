@@ -540,6 +540,10 @@ class DeviceTools(private val context: Context) {
             val alarms = appContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
             out.put("schedule_exact_alarms_allowed", alarms.canScheduleExactAlarms())
         }
+        if (Build.VERSION.SDK_INT >= 34) {
+            val notifications = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            out.put("full_screen_intent_allowed", notifications.canUseFullScreenIntent())
+        }
         out.put("background_location", Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
         out.put("background_body_sensors", Build.VERSION.SDK_INT < 34 || granted(Manifest.permission.BODY_SENSORS_BACKGROUND))
         return ok(out)
