@@ -304,6 +304,10 @@ enum ExtendedNativeTools {
             return await DocumentPickerFlow.exportFile(arguments)
         case "camera.capture_photo":
             return await CameraCaptureFlow.capturePhoto()
+        case "microphone.record":
+            return await AudioRecordingFlow.shared.start()
+        case "microphone.stop_recording":
+            return await AudioRecordingFlow.shared.stop()
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -322,7 +326,7 @@ enum ExtendedNativeTools {
             return await deleteReminder(arguments)
         case "homekit.get_status", "homekit.list_homes", "homekit.list_accessories", "homekit.control_accessory":
             return (501, ["error": "homekit_requires_foreground_setup", "detail": "HomeKit requires the entitlement and an app-owned manager lifecycle. No accessory was changed."])
-        case "microphone.record", "microphone.stop_recording", "network.local_discovery", "nearby.start_session", "nearby.stop_session":
+        case "network.local_discovery", "nearby.start_session", "nearby.stop_session":
             return (409, ["error": "foreground_or_capability_flow_required", "detail": "This operation requires a foreground UIKit flow, a configured entitlement, or a supported user-selected resource. No device data was changed."])
         default:
             return (404, ["error": "unknown_extended_tool", "name": name])
@@ -779,5 +783,68 @@ private final class CameraCaptureFlow: NSObject, UIImagePickerControllerDelegate
         guard let continuation else { return }
         self.continuation = nil
         continuation.resume(returning: (499, ["error": "user_cancelled"]))
+    }
+}
+
+
+@MainActor
+private final class AudioRecordingFlow {
+    static let shared = AudioRecordingFlow()
+    private var recorder: AVAudioRecorder?
+    private var recordingURL: URL?
+
+    func start() async -> (Int, [String: Any]) {
+        guard recorder?.isRecording != true else {
+            return (409, ["error": "recording_already_active"])
+        }
+        let session = AVAudioSession.sharedInstance()
+        let permission: Bool
+        switch session.recordPermission {
+        case .granted: permission = true
+        case .denied: permission = false
+        case .undetermined:
+            permission = await withCheckedContinuation { continuation in
+                session.requestRecordPermission { continuation.resume(returning: $0) }
+            }
+        @unknown default: permission = false
+        }
+        guard permission else { return (403, ["error": "microphone_permission_denied"]) }
+        do {
+            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try session.setActive(true)
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("neuroclaw-recording-" + UUID().uuidString + ".m4a")
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+            ]
+            let recorder = try AVAudioRecorder(url: url, settings: settings)
+            guard recorder.record() else { return (500, ["error": "audio_recording_failed_to_start"]) }
+            self.recorder = recorder
+            recordingURL = url
+            return (200, ["recording": true, "format": "m4a", "note": "Recording continues until microphone.stop_recording is called or iOS interrupts it."])
+        } catch {
+            try? session.setActive(false)
+            return (500, ["error": "audio_recording_setup_failed", "detail": error.localizedDescription])
+        }
+    }
+
+    func stop() async -> (Int, [String: Any]) {
+        guard let recorder, let url = recordingURL, recorder.isRecording else {
+            return (409, ["error": "no_active_recording"])
+        }
+        recorder.stop()
+        self.recorder = nil
+        recordingURL = nil
+        try? AVAudioSession.sharedInstance().setActive(false)
+        do {
+            let data = try Data(contentsOf: url)
+            try? FileManager.default.removeItem(at: url)
+            return (200, ["recording": false, "mime_type": "audio/mp4", "size_bytes": data.count, "data_base64": data.base64EncodedString()])
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            return (500, ["error": "audio_recording_read_failed", "detail": error.localizedDescription])
+        }
     }
 }
