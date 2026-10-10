@@ -58,3 +58,12 @@ The runtime registry also includes Apple's documented TCC service identifiers th
 Apple's documented service list is a list of protected-resource services, not a promise that every service has a public request API or a dedicated Settings pane. For services without a supported request API, the tool reports that a feature-specific native implementation or user/admin action is required. It must never report a grant based only on a purpose string, entitlement, catalog entry, or Settings link.
 
 Official reference: [Apple — Resetting access to protected resources in macOS](https://developer.apple.com/documentation/Xcode/resetting-access-to-protected-resources-in-macOS).
+
+
+## Final Apple-listed protected-resource coverage pass
+
+The catalog includes explicit entries for the remaining services in Apple's published macOS protected-resource reset list: EnergyKit guidance, external-camera media, File Provider domains and presence, Focus status, and Game Center friends. Protected developer-file access is also represented separately. The catalog now has **82 tool IDs** and the preload exposes the same IDs.
+
+This is a coverage inventory, not 82 independent macOS permission prompts. Apple documents a finite list of protected-resource service names, while other capabilities (for example administrator rights, keychain access, network sockets, printing, biometric authentication, and background items) are governed by different APIs, entitlements, user approvals, or operating-system policies. The app must implement and test each feature-specific API; adding a registry entry does not itself implement or grant the capability.
+
+Apple's reference list: [Resetting access to protected resources in macOS](https://developer.apple.com/documentation/xcode/resetting-access-to-protected-resources-in-macos) and [Protected resources](https://developer.apple.com/documentation/bundleresources/protected-resources).
