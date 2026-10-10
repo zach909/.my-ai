@@ -12,6 +12,7 @@ const { spawn, exec, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const selfsigned = require('selfsigned');
 const { startAppServer, DESKTOP_TOKEN_HEADER } = require('./app-server');
+const windowsCapabilityTools = require('./windows-capability-tools');
 
 /**
  * Best-effort blocklist for the most common catastrophic-accident shell
@@ -459,6 +460,136 @@ app.on('will-quit', () => {
 /**
  * IPC Handlers for Native OS Interactions
  */
+
+// Windows capability tools. New handlers are restricted to this app's own
+// BrowserWindow. Each catalog entry has its own exposed tool name; tools that
+// need a provider/native adapter return adapter-required instead of faking access.
+function isTrustedCapabilityCaller(event) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() &&
+    event && event.sender && event.sender.id === mainWindow.webContents.id);
+}
+
+ipcMain.handle('windows-tools:list', async (event) => {
+  if (!isTrustedCapabilityCaller(event)) return { success: false, error: 'Untrusted IPC caller.' };
+  return { success: true, tools: windowsCapabilityTools.listTools() };
+});
+
+ipcMain.handle('windows-tools:status', async (event, id) => {
+  if (!isTrustedCapabilityCaller(event)) return { success: false, error: 'Untrusted IPC caller.' };
+  return windowsCapabilityTools.getToolStatus(id);
+});
+
+ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
+  if (!isTrustedCapabilityCaller(event)) return { success: false, error: 'Untrusted IPC caller.' };
+  const tool = windowsCapabilityTools.getTool(id);
+  if (!tool) return { success: false, error: 'Unknown Windows capability tool.' };
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return { success: false, error: 'Tool arguments must be an object.' };
+  }
+
+  try {
+    switch (id) {
+      case 'selectFile': {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile'],
+          title: typeof args.title === 'string' ? args.title.slice(0, 120) : 'Choose a file',
+          filters: Array.isArray(args.filters) ? args.filters : [],
+        });
+        return { success: !result.canceled, canceled: result.canceled, paths: result.filePaths };
+      }
+      case 'selectDirectory': {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openDirectory'],
+          title: typeof args.title === 'string' ? args.title.slice(0, 120) : 'Choose a folder',
+        });
+        return { success: !result.canceled, canceled: result.canceled, paths: result.filePaths };
+      }
+      case 'readSelectedFile': {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile'], title: 'Choose a file to read',
+        });
+        if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+        const stat = fs.statSync(result.filePaths[0]);
+        if (!stat.isFile() || stat.size > 10 * 1024 * 1024) {
+          return { success: false, error: 'Choose a regular file no larger than 10 MB.' };
+        }
+        return { success: true, path: result.filePaths[0], content: fs.readFileSync(result.filePaths[0], 'utf-8') };
+      }
+      case 'writeSelectedFile': {
+        const result = await dialog.showSaveDialog(mainWindow, {
+          title: 'Choose where to save text',
+          defaultPath: typeof args.defaultPath === 'string' ? path.basename(args.defaultPath) : 'output.txt',
+        });
+        if (result.canceled || !result.filePath) return { success: false, canceled: true };
+        if (typeof args.content !== 'string') return { success: false, error: 'content must be a string.' };
+        if (Buffer.byteLength(args.content, 'utf8') > 10 * 1024 * 1024) {
+          return { success: false, error: 'Content exceeds the 10 MB limit.' };
+        }
+        fs.writeFileSync(result.filePath, args.content, { encoding: 'utf8', flag: 'w' });
+        return { success: true, path: result.filePath };
+      }
+      case 'clipboardWrite': {
+        const { clipboard } = require('electron');
+        if (typeof args.text !== 'string') return { success: false, error: 'text must be a string.' };
+        clipboard.writeText(args.text.slice(0, 1000000));
+        return { success: true };
+      }
+      case 'notifications': {
+        const { Notification } = require('electron');
+        if (!Notification || !Notification.isSupported()) {
+          return { success: false, status: 'unsupported', error: 'Desktop notifications are not supported here.' };
+        }
+        const title = typeof args.title === 'string' ? args.title.slice(0, 120) : '.my-ai';
+        const body = typeof args.body === 'string' ? args.body.slice(0, 2000) : '';
+        new Notification({ title, body }).show();
+        return { success: true };
+      }
+      case 'networkInterfaces':
+        return { success: true, interfaces: require('os').networkInterfaces() };
+      case 'environmentInfo': {
+        const safeKeys = ['OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'ComSpec', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH'];
+        const env = {};
+        for (const key of safeKeys) {
+          if (process.env[key] !== undefined) env[key] = process.env[key];
+        }
+        return { success: true, environment: env };
+      }
+      case 'systemInfo':
+        return windowsCapabilityTools.getToolStatus('systemInfo');
+      case 'openUrl': {
+        if (typeof args.url !== 'string') return { success: false, error: 'url must be a string.' };
+        const parsed = new URL(args.url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return { success: false, error: 'Only http and https URLs are allowed.' };
+        await shell.openExternal(parsed.href);
+        return { success: true };
+      }
+      case 'openPath': {
+        if (typeof args.path !== 'string' || !path.isAbsolute(args.path)) {
+          return { success: false, error: 'An absolute path is required.' };
+        }
+        const error = await shell.openPath(args.path);
+        return error ? { success: false, error } : { success: true };
+      }
+      case 'processList': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const { stdout } = await new Promise((resolve, reject) => {
+          execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
+          resolve({ stdout: execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024 }) });
+        });
+        return { success: true, output: stdout };
+      }
+      default:
+        return {
+          success: false,
+          status: tool.implementation === 'admin-or-adapter' ? 'admin-or-adapter-required' : 'adapter-required',
+          tool: tool.toolName,
+          message: tool.description,
+        };
+    }
+  } catch (error) {
+    return { success: false, error: error && error.message ? error.message : String(error) };
+  }
+});
 
 // File System Operations
 ipcMain.handle('select-directory', async () => {
