@@ -1268,7 +1268,27 @@ export class NeuronMesh {
   private denseWeights: Float32Array = new Float32Array(0);
   private denseLayout: boolean = false;
 
+  /**
+   * Source of randomness for biases and weights. `seed` used to be stored in
+   * the config and then ignored: every bias and weight came from Math.random(),
+   * so two meshes built with the same seed differed. A caller that passes a
+   * seed now gets a reproducible mesh (mulberry32, same as the perturbation
+   * search further down). A caller that passes none keeps Math.random, as
+   * before -- `seed` defaults to 42 in the config, so seeding by default would
+   * make every unseeded mesh in the system identical.
+   */
+  private rand: () => number = Math.random;
+
   constructor(config: Partial<MeshConfig> = {}) {
+    if (config.seed !== undefined) {
+      let a = config.seed >>> 0;
+      this.rand = () => {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
     const nodeCount = config.nodeCount ?? config.initialNodeCount ?? 10;
     const actFn = config.activationFn || config.activationFunction || 'relu';
     this.config = {
@@ -1291,7 +1311,7 @@ export class NeuronMesh {
       const node: NeuronNode = {
         id,
         activation: 0,
-        bias: (Math.random() * 2 - 1) * 0.1,
+        bias: (this.rand() * 2 - 1) * 0.1,
         connections: new Map(),
         layer: 0,
         activationHistory: [],
@@ -1312,8 +1332,8 @@ export class NeuronMesh {
       const fromNode = this.nodes.get(tempIds[i])!;
       for (let j = 0; j < tempIds.length; j++) {
         if (i === j) continue;
-        if (density < 1 && Math.random() >= density) continue;
-        fromNode.connections.set(tempIds[j], (Math.random() * 2 - 1) * weightScale);
+        if (density < 1 && this.rand() >= density) continue;
+        fromNode.connections.set(tempIds[j], (this.rand() * 2 - 1) * weightScale);
       }
     }
     this.refreshCache();
@@ -1866,7 +1886,7 @@ export class NeuronMesh {
     const node: NeuronNode = {
       id,
       activation: 0,
-      bias: (Math.random() * 2 - 1) * 0.1,
+      bias: (this.rand() * 2 - 1) * 0.1,
       connections: new Map(),
       layer,
       activationHistory: [],
@@ -1875,8 +1895,8 @@ export class NeuronMesh {
     if (group !== undefined) this.nodeGroups.set(id, group);
 
     for (const [, other] of this.nodes) {
-      if (other.id !== id && Math.random() < this.config.connectionDensity) {
-        const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
+      if (other.id !== id && this.rand() < this.config.connectionDensity) {
+        const weight = (this.rand() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
         node.connections.set(other.id, weight);
         other.connections.set(id, weight);
       }
@@ -1991,9 +2011,9 @@ export class NeuronMesh {
       const newId = idMap.get(oldId)!;
       const newNode = this.nodes.get(newId)!;
       for (const existingId of existingIds) {
-        if (density < 1 && Math.random() >= density) continue;
+        if (density < 1 && this.rand() >= density) continue;
         const existingNode = this.nodes.get(existingId)!;
-        const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
+        const weight = (this.rand() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
         newNode.connections.set(existingId, weight);
         existingNode.connections.set(newId, weight);
       }

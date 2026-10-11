@@ -37,16 +37,31 @@ describe('Architecture experiments', () => {
     expect(topo.nodes.every(x => !x.connections.has(x.id))).toBe(true);
   });
 
-  // KNOWN BUG: NeuronMesh stores `seed` but draws every bias and weight from
-  // Math.random() (onebrain.ts, constructor), so two meshes with the same seed
-  // differ. `it.fails` keeps the suite green while this stays unfixed and turns
-  // red the moment seeding works, so it must then be changed to a plain `it`.
-  it.fails('E02 same seed gives the same mesh and the same propagation', () => {
+  it('E02 same seed gives the same mesh and the same propagation', () => {
     const run = () => new NeuronMesh({ nodeCount: 16, connectionDensity: 1, seed: 42, propagationSteps: 20 })
       .propagate(new Map([[0, 1], [1, -1]])).finalStates;
     const a = run();
     const b = run();
     expect(finite(a.values())).toBe(true);
+    for (const [id, v] of a) expect(b.get(id)).toBeCloseTo(v, 9);
+  });
+
+  it('E02b different seeds give different meshes', () => {
+    const run = (seed: number) => new NeuronMesh({ nodeCount: 16, connectionDensity: 1, seed, propagationSteps: 20 })
+      .propagate(new Map([[0, 1], [1, -1]])).finalStates;
+    const a = run(42);
+    const b = run(7);
+    expect([...a].some(([id, v]) => Math.abs(v - b.get(id)!) > 1e-9)).toBe(true);
+  });
+
+  it('E02c a seeded mesh stays reproducible after growing', () => {
+    const run = () => {
+      const m = new NeuronMesh({ nodeCount: 8, connectionDensity: 1, seed: 42 });
+      m.addNode(0);
+      return m.propagate(new Map([[0, 1]])).finalStates;
+    };
+    const a = run();
+    const b = run();
     for (const [id, v] of a) expect(b.get(id)).toBeCloseTo(v, 9);
   });
 
