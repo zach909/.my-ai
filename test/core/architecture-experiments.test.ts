@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { NeuronMesh } from '../../models && skills/core/onebrain';
+import { NeuronMesh, HyperDimensionalEngine, ZipLoopInterface, QuantumNeuralNet } from '../../models && skills/core/onebrain';
+import { CodeToNetCompiler } from '../../models && skills/core/code-to-net';
 import { RLMTrainer } from '../../models && skills/core/rlm';
 import { NetSkillRouter } from '../../models && skills/core/net-skill-router';
 
@@ -119,13 +120,246 @@ describe('Architecture experiments', () => {
     expect(retained).toBeLessThan(learned * 0.5);
   });
 
-  it.todo('E08 Zip Loop baseline: drive the real ZipLoopInterface and check bits in = bits out');
 
-  it.todo('E09 hyperdimensional state stays finite: run the real HyperDimensionalEngine, not a local tanh loop');
 
-  it.todo('E10 quantum interference ablation: call the real interference code with constructive vs destructive phase');
 
-  it.todo('E11 code-to-net baseline: compile a real affine function through the Code-to-Net compiler');
+
+  // ---- E03b: stability across seeds, sizes and activation functions ----
+  it('E03b settling stays finite for every activation function, size and seed', () => {
+    for (const activationFunction of ['relu', 'tanh', 'sigmoid', 'swish'] as const) {
+      for (const nodeCount of [8, 32, 64]) {
+        for (let seed = 1; seed <= 3; seed++) {
+          const mesh = new NeuronMesh({ nodeCount, connectionDensity: 1, seed, activationFunction, propagationSteps: 60 });
+          const r = mesh.propagate(new Map([[0, 5], [1, -5], [2, 3]]));
+          expect(finite(r.finalStates.values())).toBe(true);
+          expect([...r.finalStates.values()].every(v => Math.abs(v) < 1e3)).toBe(true);
+        }
+      }
+    }
+  });
+
+  // ---- E05b: routing accuracy on paraphrases, not on two unrelated skills ----
+  // Measured: 12 of 24 exactly right with 8 skills (chance is 3). It misroutes queries that share
+  // words with the skill description, and it never abstains: nonsense is still routed somewhere.
+  it('E05b routing is better than chance but weak on paraphrases, and never abstains', () => {
+    const r = new NetSkillRouter(1, 64);
+    const skills: [string, string][] = [
+      ['code', 'write debug and test software programs'], ['music', 'compose play and analyze music songs'],
+      ['cooking', 'cook recipes food ingredients and baking'], ['law', 'legal contracts court lawyers and regulations'],
+      ['medicine', 'medical symptoms disease treatment and doctors'], ['travel', 'plan trips flights hotels and sightseeing'],
+      ['finance', 'money budget investing stocks and taxes'], ['sports', 'football basketball training and athletes'],
+    ];
+    skills.forEach(([id, meaning]) => r.register({ id, name: id, meaning }));
+    const queries: [string, string][] = [
+      ['debug my python program', 'code'], ['fix this bug in the software', 'code'], ['write a function to sort a list', 'code'],
+      ['compose a melody for piano', 'music'], ['analyze this song', 'music'], ['what chords go with this tune', 'music'],
+      ['bake bread with yeast', 'cooking'], ['a recipe for dinner with chicken', 'cooking'], ['how long to cook rice', 'cooking'],
+      ['is this contract legal', 'law'], ['sue my landlord in court', 'law'], ['what regulations apply to my business', 'law'],
+      ['what are the symptoms of the flu', 'medicine'], ['treatment for a broken arm', 'medicine'], ['should I see a doctor about this rash', 'medicine'],
+      ['book a hotel in paris', 'travel'], ['plan my trip to japan', 'travel'], ['cheap flights to rome', 'travel'],
+      ['how do I budget my money', 'finance'], ['should I invest in stocks', 'finance'], ['how are taxes calculated', 'finance'],
+      ['best training plan for a marathon', 'sports'], ['who won the basketball game', 'sports'], ['football tactics for defense', 'sports'],
+    ];
+    const hits = queries.filter(([q, want]) => { const ids = r.select(q).ids; return ids.length === 1 && ids[0] === want; }).length;
+    expect(hits).toBeGreaterThanOrEqual(queries.length * 0.3);   // far above the 12.5% chance level
+    expect(hits).toBeLessThan(queries.length * 0.8);             // but nowhere near reliable
+    expect(r.select('qwzx blorf').ids.length).toBeGreaterThan(0); // no "I don't know"
+  });
+
+  // ---- E08: the Zip Loop, against a real engine ----
+  const RAMP = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, toggleIn: 4, toggleOut: 5 };
+  const liveConfig = () => ({
+    dimensions: 64, ballStates: 8, neuronCount: 64, stateTransitionThreshold: 0.4, noveltyDecay: 0.05,
+    historyLength: 500, learningRate: 0.05, influenceDecay: 0.95, crossInfluenceStrength: 0.2,
+    hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1, waveGain: 0.1, connectionBias: true, propagationSteps: 32,
+  });
+  const denseConfig = () => ({
+    neuronCount: 24, dimensions: 8, propagationSteps: 24, convergenceThreshold: 0.01,
+    hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1, waveGain: 0.1, connectionBias: true,
+  });
+  const bitsOf = (byte: number) => Array.from({ length: 8 }, (_, i) => (byte >> (7 - i)) & 1);
+
+  it('E08a bits go in one tick each, most significant first', () => {
+    const engine = new HyperDimensionalEngine(denseConfig() as never);
+    const zip = new ZipLoopInterface(engine, RAMP);
+    const drove: number[] = [];
+    const real = engine.process.bind(engine);
+    (engine as any).process = (input: number[], a: unknown, driven: Set<number>, ...rest: unknown[]) => {
+      drove.push([...driven].filter(id => id === RAMP.bit0In || id === RAMP.bit1In)[0]);
+      return (real as any)(input, a, driven, ...rest);
+    };
+    zip.sendByte(0b01101001);
+    expect(drove.slice(0, 8)).toEqual([0, 1, 1, 0, 1, 0, 0, 1]);
+  });
+
+  // Measured: after hearing "hi" the live-sized network (64 neurons, full equation) has almost no
+  // activity left (max neuron energy ~0.03) and the reader gets nothing, four reads out of four.
+  it('E08b a live-configured network is silent after hearing a message', () => {
+    const engine = new HyperDimensionalEngine(liveConfig() as never);
+    const zip = new ZipLoopInterface(engine, RAMP);
+    zip.sendBytes(new Uint8Array([0x68, 0x69]));
+    for (let i = 0; i < 4; i++) expect(zip.nextOutputByte()).toBeNull();
+  });
+
+  // Measured: in a dense configuration neuron energy saturates below 1.0 while the mean climbs
+  // past 0.9, and the reader needs an output neuron above 1.5x the MEAN. That line is above the
+  // largest energy any neuron can have, so no bit can ever be read, whatever was learned.
+  it('E08c in a dense network the "active" line is higher than any neuron can reach', () => {
+    const engine = new HyperDimensionalEngine(denseConfig() as never);
+    for (let t = 0; t < 60; t++) engine.process(new Array(8).fill(1), undefined, new Set([t % 2 ? 3 : 2]), undefined, { learn: true });
+    const n = engine.getNeuronCount();
+    const energies = Array.from({ length: n }, (_, i) => engine.getNeuronEnergy(i));
+    expect(Math.max(...energies)).toBeLessThanOrEqual(1 + 1e-9);
+    expect(engine.meanNeuronEnergy() * 1.5).toBeGreaterThan(Math.max(...energies));
+  });
+
+  // The thing your idea needs: teach input -> answer through the loop, then get the answer back.
+  // There is no output-training method in the repo, so this uses the repo's own Hebbian learning
+  // with the output neurons driven (teacher forcing) while the question is still in the mesh.
+  // Measured at time of writing: silent in every setting tried (3 learning rates/strengths, 10-40
+  // epochs, sparse default network). `it.fails` keeps the suite green and goes red the day it works.
+  it.fails('E08d a loop taught question -> answer speaks the answer back', () => {
+    const pairs: [number, number][] = [[0x41, 0x58], [0x42, 0x27], [0x43, 0xC3], [0x44, 0x0E]];
+    const engine: any = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, learningRate: 0.3 } as never);
+    const zip: any = new ZipLoopInterface(engine, RAMP);
+    const fresh = engine.captureNetworkState();
+    for (let epoch = 0; epoch < 40; epoch++) {
+      for (const [q, a] of pairs) {
+        engine.restoreNetworkState({ ...engine.captureNetworkState(), states: fresh.states });
+        zip.sendByte(q); zip.learnFromEvent();
+        const pulse = zip.pulseVector();
+        bitsOf(a).forEach((bit, k) => {
+          const driven = new Set<number>([bit ? RAMP.bit1Out : RAMP.bit0Out]);
+          if (k % 2 === 0) driven.add(RAMP.toggleOut);
+          for (let rep = 0; rep < 6; rep++) engine.process(pulse, undefined, driven);
+        });
+      }
+    }
+    const learned = engine.captureNetworkState();
+    let exact = 0;
+    for (const [q, a] of pairs) {
+      engine.restoreNetworkState({ ...learned, states: fresh.states });
+      zip.sendByte(q);
+      const bits = zip.receiveBits(8);
+      if (bits.length === 8 && bits.join('') === bitsOf(a).join('')) exact++;
+    }
+    expect(exact).toBe(pairs.length);
+  });
+
+  // ---- E09: the hyperdimensional engine stays finite and bounded, and does not forget its input ----
+  it('E09 300 learning ticks stay finite and bounded in three configurations', () => {
+    const decode = (b64: string) => {
+      const raw = atob(b64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      return new Float32Array(bytes.buffer);
+    };
+    const configs: Array<[string, any]> = [['live', liveConfig()], ['dense', denseConfig()], ['defaults', { neuronCount: 24, dimensions: 8 }]];
+    for (const [, cfg] of configs) {
+      const engine: any = new HyperDimensionalEngine(cfg);
+      let seed = 1;
+      const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+      for (let t = 0; t < 300; t++) {
+        engine.process(Array.from({ length: cfg.dimensions }, () => rnd() * 2 - 1), undefined, new Set([t % 5]), undefined, { learn: true });
+      }
+      const snap = engine.captureNetworkState();
+      for (const key of ['states', 'connDiag', 'connShift']) {
+        const values = decode((snap as any)[key]);
+        expect(finite(values)).toBe(true);
+        let peak = 0;
+        for (const v of values) if (Math.abs(v) > peak) peak = Math.abs(v);
+        expect(peak).toBeLessThanOrEqual(1.0001);
+      }
+    }
+  }, 60000);
+
+  it('E09b different inputs leave the network in different states', () => {
+    const cfg = denseConfig();
+    const base: any = new HyperDimensionalEngine(cfg as never);
+    const snap = base.captureNetworkState();
+    const after = (input: number[]) => {
+      const e: any = new HyperDimensionalEngine(cfg as never);
+      e.restoreNetworkState(snap);
+      e.process(input, undefined, new Set([0]), undefined, { learn: false });
+      const raw = atob(e.captureNetworkState().states);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      return new Float32Array(bytes.buffer);
+    };
+    const a = after(new Array(8).fill(0.9));
+    const b = after(new Array(8).fill(-0.9));
+    const same = after(new Array(8).fill(0.9));
+    let apart = 0, repeat = 0;
+    for (let i = 0; i < a.length; i++) { apart += Math.abs(a[i] - b[i]); repeat += Math.abs(a[i] - same[i]); }
+    expect(apart).toBeGreaterThan(1e-3);
+    expect(repeat).toBeLessThan(apart * 1e-6 + 1e-9);
+  });
+
+  // ---- E10: the interference and amplification math (a classical simulation of phasors) ----
+  it('E10 constructive, quadrature and destructive phase give 20, 14.14 and 0', () => {
+    const q: any = new QuantumNeuralNet();
+    const make = (id: string, phase: number) => { q.addNeuron(id, 1).state.phase = phase; };
+    make('a', 0); make('b', 0); make('c', Math.PI); make('d', Math.PI / 2);
+    expect(q.interfere('a', 'b')).toBeCloseTo(20, 9);
+    expect(q.interfere('a', 'c')).toBeCloseTo(0, 9);
+    expect(q.interfere('a', 'd')).toBeCloseTo(Math.sqrt(200), 9);
+  });
+
+  it('E10b random phases cancel to about sqrt(n), not n', () => {
+    const q: any = new QuantumNeuralNet();
+    const ids = Array.from({ length: 100 }, (_, i) => `r${i}`);
+    ids.forEach(id => q.addNeuron(id, 1));
+    const m = q.phaseConsensus(ids);
+    // The resultant of 100 random unit-phase phasors of height 10 is Rayleigh distributed with a mean
+    // near 88, so there is no safe lower bound; the claim is only that it is far below the aligned 1000.
+    expect(m).toBeLessThan(400);
+  });
+
+  it('E10c amplitude amplification concentrates probability on the marked neuron, then overshoots', () => {
+    const q: any = new QuantumNeuralNet();
+    const ids = Array.from({ length: 16 }, (_, i) => `g${i}`);
+    ids.forEach(id => { q.addNeuron(id, 1).state.phase = 0; });
+    const share = () => {
+      const total = ids.reduce((s, id) => s + q.neurons.get(id).state.height ** 2, 0);
+      return q.neurons.get('g3').state.height ** 2 / total;
+    };
+    const start = share();
+    expect(start).toBeCloseTo(1 / 16, 6);
+    const trace = [start];
+    for (let k = 0; k < 6; k++) { q.groverAmplify(ids, 'g3'); trace.push(share()); }
+    expect(Math.max(...trace)).toBeGreaterThan(0.9);          // the point of the algorithm
+    expect(trace.indexOf(Math.max(...trace))).toBeLessThanOrEqual(3);
+  });
+
+  // ---- E11: Code-to-Net ----
+  // The wiki and docs/CODE_TO_NET_SPEC.md promise an exact "affine tier" (zero training, zero
+  // error). The compiler has no such code: even 2x+1 is fitted by a small trained network.
+  // Measured: error ~0.02 inside the sampled range, and it does not extrapolate (2x+1 is off by
+  // 26 at x=20, x*x by 392).
+  it('E11 compiled functions match inside the sampled range but are approximate, not exact', () => {
+    const c = new CodeToNetCompiler();
+    const cases: Array<[string, string, (x: number[]) => number]> = [
+      ['affine', '(x) => 2*x + 1', x => 2 * x[0] + 1],
+      ['affine2', '(x, y) => 2*x - 3*y + 5', x => 2 * x[0] - 3 * x[1] + 5],
+      ['sin', '(x) => Math.sin(x)', x => Math.sin(x[0])],
+      ['square', '(x) => x*x', x => x[0] * x[0]],
+    ];
+    for (const [name, code] of cases) {
+      const net = c.compile(name, code);
+      const report = c.testAgainst(net, code);
+      expect(net.mode).toBe('function');
+      expect(report.passed).toBe(true);
+      expect(report.meanAbsError).toBeLessThan(0.15);
+      expect(report.meanAbsError).toBeGreaterThan(1e-6);   // not the exact affine tier the spec describes
+    }
+  });
+
+  it('E11b a compiled function does not extrapolate beyond its sampled range', () => {
+    const c = new CodeToNetCompiler();
+    const net = c.compile('affine', '(x) => 2*x + 1');
+    expect(Math.abs(net.evaluate([1.9])[0] - 4.8)).toBeLessThan(0.2);
+    expect(Math.abs(net.evaluate([20])[0] - 41)).toBeGreaterThan(1);
+  });
 
   it('E12 unified architecture sanity gate: core mechanisms can coexist', () => {
     const mesh = new NeuronMesh({ nodeCount: 16, connectionDensity: 1, seed: 42 });
