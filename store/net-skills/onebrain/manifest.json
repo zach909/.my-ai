@@ -5,12 +5,12 @@
   "description": "A Net Skill grafted into the live mesh: 55 neurons, all-to-all with the rest of the network. Not installable as a file -- see the descriptor for what it means, and net-skill-graft.ts for how a mesh grows one.",
   "author": "neuroclaw-agent",
   "publishedAt": "2026-10-02T21:44:59.541Z",
-  "updatedAt": "2026-10-03T19:58:03.054Z",
+  "updatedAt": "2026-10-12T15:42:25.174Z",
   "files": [
     {
       "filename": "onebrain.net-skill.json",
       "bytes": 3573,
-      "sha256": "ab1c858b7d59fe0e66b8fbb363a2183e4d6e42add50f207014fb7512943c0e87"
+      "sha256": "a1c2b6abc0b55e82fc452c3d9cbb6bc29c9d4064b532a1c4340e5a28cc21fae5"
     }
   ]
 }
