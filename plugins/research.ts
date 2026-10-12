@@ -167,50 +167,61 @@ export class ResearchPlugin extends BasePlugin {
     const results: SearchResult[] = [];
     let filesScanned = 0;
 
-    // Breadth-first, not recursive DFS: a repo's first alphabetical
-    // subdirectory can easily hold thousands of files on its own
-    // -- a depth-first walk exhausts the whole maxFiles budget descending
-    // into it before ever reaching a sibling directory like plugins/,
-    // silently starving every later-sorted directory. BFS explores one
-    // level at a time across all directories together, so the budget
-    // gets spent broadly instead of being consumed entirely by whichever
-    // subtree happens to sort first.
-    const queue: string[] = [root];
-    while (queue.length > 0 && results.length < maxResults && filesScanned < maxFiles) {
-      const dir = queue.shift()!;
-      let entries;
+    // Breadth-first, and fair between directories at the same level. A depth-first walk
+    // exhausts the whole maxFiles budget descending into a repo's first alphabetical
+    // subdirectory, starving everything sorted after it. Plain level-by-level BFS still did
+    // that between siblings: it read one directory completely before the next, so a first
+    // sibling with more files than the budget left the later ones unsearched. So each level
+    // takes one entry from each of its directories in turn, and the budget is spent across
+    // all of them together.
+    const open = (dir: string): { dir: string; entries: import("node:fs").Dirent[]; next: number } | null => {
       try {
-        entries = readdirSync(dir, { withFileTypes: true });
+        return { dir, entries: readdirSync(dir, { withFileTypes: true }), next: 0 };
       } catch {
-        continue; // unreadable directory -- skip, don't fail the whole search
+        return null; // unreadable directory -- skip, don't fail the whole search
       }
-      for (const entry of entries) {
-        if (results.length >= maxResults || filesScanned >= maxFiles) break;
-        const full = join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (DEFAULT_SKIP_DIRS.has(entry.name)) continue;
-          queue.push(full);
-          continue;
-        }
-        if (!entry.isFile()) continue;
-        filesScanned++;
-        try {
-          const stat = statSync(full);
-          if (stat.size > 2_000_000) continue; // skip large/likely-binary files
-          const content = readFileSync(full, "utf8");
-          const idx = content.toLowerCase().indexOf(needle);
-          if (idx === -1) continue;
-          const start = Math.max(0, idx - 80);
-          results.push({
-            source: "drive",
-            title: full.replace(root, "."),
-            snippet: content.slice(start, idx + needle.length + 80),
-            location: full,
-          });
-        } catch {
-          continue; // unreadable/binary decode failure -- skip this one file
-        }
+    };
+    const scan = (full: string): void => {
+      filesScanned++;
+      try {
+        const stat = statSync(full);
+        if (stat.size > 2_000_000) return; // skip large/likely-binary files
+        const content = readFileSync(full, "utf8");
+        const idx = content.toLowerCase().indexOf(needle);
+        if (idx === -1) return;
+        const start = Math.max(0, idx - 80);
+        results.push({
+          source: "drive",
+          title: full.replace(root, "."),
+          snippet: content.slice(start, idx + needle.length + 80),
+          location: full,
+        });
+      } catch {
+        // unreadable/binary decode failure -- skip this one file
       }
+    };
+    const budgetLeft = (): boolean => results.length < maxResults && filesScanned < maxFiles;
+    const first = open(root);
+    let level = first ? [first] : [];
+    while (level.length > 0 && budgetLeft()) {
+      const nextLevel: string[] = [];
+      let active = level.filter(c => c.entries.length > 0);   // an empty directory has nothing to take
+      while (active.length > 0 && budgetLeft()) {
+        const still: typeof active = [];
+        for (const cursor of active) {
+          if (!budgetLeft()) break;
+          const entry = cursor.entries[cursor.next++];
+          const full = join(cursor.dir, entry.name);
+          if (entry.isDirectory()) {
+            if (!DEFAULT_SKIP_DIRS.has(entry.name)) nextLevel.push(full);
+          } else if (entry.isFile()) {
+            scan(full);
+          }
+          if (cursor.next < cursor.entries.length) still.push(cursor);
+        }
+        active = still;
+      }
+      level = nextLevel.map(open).filter((c): c is NonNullable<ReturnType<typeof open>> => c !== null);
     }
     return results;
   }

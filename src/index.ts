@@ -1030,7 +1030,14 @@ export class NeuroclawSystem {
     const toolCalls = events.map(c => ({ plugin: c.plugin, tool: c.tool, ok: c.ok, ...(c.error ? { error: c.error } : {}) }));
     if (events.length > 0) {
       this.judgeSkills(input, toolCalls);
-      return { answered: true, via: "network", text: formatToolReply(events, "the network fired the tool's neuron"), toolCalls };
+      // A call that ran stands in for the reply: the network chose to act. A call that was refused or
+      // failed does not. An untrained mesh makes tool neurons spike at random during an ordinary turn
+      // (measured: desktop.type_text at 0.29 while answering a question about France, then back to
+      // 0.01), and with the reply replaced by "did not run: ... is not granted" the user got no answer
+      // at all. Those calls are still reported in toolCalls; the generated reply is kept.
+      if (events.some(c => c.ok)) {
+        return { answered: true, via: "network", text: formatToolReply(events, "the network fired the tool's neuron"), toolCalls };
+      }
     }
 
     const text = reply.replace(/\n\nConfidence: \d+%[\s\S]*$/, "").trim();

@@ -1796,7 +1796,12 @@ export class WebServer {
    * (or none) pass their own ceiling explicitly; nobody else's behavior
    * changes.
    */
-  private async parseBody(req: http.IncomingMessage, maxBytes: number = Number.POSITIVE_INFINITY): Promise<unknown> {
+  // The default is 1 MB: an ordinary JSON endpoint has no business reading more, and with no limit
+  // anyone who can reach the server could exhaust its memory with one request. A route that really
+  // takes big bodies (skill uploads, the zip loop) passes its own limit, `Number.POSITIVE_INFINITY`
+  // included. (Commit 358030f6 changed this default to unlimited while only meaning to lift the
+  // skill-upload cap, which was already passed explicitly at that call site.)
+  private async parseBody(req: http.IncomingMessage, maxBytes: number = 1024 * 1024): Promise<unknown> {
     // CSRF: this server has no auth and setSecurityHeaders() never sends
     // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
     // response -- but that alone doesn't stop the *request* from being

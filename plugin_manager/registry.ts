@@ -15,6 +15,12 @@ import { CapabilityRouter, type Ranked } from "./capability-router.js";
  */
 const MAX_PLUGINS_TRIED = 4;
 
+/**
+ * Intents whose caller has already chosen the plugin: the order of their candidate list is
+ * binding, so scoring against the message cannot reorder it (see dispatch()).
+ */
+const BINDING_INTENTS = new Set(["skill-creation", "extension-creation", "documentation"]);
+
 /** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
 function sanitizePluginIdForPath(pluginId: string): string {
   return pluginId.replace(/[^a-zA-Z0-9_-]+/g, "_") || "unknown";
@@ -391,7 +397,12 @@ export class PluginRegistry {
     // orders them; the intent map's suggestions get a boost inside that
     // scoring rather than deciding the outcome alone.
     const ranked = this.router.rank(input, candidates);
-    const ordered = ranked.map(r => r.id).filter(id => this.activePlugins.has(id));
+    // For the dedicated intents the caller has already chosen the plugin, and the order of their
+    // candidate list is the choice (skill-maker, then fallbacks): it is binding, not a prior.
+    // Scoring let file-system outrank skill-maker for any procedure that mentions a file, and
+    // file-system answers with text rather than declining, so teaching the same "open the file,
+    // parse each line, write the results" procedure twice produced "[FileSystem] ..." instead of a skill.
+    const ordered = (BINDING_INTENTS.has(intent) ? candidates : ranked.map(r => r.id)).filter(id => this.activePlugins.has(id));
     this.lastRouting = ranked.slice(0, 5);
 
     // Only the best few are actually called. Scoring does not execute plugin
