@@ -419,25 +419,44 @@ describe('Architecture experiments', () => {
     }
   });
 
-  it('E11b nonlinear functions are not mistaken for affine, and stay approximate', () => {
+  it('E11b an exact polynomial (x*x, x*y, a cubic) compiles to an exact circuit too', () => {
     const c = new CodeToNetCompiler();
-    for (const code of ['(x) => Math.sin(x)', '(x) => x*x', '(x, y) => x*y', '(x) => Math.abs(x)', '(x) => Math.floor(x)']) {
+    const cases: Array<[string, (x: number[]) => number, number[][]]> = [
+      ['(x) => x*x', x => x[0] * x[0], [[0], [1.5], [20], [-300]]],
+      ['(x, y) => x*y', x => x[0] * x[1], [[3, 4], [100, -50], [1e3, 1e3]]],
+      ['(x, y) => x*x - 2*y*y + 3*x*y + x - 4', x => x[0] ** 2 - 2 * x[1] ** 2 + 3 * x[0] * x[1] + x[0] - 4, [[0, 0], [7, -3], [250, 80]]],
+      ['(x) => (x + 1) * (x - 2) * (x + 3)', x => (x[0] + 1) * (x[0] - 2) * (x[0] + 3), [[0], [5], [-40], [100]]],
+      ['(x, y, z) => x*y*z + z*z', x => x[0] * x[1] * x[2] + x[2] ** 2, [[1, 2, 3], [10, -10, 10]]],
+    ];
+    for (const [code, f, points] of cases) {
+      const net = c.compile('poly', code);
+      expect(net.tier).toBe('polynomial');
+      for (const p of points) expect(net.evaluate(p)[0]).toBeCloseTo(f(p), 5);
+      expect(c.testAgainst(net, code).meanAbsError).toBeLessThan(1e-6);
+    }
+  });
+
+  it('E11b2 things that are not polynomials are not mistaken for one, and stay approximate', () => {
+    const c = new CodeToNetCompiler();
+    for (const code of ['(x) => Math.sin(x)', '(x) => Math.abs(x)', '(x) => Math.floor(x)', '(x) => Math.exp(x/3)', '(x) => 1/(1 + x*x)', '(x) => x > 0 ? x : 0', '(x, y) => Math.max(x, y)']) {
       const net = c.compile('nl', code);
       expect(net.mode).toBe('function');
       expect(net.tier).toBe('fitted');
     }
     // A fitted net matches inside the sampled range but cannot extrapolate: that is its limit.
-    const sq = c.compile('sq', '(x) => x*x');
-    expect(Math.abs(sq.evaluate([1.5])[0] - 2.25)).toBeLessThan(0.25);
-    expect(Math.abs(sq.evaluate([20])[0] - 400)).toBeGreaterThan(10);
+    const sine = c.compile('sin', '(x) => Math.sin(x)');
+    expect(Math.abs(sine.evaluate([1.5])[0] - Math.sin(1.5))).toBeLessThan(0.2);
+    expect(Math.abs(sine.evaluate([20])[0] - Math.sin(20))).toBeGreaterThan(0.3);
   });
 
-  it('E11c an affine net survives serialization', () => {
+  it('E11c exact nets survive serialization', () => {
     const c = new CodeToNetCompiler();
-    const net = c.compile('a', '(x, y) => 3*x - y + 2');
-    const back = CodeNet.fromJSON(JSON.parse(JSON.stringify(net.toJSON())));
-    expect(back.tier).toBe('affine');
-    expect(back.evaluate([1e4, -5])[0]).toBeCloseTo(3e4 + 5 + 2, 6);
+    const affine = CodeNet.fromJSON(JSON.parse(JSON.stringify(c.compile('a', '(x, y) => 3*x - y + 2').toJSON())));
+    expect(affine.tier).toBe('affine');
+    expect(affine.evaluate([1e4, -5])[0]).toBeCloseTo(3e4 + 5 + 2, 6);
+    const poly = CodeNet.fromJSON(JSON.parse(JSON.stringify(c.compile('p', '(x, y) => x*y + x*x').toJSON())));
+    expect(poly.tier).toBe('polynomial');
+    expect(poly.evaluate([1e3, 7])[0]).toBeCloseTo(1e3 * 7 + 1e6, 4);
   });
 
   it('E12 unified architecture sanity gate: core mechanisms can coexist', () => {
