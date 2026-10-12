@@ -10,7 +10,9 @@
  * Defined subset & limitations (the spec requires these to be explicit):
  *   - Supported: pure numeric functions of numeric inputs — an arrow/function
  *     expression or a bare arithmetic expression over a small set of variables,
- *     using only arithmetic, comparisons, ternaries and `Math.*`. These are
+ *     using only arithmetic, comparisons, ternaries and `Math.*`. A function
+ *     that is exactly affine (2*x - 3*y + 5) is compiled to an exact linear
+ *     circuit with no training and no error; anything else numeric is
  *     approximated by sampling the function and fitting a 1-hidden-layer MLP.
  *   - Everything else (I/O, loops, strings, external state, unsafe tokens) is
  *     *not* converted to behaviour; it falls back to an `embedding` network — a
@@ -25,8 +27,16 @@
 
 export type CodeNetMode = "function" | "embedding";
 
+/** An exact linear circuit: out = bias + sum(weights[i] * input[i]). No training, no approximation. */
+export interface CodeNetAffine {
+  weights: number[];
+  bias: number;
+}
+
 export interface CodeNetFunctionParams {
   arity: number;
+  /** Present when the function was proven affine; evaluation then uses it exactly and ignores the fitted network. */
+  affine?: CodeNetAffine;
   hidden: number;
   W1: number[][]; // [hidden][arity]
   b1: number[]; // [hidden]
@@ -66,7 +76,11 @@ export interface TestReport {
   /** Range of the reference outputs over the test samples (function mode). */
   outputRange: number;
   passed: boolean;
+  /** Which tier the net is: an exact linear circuit, a fitted network, or an identity-only embedding. */
+  tier?: CodeNetTier;
 }
+
+export type CodeNetTier = "affine" | "fitted" | "embedding";
 
 /** A code-derived network that can be evaluated and serialized. */
 export class CodeNet {
@@ -82,10 +96,21 @@ export class CodeNet {
     return this.mode === "function" ? this.fn!.arity : 0;
   }
 
+  /** "affine": exact linear circuit; "fitted": trained approximation; "embedding": identity only. */
+  get tier(): CodeNetTier {
+    if (this.mode === "embedding") return "embedding";
+    return this.fn!.affine ? "affine" : "fitted";
+  }
+
   /** Forward pass. Function mode returns [scalar]; embedding mode returns the signature. */
   evaluate(inputs: number[]): number[] {
     if (this.mode === "embedding") return (this.signature ?? []).slice();
     const p = this.fn!;
+    if (p.affine) {
+      let out = p.affine.bias;
+      for (let i = 0; i < p.arity; i++) out += p.affine.weights[i] * (inputs[i] ?? 0);
+      return [out];
+    }
     const x = new Array(p.arity);
     for (let i = 0; i < p.arity; i++) {
       const range = p.inMax[i] - p.inMin[i] || 1;
@@ -132,6 +157,17 @@ export class CodeToNetCompiler {
     if (!built) {
       return new CodeNet(name, "embedding", code, undefined, this.embed(code, opts.embedDim ?? 32));
     }
+    // Tier 1: if the function is exactly affine, build the exact linear circuit.
+    // No sampling range, no training, no error, and it holds outside any range.
+    const affine = this.probeAffine(built.f, built.arity, opts.seed ?? 1234);
+    if (affine) {
+      const exact: CodeNetFunctionParams = {
+        arity: built.arity, affine, hidden: 0, W1: [], b1: [], W2: [], b2: 0,
+        inMin: new Array(built.arity).fill(0), inMax: new Array(built.arity).fill(1), outMean: 0, outStd: 1,
+      };
+      return new CodeNet(name, "function", code, exact);
+    }
+    // Tier 2: anything else numeric is fitted.
     const params = this.fit(built.f, built.arity, opts);
     return new CodeNet(name, "function", code, params);
   }
@@ -147,7 +183,7 @@ export class CodeToNetCompiler {
     if (net.mode === "embedding" || !built) {
       const sig = this.embed(code, net.getSignature().length || opts.embedDim || 32);
       const passed = net.mode === "embedding" && arraysClose(sig, net.getSignature(), 1e-9);
-      return { mode: "embedding", samples: 0, meanAbsError: passed ? 0 : 1, maxAbsError: passed ? 0 : 1, outputRange: 0, passed };
+      return { mode: "embedding", samples: 0, meanAbsError: passed ? 0 : 1, maxAbsError: passed ? 0 : 1, outputRange: 0, passed, tier: "embedding" };
     }
     const rng = mulberry32((opts.seed ?? 1234) ^ 0x9e3779b9);
     const [lo, hi] = opts.domain ?? [-2, 2];
@@ -187,7 +223,7 @@ export class CodeToNetCompiler {
     // near-constant functions), which distinguishes a real approximation from
     // a network that ignores its input.
     const tol = Math.max(0.25, 0.2 * outputRange);
-    return { mode: "function", samples: counted, meanAbsError, maxAbsError: max, outputRange, passed: meanAbsError <= tol };
+    return { mode: "function", samples: counted, meanAbsError, maxAbsError: max, outputRange, passed: meanAbsError <= tol, tier: net.tier };
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
@@ -235,6 +271,40 @@ export class CodeToNetCompiler {
       return null;
     }
     return { f, arity: params.length };
+  }
+
+  /**
+   * Is `f` exactly affine, f(x) = bias + sum(w_i x_i)? Read the candidate
+   * coefficients off the origin and the unit vectors, then check the candidate
+   * at many seeded points over a wide range (+-10), where any curvature, kink
+   * or rounding (Math.floor, abs, x*y, Math.sin...) shows up. Returns null if
+   * anything throws, is non-finite, or misses by more than float rounding.
+   */
+  private probeAffine(f: (...a: number[]) => number, arity: number, seed: number): CodeNetAffine | null {
+    try {
+      const origin = new Array(arity).fill(0);
+      const bias = f(...origin);
+      if (!Number.isFinite(bias)) return null;
+      const weights: number[] = [];
+      for (let i = 0; i < arity; i++) {
+        const unit = origin.slice();
+        unit[i] = 1;
+        const w = f(...unit) - bias;
+        if (!Number.isFinite(w)) return null;
+        weights.push(w);
+      }
+      const rng = mulberry32(seed ^ 0x51ed270b);
+      for (let s = 0; s < 64; s++) {
+        const inp = Array.from({ length: arity }, () => (rng() * 2 - 1) * 10);
+        const want = f(...inp);
+        let got = bias;
+        for (let i = 0; i < arity; i++) got += weights[i] * inp[i];
+        if (!Number.isFinite(want) || Math.abs(want - got) > 1e-9 * (1 + Math.abs(want))) return null;
+      }
+      return { weights, bias };
+    } catch {
+      return null;
+    }
   }
 
   /** Sample the function and fit a 1-hidden-layer tanh MLP by SGD. */

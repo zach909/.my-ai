@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { NeuronMesh, HyperDimensionalEngine, ZipLoopInterface, QuantumNeuralNet } from '../../models && skills/core/onebrain';
-import { CodeToNetCompiler } from '../../models && skills/core/code-to-net';
+import { CodeToNetCompiler, CodeNet } from '../../models && skills/core/code-to-net';
 import { RLMTrainer } from '../../models && skills/core/rlm';
 import { NetSkillRouter } from '../../models && skills/core/net-skill-router';
 
@@ -177,6 +177,7 @@ describe('Architecture experiments', () => {
     neuronCount: 24, dimensions: 8, propagationSteps: 24, convergenceThreshold: 0.01,
     hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1, waveGain: 0.1, connectionBias: true,
   });
+  const fakeSparse = { getDimensions: () => 4, setWaveSignature: () => true, meanNeuronEnergy: () => 0.1 };
   const bitsOf = (byte: number) => Array.from({ length: 8 }, (_, i) => (byte >> (7 - i)) & 1);
 
   it('E08a bits go in one tick each, most significant first', () => {
@@ -201,16 +202,21 @@ describe('Architecture experiments', () => {
     for (let i = 0; i < 4; i++) expect(zip.nextOutputByte()).toBeNull();
   });
 
-  // Measured: in a dense configuration neuron energy saturates below 1.0 while the mean climbs
-  // past 0.9, and the reader needs an output neuron above 1.5x the MEAN. That line is above the
-  // largest energy any neuron can have, so no bit can ever be read, whatever was learned.
-  it('E08c in a dense network the "active" line is higher than any neuron can reach', () => {
+  // Was a bug: neuron energy saturates at 1.0 but the reader needed 1.5x the MEAN, which in a dense
+  // network (mean 0.9) is 1.37 -- above anything a neuron can hold, so no bit could ever be read.
+  // The line is now capped halfway between the mean and the maximum, so it can always be cleared,
+  // and a sparse network (mean 0.1) keeps its old line of 0.15.
+  it('E08c the "active" line is reachable in dense networks and unchanged in sparse ones', () => {
     const engine = new HyperDimensionalEngine(denseConfig() as never);
+    const zip: any = new ZipLoopInterface(engine, RAMP);
     for (let t = 0; t < 60; t++) engine.process(new Array(8).fill(1), undefined, new Set([t % 2 ? 3 : 2]), undefined, { learn: true });
     const n = engine.getNeuronCount();
     const energies = Array.from({ length: n }, (_, i) => engine.getNeuronEnergy(i));
-    expect(Math.max(...energies)).toBeLessThanOrEqual(1 + 1e-9);
-    expect(engine.meanNeuronEnergy() * 1.5).toBeGreaterThan(Math.max(...energies));
+    expect(engine.meanNeuronEnergy()).toBeGreaterThan(2 / 3);               // the regime that used to be unreadable
+    expect(zip.activeLine()).toBeLessThan(Math.max(...energies));           // some neuron can clear it
+    expect(zip.activeLine()).toBeGreaterThan(engine.meanNeuronEnergy());    // and it still means "above average"
+    const sparse: any = new ZipLoopInterface({ ...fakeSparse } as never, RAMP);
+    expect(sparse.activeLine()).toBeCloseTo(0.15, 9);
   });
 
   // The thing your idea needs: teach input -> answer through the loop, then get the answer back.
@@ -332,33 +338,48 @@ describe('Architecture experiments', () => {
   });
 
   // ---- E11: Code-to-Net ----
-  // The wiki and docs/CODE_TO_NET_SPEC.md promise an exact "affine tier" (zero training, zero
-  // error). The compiler has no such code: even 2x+1 is fitted by a small trained network.
-  // Measured: error ~0.02 inside the sampled range, and it does not extrapolate (2x+1 is off by
-  // 26 at x=20, x*x by 392).
-  it('E11 compiled functions match inside the sampled range but are approximate, not exact', () => {
+  // Was weak: the docs promised an exact "affine tier" that did not exist, so even 2x+1 was a trained
+  // approximation (error ~0.02, off by 26 at x=20). Exactly affine functions now compile to an exact
+  // linear circuit. Nonlinear functions are still fitted, which is an approximation by nature.
+  it('E11 an affine function compiles to an exact circuit that holds far outside any sampled range', () => {
     const c = new CodeToNetCompiler();
-    const cases: Array<[string, string, (x: number[]) => number]> = [
-      ['affine', '(x) => 2*x + 1', x => 2 * x[0] + 1],
-      ['affine2', '(x, y) => 2*x - 3*y + 5', x => 2 * x[0] - 3 * x[1] + 5],
-      ['sin', '(x) => Math.sin(x)', x => Math.sin(x[0])],
-      ['square', '(x) => x*x', x => x[0] * x[0]],
+    const cases: Array<[string, (x: number[]) => number, number[][]]> = [
+      ['(x) => 2*x + 1', x => 2 * x[0] + 1, [[0], [1.9], [20], [-1e6], [3.14159]]],
+      ['(x, y) => 2*x - 3*y + 5', x => 2 * x[0] - 3 * x[1] + 5, [[0, 0], [1, 1], [100, -50], [-1e5, 7e4]]],
+      ['(a, b, c) => 0.5*a - b + 4*c', x => 0.5 * x[0] - x[1] + 4 * x[2], [[1, 2, 3], [1e3, -1e3, 1e3]]],
+      ['(x) => 7', () => 7, [[0], [123]]],
     ];
-    for (const [name, code] of cases) {
-      const net = c.compile(name, code);
-      const report = c.testAgainst(net, code);
+    for (const [code, f, points] of cases) {
+      const net = c.compile('affine', code);
       expect(net.mode).toBe('function');
+      expect(net.tier).toBe('affine');
+      for (const p of points) expect(net.evaluate(p)[0]).toBeCloseTo(f(p), 6);
+      const report = c.testAgainst(net, code);
       expect(report.passed).toBe(true);
-      expect(report.meanAbsError).toBeLessThan(0.15);
-      expect(report.meanAbsError).toBeGreaterThan(1e-6);   // not the exact affine tier the spec describes
+      expect(report.meanAbsError).toBeLessThan(1e-9);
+      expect(report.tier).toBe('affine');
     }
   });
 
-  it('E11b a compiled function does not extrapolate beyond its sampled range', () => {
+  it('E11b nonlinear functions are not mistaken for affine, and stay approximate', () => {
     const c = new CodeToNetCompiler();
-    const net = c.compile('affine', '(x) => 2*x + 1');
-    expect(Math.abs(net.evaluate([1.9])[0] - 4.8)).toBeLessThan(0.2);
-    expect(Math.abs(net.evaluate([20])[0] - 41)).toBeGreaterThan(1);
+    for (const code of ['(x) => Math.sin(x)', '(x) => x*x', '(x, y) => x*y', '(x) => Math.abs(x)', '(x) => Math.floor(x)']) {
+      const net = c.compile('nl', code);
+      expect(net.mode).toBe('function');
+      expect(net.tier).toBe('fitted');
+    }
+    // A fitted net matches inside the sampled range but cannot extrapolate: that is its limit.
+    const sq = c.compile('sq', '(x) => x*x');
+    expect(Math.abs(sq.evaluate([1.5])[0] - 2.25)).toBeLessThan(0.25);
+    expect(Math.abs(sq.evaluate([20])[0] - 400)).toBeGreaterThan(10);
+  });
+
+  it('E11c an affine net survives serialization', () => {
+    const c = new CodeToNetCompiler();
+    const net = c.compile('a', '(x, y) => 3*x - y + 2');
+    const back = CodeNet.fromJSON(JSON.parse(JSON.stringify(net.toJSON())));
+    expect(back.tier).toBe('affine');
+    expect(back.evaluate([1e4, -5])[0]).toBeCloseTo(3e4 + 5 + 2, 6);
   });
 
   it('E12 unified architecture sanity gate: core mechanisms can coexist', () => {

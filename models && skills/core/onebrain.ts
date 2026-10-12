@@ -7735,6 +7735,14 @@ const SILENT_OUTPUT = 1e-6;
  */
 const SILENT_OUTPUT_RATIO = 1.5;
 /**
+ * The most energy any neuron can have. Measured: it saturates at 1.0 however
+ * hard it is driven. activeLine() needs it because "1.5x the mean" stops being
+ * reachable once the mean passes 2/3: a dense mesh has a mean of 0.9, which put
+ * the line at 1.37, above anything a neuron can hold, so no output bit could
+ * ever be read whatever the network had learned.
+ */
+const MAX_NEURON_ENERGY = 1;
+/**
  * Settle iterations at or below which a read counts as the mesh having
  * nothing further to work out. Above one, because a network still developing
  * an answer takes several -- measured, 8 to 12 while it was still moving.
@@ -7998,7 +8006,12 @@ export class ZipLoopInterface {
    * network's own mean energy, not a fixed constant (see nextOutputByte()).
    */
   private activeLine(): number {
-    const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
+    const mean = this.engine.meanNeuronEnergy();
+    // 1.5x the mean for a sparse mesh, but never past the halfway point between
+    // the mean and the largest energy a neuron can reach, so it can always be
+    // cleared. A mean of 0.1 still gives 0.15, exactly as before.
+    const reachable = mean + (MAX_NEURON_ENERGY - mean) / 2;
+    const floor = Math.min(mean * SILENT_OUTPUT_RATIO, reachable);
     return floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
   }
 
