@@ -1059,7 +1059,12 @@ class PasswordLock {
  */
 export function isWikiPublicRoute(pathname: string, method: string): boolean {
   if (method === 'GET') {
-    return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(pathname);
+    if (pathname === '/api/wiki') return true;
+    if (!/^\/api\/wiki\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(pathname)) return false;
+    // Page names can be nested ("getting-started/installation"), so "<name>/backups" has the
+    // same shape as a page called "backups" under <name>. It is not one: it is the edit history
+    // of an existing page, which is not public. Those two words are reserved sub-routes.
+    return !/\/(?:backups|restore)$/.test(pathname);
   }
   if (method === 'POST') {
     return pathname === '/api/wiki';
@@ -4133,6 +4138,25 @@ export class WebServer {
       return;
     }
 
+    // (This comes BEFORE the page read below on purpose: names can be nested, so the page
+    // pattern also matches "<name>/backups", and with the page read first this route was
+    // unreachable -- the request was answered as "No wiki page named <name>/backups".)
+    // GET /api/wiki/:name/backups — every snapshot backupBeforeChange() has
+    // taken of this bot-published page (before each overwrite/edit/delete),
+    // oldest first, so a caller can see what's recoverable before choosing
+    // one to restore.
+    const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/backups$/);
+    if (backupsMatch && method === 'GET') {
+      try {
+        const backups = listWikiBackups(backupsMatch[1]);
+        this.sendJson(res, { backups, total: backups.length });
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
     // GET /api/wiki/:name — one page's raw markdown. `name` can be nested
     // paths like "getting-started/installation" (letters/digits/-/_/\/ only),
     // which rules out both `..` traversal and an absolute-path override.
@@ -4167,22 +4191,6 @@ export class WebServer {
       try {
         await deleteWikiPageAndSync(wikiMatch[1]);
         this.sendJson(res, { name: wikiMatch[1], deleted: true });
-      } catch (err) {
-        const status = err instanceof WikiNameError ? 400 : 500;
-        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
-      }
-      return;
-    }
-
-    // GET /api/wiki/:name/backups — every snapshot backupBeforeChange() has
-    // taken of this bot-published page (before each overwrite/edit/delete),
-    // oldest first, so a caller can see what's recoverable before choosing
-    // one to restore.
-    const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/backups$/);
-    if (backupsMatch && method === 'GET') {
-      try {
-        const backups = listWikiBackups(backupsMatch[1]);
-        this.sendJson(res, { backups, total: backups.length });
       } catch (err) {
         const status = err instanceof WikiNameError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);

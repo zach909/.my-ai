@@ -31,8 +31,28 @@ describe("Linux permission tools", () => {
     for (const permission of sensitive) {
       const tool = LINUX_PERMISSION_TOOLS.find((item) => item.permission === permission);
       expect(tool, `missing tool for ${permission}`).toBeDefined();
-      expect(tool!.risk).toBe("high");
+      // "high" or "critical": both are the approval-required tiers, and these were raised to
+      // "critical" on purpose. The check is that none of them is ever left at a lower tier.
+      expect(["high", "critical"]).toContain(tool!.risk);
     }
+  });
+
+  it("finds a tool by its permission id as well as by its name", () => {
+    expect(getLinuxPermissionTool("linux-service-control")).toBe(getLinuxPermissionTool("linux_service_control"));
+    expect(getLinuxPermissionTool("linux-service-control")).toBeDefined();
+    expect(getLinuxPermissionTool("no-such-permission")).toBeUndefined();
+  });
+
+  it("declares every tool's permission in the plugin registry, once", async () => {
+    // Two entries for this plugin id were once left by a merge; in an object literal the later
+    // silently wins, and the registry then declared 17 of the 158 capabilities.
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync(new URL("../../plugin_manager/registry-data.ts", import.meta.url), "utf8");
+    const entries = source.split("\n").filter(line => line.trim().startsWith('"linux-permission-tools":'));
+    expect(entries).toHaveLength(1);
+    const declared = new Set(Array.from(entries[0].split("capabilities:")[1].matchAll(/"([a-z0-9-]+)"/g), m => m[1]));
+    const missing = LINUX_PERMISSION_TOOLS.map(tool => tool.permission).filter(permission => !declared.has(permission));
+    expect(missing).toEqual([]);
   });
 
   it("denies calls without a grant before reaching an adapter", async () => {

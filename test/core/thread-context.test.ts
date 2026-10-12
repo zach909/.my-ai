@@ -107,16 +107,46 @@ describe('freezing and thawing activity', () => {
   })
 })
 
+describe('with the wave layer on (the live configuration)', () => {
+  const waveConfig = { neuronCount: 24, dimensions: 8, hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1, waveGain: 0.1, connectionBias: true, propagationSteps: 16 }
+
+  it('a resumed conversation matches one that was never interrupted, down to the wave phase', () => {
+    // Before wavePhase was frozen too, the thawed mesh ran at a different wave phase and the
+    // two diverged by ~1e-2 even though every neuron state had been put back.
+    const start = new HyperDimensionalEngine(waveConfig as never).captureNetworkState()
+    const straight = new HyperDimensionalEngine(waveConfig as never)
+    const interrupted = new HyperDimensionalEngine(waveConfig as never)
+    straight.restoreNetworkState(start)
+    interrupted.restoreNetworkState(start)
+
+    turn(straight, 0.9)
+    turn(interrupted, 0.9)
+    const ctx = new ThreadContext()
+    ctx.freeze('a', interrupted)
+    turn(interrupted, -0.9)
+    turn(interrupted, 0.2)
+    ctx.thaw('a', interrupted)
+
+    turn(straight, 0.5)
+    turn(interrupted, 0.5)
+    const a = straight.captureNetworkState()
+    const b = interrupted.captureNetworkState()
+    expect(b.states).toBe(a.states)
+    expect(b.wavePhase).toBe(a.wavePhase)
+    expect(b.wavePoolRe).toBe(a.wavePoolRe)
+  })
+})
+
 describe('what is frozen', () => {
   it('is only the activity, never the learned network', () => {
     const e = engine()
     turn(e, 0.9)
     const full = e.captureNetworkState()
     const kept = Object.keys(activityOf(full))
-    for (const learned of ['bias', 'connDiag', 'connShift', 'modWeight', 'addWeight', 'waveFreq', 'wavePhase', 'connWaveGain', 'connBias', 'senderGain']) {
+    for (const learned of ['bias', 'connDiag', 'connShift', 'modWeight', 'addWeight', 'waveFreq', 'connWaveGain', 'connBias', 'senderGain']) {
       expect(kept).not.toContain(learned)
     }
-    for (const live of ['shape', 'states', 'energies']) expect(kept).toContain(live)
+    for (const live of ['shape', 'states', 'energies', 'wavePhase']) expect(kept).toContain(live)
   })
 
   it('is a lot smaller than the whole network', () => {

@@ -7894,7 +7894,29 @@ export class ZipLoopInterface {
   /** Settle iterations the last output read needed. */
   private lastSettleIterations = Number.MAX_SAFE_INTEGER;
 
-  constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {
+  /** Memory: every neuron except the doorway's gets this much inertia (vale), so input leaves a trace. */
+  private readonly memoryValeLevel: number;
+  private memoryValeMap: Map<number, number> | undefined;
+  private memoryValeSize = -1;
+
+  /**
+   * @param options.memory Give the mesh a memory of what has gone through the
+   *   doorway. With none (the default) every neuron is recomputed from its
+   *   inputs each tick, so the mesh forgets: measured, a flipped input bit has
+   *   no effect left after about 6 ticks, and the state after a long message
+   *   equals the state after its last byte. With `memory: { vale }` every
+   *   neuron except the doorway's own holds `vale` of its old state each tick
+   *   (the elastic gate used as inertia), so earlier input stays in the mesh
+   *   as a decaying trace: 0.9 fades over a few dozen bits, 0.99 over a few
+   *   hundred.
+   */
+  constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds, options: { memory?: { vale: number } } = {}) {
+    // The inertia only helps if EVERY use of the doorway applies it (the next ordinary tick
+    // recomputes everything and erases the trace), so besides the per-interface option there
+    // is one switch for the whole process: NEUROCLAW_ZIP_MEMORY=0.97. Off by default.
+    const fromEnv = typeof process !== "undefined" ? Number(process.env?.NEUROCLAW_ZIP_MEMORY) : NaN;
+    const wanted = options.memory ? options.memory.vale : Number.isFinite(fromEnv) ? fromEnv : 0;
+    this.memoryValeLevel = Math.min(0.9999, Math.max(0, wanted));
     this.drivenBit0 = new Set([ids.bit0In]);
     this.drivenBit1 = new Set([ids.bit1In]);
     if ((ids.sendIn === undefined) !== (ids.sendOut === undefined)) {
@@ -8024,13 +8046,13 @@ export class ZipLoopInterface {
       const level = (this.bitsSent++ & 1) as 0 | 1;
       if (this.rampSets) {
         // One tick: the data neuron with the ramp at max (even bit) or min (odd bit).
-        this.engine.process(pulse, undefined, this.rampSets[bit][level], undefined, ZIP_LOOP_READ_ONLY);
+        this.engine.process(pulse, undefined, this.rampSets[bit][level], this.memoryVale(), ZIP_LOOP_READ_ONLY);
         return;
       }
       const setup = this.togglePlain ? this.togglePlain[bit][level] : bit === 1 ? this.drivenBit1 : this.drivenBit0;
       const commit = this.toggleSent ? this.toggleSent[bit][level] : bit === 1 ? this.sentBit1 : this.sentBit0;
-      this.engine.process(pulse, undefined, setup, undefined, ZIP_LOOP_READ_ONLY);
-      this.engine.process(pulse, undefined, commit, undefined, ZIP_LOOP_READ_ONLY);
+      this.engine.process(pulse, undefined, setup, this.memoryVale(), ZIP_LOOP_READ_ONLY);
+      this.engine.process(pulse, undefined, commit, this.memoryVale(), ZIP_LOOP_READ_ONLY);
     } finally {
       this.engine.setPropagationSteps(ceiling);
     }
@@ -8078,6 +8100,30 @@ export class ZipLoopInterface {
     return this.idleScratch;
   }
 
+  /**
+   * One idle tick: nothing driven and not learning, with the memory inertia
+   * applied. What a reading tick does before it looks at the output, for a
+   * caller that wants to watch the mesh itself over time.
+   */
+  idleTick(): void {
+    this.engine.process(this.idleVector(), undefined, ZIP_LOOP_NO_DRIVEN, this.memoryVale(), ZIP_LOOP_READ_ONLY);
+  }
+
+  /** The inertia map for the current mesh size, or undefined when memory is off. */
+  private memoryVale(): Map<number, number> | undefined {
+    if (this.memoryValeLevel <= 0) return undefined;
+    const n = this.engine.getNeuronCount();
+    if (this.memoryValeMap === undefined || this.memoryValeSize !== n) {
+      const doorway = new Set<number>();
+      for (const v of Object.values(this.ids)) if (typeof v === "number") doorway.add(v);
+      const map = new Map<number, number>();
+      for (let i = 0; i < n; i++) if (!doorway.has(i)) map.set(i, this.memoryValeLevel);
+      this.memoryValeMap = map;
+      this.memoryValeSize = n;
+    }
+    return this.memoryValeMap;
+  }
+
   /** Lazily built (engine dimensions are fixed at construction) and reused by every sendBit(). */
   private pulseVector(): number[] {
     if (!this.pulseScratch) {
@@ -8112,7 +8158,7 @@ export class ZipLoopInterface {
     // learn: false -- reading is not learning. Every one of these ticks used
     // to apply a full Hebbian update, so pulling an answer out of the
     // network changed the network it was pulled from.
-    const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+    const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, this.memoryVale(), ZIP_LOOP_READ_ONLY);
     // How hard the mesh worked to reach a stable state. The HARDEST tick of
     // a read is what it cost: settled only if every tick settled.
     if (first || read.settleIterations > this.lastSettleIterations) {

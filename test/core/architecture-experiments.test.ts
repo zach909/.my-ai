@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { NeuronMesh, HyperDimensionalEngine, ZipLoopInterface, QuantumNeuralNet } from '../../models && skills/core/onebrain';
 import { CodeToNetCompiler, CodeNet } from '../../models && skills/core/code-to-net';
+import { ZipSpeaker } from '../../models && skills/core/zip-speech';
 import { RLMTrainer } from '../../models && skills/core/rlm';
 import { NetSkillRouter } from '../../models && skills/core/net-skill-router';
 
@@ -296,37 +297,17 @@ describe('Architecture experiments', () => {
     expect(sparse.activeLine()).toBeCloseTo(0.15, 9);
   });
 
-  // The thing your idea needs: teach input -> answer through the loop, then get the answer back.
-  // There is no output-training method in the repo, so this uses the repo's own Hebbian learning
-  // with the output neurons driven (teacher forcing) while the question is still in the mesh.
-  // Measured at time of writing: silent in every setting tried (3 learning rates/strengths, 10-40
-  // epochs, sparse default network). `it.fails` keeps the suite green and goes red the day it works.
-  it.fails('E08d a loop taught question -> answer speaks the answer back', () => {
-    const pairs: [number, number][] = [[0x41, 0x58], [0x42, 0x27], [0x43, 0xC3], [0x44, 0x0E]];
-    const engine: any = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, learningRate: 0.3 } as never);
-    const zip: any = new ZipLoopInterface(engine, RAMP);
-    const fresh = engine.captureNetworkState();
-    for (let epoch = 0; epoch < 40; epoch++) {
-      for (const [q, a] of pairs) {
-        engine.restoreNetworkState({ ...engine.captureNetworkState(), states: fresh.states });
-        zip.sendByte(q); zip.learnFromEvent();
-        const pulse = zip.pulseVector();
-        bitsOf(a).forEach((bit, k) => {
-          const driven = new Set<number>([bit ? RAMP.bit1Out : RAMP.bit0Out]);
-          if (k % 2 === 0) driven.add(RAMP.toggleOut);
-          for (let rep = 0; rep < 6; rep++) engine.process(pulse, undefined, driven);
-        });
-      }
-    }
-    const learned = engine.captureNetworkState();
-    let exact = 0;
-    for (const [q, a] of pairs) {
-      engine.restoreNetworkState({ ...learned, states: fresh.states });
-      zip.sendByte(q);
-      const bits = zip.receiveBits(8);
-      if (bits.length === 8 && bits.join('') === bitsOf(a).join('')) exact++;
-    }
-    expect(exact).toBe(pairs.length);
+  // The thing the idea needs: teach question -> answer through the loop, then get the answer back.
+  // The raw reader above cannot do it (nothing trains the output side, and a plain mesh forgets the
+  // question). ZipSpeaker (zip-speech.ts) can: the mesh keeps the question with the memory switched
+  // on, and a small learned readout turns that memory into the answer's bits. Measured: 8 of 8 on a
+  // sparse mesh and on the live-sized one, with the memory off 1 of 4. See zip-speech.test.ts for
+  // the limits (about 16 questions, and only the tail of a question is remembered).
+  it('E08d a loop taught question -> answer speaks the answer back', () => {
+    const sp = new ZipSpeaker(new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8 } as never), { maxAnswerBytes: 8 });
+    const facts: Array<[string, string]> = [['what is the capital of france?', 'Paris'], ['what is the capital of spain?', 'Madrid'], ['who wrote the book on whales?', 'Melville'], ['2+2=', '4']];
+    sp.teach(facts.map(([question, answer]) => ({ question, answer })));
+    for (const [q, a] of facts) expect(sp.speakText(q)).toBe(a);
   });
 
   // ---- E09: the hyperdimensional engine stays finite and bounded, and does not forget its input ----

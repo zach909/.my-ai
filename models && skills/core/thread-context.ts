@@ -33,6 +33,12 @@ import type { HyperDimensionalEngine, NetworkStateSnapshot } from "./onebrain.js
 /** The parts of a snapshot that are what the network is doing, not what it has learned. */
 const ACTIVITY_KEYS = [
   "states", "energies",
+  // Where each neuron's wave currently sits. The engine advances it every settle
+  // iteration (that is what makes the pool oscillate across calls), so it is time,
+  // not structure; learning only nudges it slightly (phase lock). Left out, a
+  // thawed mesh on the live configuration (wave layer on) ran at a different phase
+  // from the one that stopped: two identical runs differed by 1e-2.
+  "wavePhase",
   "neuronWaveRe", "neuronWaveIm",
   "wavePoolRe", "wavePoolIm",
   "emaEnergy", "hasEma", "sustainedDivergence",
