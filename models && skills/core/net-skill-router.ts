@@ -42,8 +42,23 @@ export interface NetSkillUsage {
   share: number;
 }
 
-/** Below this similarity a region is not about the input at all and is never selected. */
-const MIN_SCORE = 0.05;
+/**
+ * Below this similarity a region is not about the input at all and is never
+ * selected, and with nothing selected the mesh runs ungated, which is safe. A
+ * wrong region is not: it gates the right ones out. At 1024 dimensions unrelated
+ * text scores up to about 0.07 against every skill (it used to be 0.26 at 64, so
+ * gibberish was always routed somewhere); 0.08 sits above that.
+ */
+const MIN_SCORE = 0.08;
+
+/**
+ * Size of the embedding used to compare TEXT with a region. The mesh-sized
+ * vectors the router is built with (64) hash far too many unrelated
+ * character n-grams into the same slot: measured, 8 skills at 64 dimensions
+ * routed 50% of queries that share words with a skill's description, and 96%
+ * at 1024. Text is cheap to embed larger; numeric inputs keep their own size.
+ */
+const TEXT_DIMS = 1024;
 
 function cosine(a: ArrayLike<number>, b: ArrayLike<number>): number {
   const n = Math.min(a.length, b.length);
@@ -58,6 +73,22 @@ export class NetSkillRouter {
   private readonly meaningVectors = new Map<number, Map<string, number[]>>();
   private readonly usage = new Map<string, number>();
   private totalSelections = 0;
+  /**
+   * What each region has actually been right for: the sum of the (unit)
+   * embeddings of the queries it was judged right on. A region's description
+   * only matches queries that share its words; this is how it comes to match
+   * the ones people really ask. Measured on queries sharing no words with any
+   * description, description-only routing was at chance (13-17% of 8 skills).
+   */
+  private readonly experience = new Map<string, { sum: number[]; count: number }>();
+  /**
+   * Each experienced region's centroid with what ALL regions share taken out.
+   * Without this the more a region learns the more its centroid is the
+   * character patterns every query has in common ("the", "ing"), and accuracy
+   * on unseen queries went DOWN with more examples (33% -> 25% -> 21%).
+   * Rebuilt lazily after any learning.
+   */
+  private centred: Map<string, number[]> | null = null;
 
   /**
    * How well each region has predicted before, and which are switched off for
@@ -89,6 +120,8 @@ export class NetSkillRouter {
   unregister(id: string): boolean {
     for (const byId of this.meaningVectors.values()) byId.delete(id);
     this.usage.delete(id);
+    this.experience.delete(id);
+    this.centred = null;
     return this.regions.delete(id);
   }
 
@@ -111,11 +144,66 @@ export class NetSkillRouter {
 
   /** Every region's similarity to `input`, best first. Does not count as a selection. */
   score(input: string | ArrayLike<number>): Array<{ id: string; score: number }> {
-    const vec = typeof input === "string" ? embedText(input, this.dims) : input;
+    const isText = typeof input === "string";
+    const vec = isText ? embedText(input, TEXT_DIMS) : input;
     const dims = vec.length;
     return Array.from(this.regions.keys())
-      .map((id) => ({ id, score: cosine(vec, this.meaningVector(id, dims)) }))
+      .map((id) => {
+        const described = cosine(vec, this.meaningVector(id, dims));
+        // Text is also compared with what the region has been right for; the
+        // better of the two stands, so a new region still works from its
+        // description and an experienced one is not held back by it.
+        const learned = isText ? this.experienceScore(id, vec) : 0;
+        return { id, score: Math.max(described, learned) };
+      })
       .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  }
+
+  private experienceScore(id: string, vec: ArrayLike<number>): number {
+    const centroid = this.centredExperience().get(id);
+    return centroid ? cosine(vec, centroid) : 0;
+  }
+
+  private centredExperience(): Map<string, number[]> {
+    if (this.centred) return this.centred;
+    const units = new Map<string, number[]>();
+    for (const [id, seen] of this.experience) {
+      if (seen.count === 0 || !this.regions.has(id)) continue;
+      let norm = 0;
+      for (const v of seen.sum) norm += v * v;
+      if (norm === 0) continue;
+      const inv = 1 / Math.sqrt(norm);
+      units.set(id, seen.sum.map((v) => v * inv));
+    }
+    // With one experienced region there is nothing to be common with: keep it as it is.
+    if (units.size < 2) { this.centred = units; return units; }
+    const mean = new Array(TEXT_DIMS).fill(0);
+    for (const unit of units.values()) for (let i = 0; i < TEXT_DIMS; i++) mean[i] += unit[i] / units.size;
+    const centred = new Map<string, number[]>();
+    for (const [id, unit] of units) centred.set(id, unit.map((v, i) => v - mean[i]));
+    this.centred = centred;
+    return centred;
+  }
+
+  /**
+   * Tell the router that `input` was about these regions. Only text teaches:
+   * a numeric input is a mesh vector with no words to remember.
+   */
+  learn(input: string | ArrayLike<number>, ids: Iterable<string>): void {
+    if (typeof input !== "string" || input.trim().length === 0) return;
+    const vec = embedText(input, TEXT_DIMS);
+    let norm = 0;
+    for (const v of vec) norm += v * v;
+    if (norm === 0) return;
+    const inv = 1 / Math.sqrt(norm);
+    for (const id of ids) {
+      if (!this.regions.has(id)) continue;
+      let seen = this.experience.get(id);
+      if (!seen) { seen = { sum: new Array(TEXT_DIMS).fill(0), count: 0 }; this.experience.set(id, seen); }
+      for (let i = 0; i < TEXT_DIMS; i++) seen.sum[i] += vec[i] * inv;
+      seen.count++;
+    }
+    this.centred = null;
   }
 
   /**
@@ -164,7 +252,11 @@ export class NetSkillRouter {
     // predictions. Scoring them all as misses would switch off good regions.
     if (!Array.from(truth).some((id) => this.regions.has(id))) return [];
     const out: Array<{ id: string; hit: boolean; flipped: "on" | "off" | null }> = [];
-    for (const { id } of this.score(input).filter((s) => s.score >= MIN_SCORE).slice(0, this.topK)) {
+    // Score first, then learn: the prediction being judged must not already
+    // contain the answer it is being judged against.
+    const predicted = this.score(input).filter((s) => s.score >= MIN_SCORE).slice(0, this.topK);
+    this.learn(input, Array.from(truth).filter((id) => this.regions.has(id)));
+    for (const { id } of predicted) {
       if (inScope && !inScope(id)) continue;
       const hit = truth.has(id);
       out.push({ id, hit, flipped: this.ledger.record(id, hit) });

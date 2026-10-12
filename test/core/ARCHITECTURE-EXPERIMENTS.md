@@ -23,9 +23,9 @@ These experiments test the project's architectural claims in dependency order. T
 | E02 seeding | works (was a bug) | `NeuronMesh` ignored `seed`; now a seeded mesh is reproducible, an unseeded one is unchanged |
 | E03 / E03b stability | works | finite and bounded for 4 activation functions x 3 sizes x 3 seeds |
 | E04 elastic gate (state) | works | `vale=1` holds a node exactly. At 16 nodes the mesh barely reacts to input (nothing moves more than ~1e-4), so there is little to resist |
-| E05 / E05b net-skill routing | weak | 12 of 24 right with 8 skills (chance is 3). Misroutes paraphrases and never abstains: nonsense is still routed |
+| E05 / E05b-f net-skill routing | partly fixed | 8 skills (chance 12.5%): queries that share words with a skill route 88% right (was 50%; the embedding was too small). Paraphrases with no shared words are still at chance (13%): the router matches character patterns, not meaning. It now learns from outcomes (`judge()` teaches it): one example per skill lifts unseen paraphrases to 33%. Gibberish is no longer routed anywhere (the mesh then runs ungated) |
 | E06 learning | works (trivial task) | 5 of 5 runs pick the rewarded action |
-| E07 forgetting | fails | task A's margin falls from ~2.0 to ~0.1-0.4 after a similar task B |
+| E07 / E07b / E07c forgetting | works (replay) | with replay the old task stays right in 20/20 runs at every overlap; without it, 0/20 at overlap 0.8. The limit is capacity: near-identical inputs with opposite answers cannot both be held by a linear policy, so the new task is learned 5 times in 20 |
 | E08a Zip Loop input | works | one tick per bit, most significant first |
 | E08b live network speaks | fails | 64-neuron live-sized network is silent after "hi" (max energy ~0.03, reader returns nothing 4 of 4) |
 | E08c dense network speaks | fixed | energy is capped at 1.0 but the reader needed 1.5x the mean, above 1.0 once the mean passes 0.67; the line is now capped halfway between the mean and the maximum (a sparse mesh keeps its 0.15) |
@@ -35,7 +35,7 @@ These experiments test the project's architectural claims in dependency order. T
 | E11 / E11b / E11c Code-to-Net | fixed for affine, approximate for the rest | exactly affine functions now compile to an exact linear circuit (no training, zero error, correct at x=1e6, survives serialization). Nonlinear functions are still fitted: error ~0.02 inside the sampled range and no extrapolation |
 | E12 coexistence | works | |
 | E14 mesh memory of earlier input | fails (`it.fails` in `context-replay.test.ts`) | the state after a 58-byte history equals the state after its last byte alone, to eight decimals, so a chat history cannot be carried by replay yet |
-| E13 gate vs forgetting | fails | in `gate-forgetting.test.ts` (opt-in, `NEUROCLAW_SLOW=1`): the gate only slows learning; protecting the "important" neurons is no better than protecting random ones |
+| E13 elastic protection vs forgetting | fixed | the block ignored its input (two different inputs gave the identical output), so nothing could be learned as a function of input and the old experiment was invalid. Fixed (driven neurons are held while settling): the block learns two tasks jointly to ~0. Learning task B with no protection destroys task A (error 1.6, worse than untrained 0.45); protecting each parameter by how much it matters to A keeps it (error 0.02-0.45) while B is still learned; scrambled importance and a uniform slowdown protect nothing |
 
 These are **falsification experiments**, not proof that the architecture is correct. Passing an experiment only means the tested property held under that test. The next step after this suite is to add quantitative baselines and repeated runs for any claim that survives the basic gate.
 

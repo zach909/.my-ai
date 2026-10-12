@@ -2220,6 +2220,15 @@ export interface ElasticCoreRunOptions {
   activeGroups?: Set<string>;
   /** Externally-driven neuron ids for the input-source flag dimension. */
   drivenNeurons?: Set<number>;
+  /**
+   * Keep driven neurons at the state the input gave them while the block
+   * settles. Default true. The input used to be written into the driven
+   * neuron once and then recomputed away by the first tick; the block
+   * converged to the same fixed point whatever the input was (measured: two
+   * orthogonal inputs gave the identical output), so nothing could be learned
+   * as a function of input. `false` restores that old behaviour.
+   */
+  holdDriven?: boolean;
 }
 
 export interface ElasticCoreResult {
@@ -2270,6 +2279,15 @@ export interface ElasticCoreGradientOptions {
   vale?: Map<number, number>;
   /** Additional multiplier applied after vale scaling. Defaults to 1. */
   scale?: number;
+  /**
+   * Protect what an earlier task relies on. Per-parameter importance from
+   * outputSensitivity(): an update to a parameter is divided by
+   * 1 + strength * (its importance / the mean importance), so the weights an
+   * old task leans on barely move while the rest stay free to learn. This is
+   * different from `vale`, which scales a whole neuron and so can only slow
+   * learning down (measured: it protected nothing beyond a uniform slowdown).
+   */
+  protect?: { weights?: Float32Array; biases?: Float32Array; inputProjection?: Float32Array; outputProjection?: Float32Array; strength?: number };
 }
 
 export interface ElasticCoreUpdateSummary {
@@ -2291,6 +2309,18 @@ export interface ElasticCoreUpdateSummary {
  * added exactly once per target neuron/dimension after all incoming products
  * are summed.
  */
+/** 1 / (1 + strength * importance / mean importance) for every parameter, or undefined when nothing is protected. */
+function protectionScales(importance: Float32Array | undefined, strength: number): Float32Array | undefined {
+  if (!importance || importance.length === 0 || !(strength > 0)) return undefined;
+  let sum = 0;
+  for (let i = 0; i < importance.length; i++) sum += importance[i];
+  const mean = sum / importance.length;
+  if (!(mean > 0)) return undefined;
+  const scales = new Float32Array(importance.length);
+  for (let i = 0; i < importance.length; i++) scales[i] = 1 / (1 + strength * (importance[i] / mean));
+  return scales;
+}
+
 export class ElasticCoreBlock {
   private neuronCount: number;
   private readonly stateDim: number;
@@ -2518,6 +2548,11 @@ export class ElasticCoreBlock {
     const decay = options.weightDecay ?? 0;
     const scale = options.scale ?? 1;
     const summary: ElasticCoreUpdateSummary = { weightsL1: 0, biasesL1: 0, inputProjectionL1: 0, outputProjectionL1: 0 };
+    const strength = options.protect?.strength ?? 10;
+    const protectWeights = protectionScales(options.protect?.weights, strength);
+    const protectBiases = protectionScales(options.protect?.biases, strength);
+    const protectInput = protectionScales(options.protect?.inputProjection, strength);
+    const protectOutput = protectionScales(options.protect?.outputProjection, strength);
 
     if (gradients.weights) {
       this.assertGradientLength('weights', gradients.weights, this.weights.length);
@@ -2525,7 +2560,7 @@ export class ElasticCoreBlock {
         const tScale = this.updateScaleForNeuron(t, options.vale) * scale;
         for (let s = 0; s < this.neuronCount; s++) for (let od = 0; od < this.stateDim; od++) for (let id = 0; id < this.stateDim; id++) {
           const i = this.weightIndex(t, s, od, id);
-          const update = lr * tScale * (gradients.weights[i] + decay * this.weights[i]);
+          const update = lr * tScale * (protectWeights ? protectWeights[i] : 1) * (gradients.weights[i] + decay * this.weights[i]);
           if (Number.isFinite(update)) { this.weights[i] -= update; summary.weightsL1 += Math.abs(update); }
         }
       }
@@ -2537,7 +2572,7 @@ export class ElasticCoreBlock {
         const nScale = this.updateScaleForNeuron(n, options.vale) * scale;
         for (let d = 0; d < this.stateDim; d++) {
           const i = n * this.stateDim + d;
-          const update = lr * nScale * (gradients.biases[i] + decay * this.bias[i]);
+          const update = lr * nScale * (protectBiases ? protectBiases[i] : 1) * (gradients.biases[i] + decay * this.bias[i]);
           if (Number.isFinite(update)) { this.bias[i] -= update; summary.biasesL1 += Math.abs(update); }
         }
       }
@@ -2546,7 +2581,7 @@ export class ElasticCoreBlock {
     if (gradients.inputProjection) {
       this.assertGradientLength('inputProjection', gradients.inputProjection, this.inputProjection.length);
       for (let i = 0; i < this.inputProjection.length; i++) {
-        const update = lr * scale * (gradients.inputProjection[i] + decay * this.inputProjection[i]);
+        const update = lr * scale * (protectInput ? protectInput[i] : 1) * (gradients.inputProjection[i] + decay * this.inputProjection[i]);
         if (Number.isFinite(update)) { this.inputProjection[i] -= update; summary.inputProjectionL1 += Math.abs(update); }
       }
     }
@@ -2559,12 +2594,61 @@ export class ElasticCoreBlock {
         dimScale = (dimScale / this.neuronCount) * scale;
         for (let o = 0; o < this.outputDim; o++) {
           const i = d * this.outputDim + o;
-          const update = lr * dimScale * (gradients.outputProjection[i] + decay * this.outputProjection[i]);
+          const update = lr * dimScale * (protectOutput ? protectOutput[i] : 1) * (gradients.outputProjection[i] + decay * this.outputProjection[i]);
           if (Number.isFinite(update)) { this.outputProjection[i] -= update; summary.outputProjectionL1 += Math.abs(update); }
         }
       }
     }
     return summary;
+  }
+
+  /**
+   * How much each weight and bias matters to what `input` produces: the
+   * squared change in the output per unit change in the parameter, summed over
+   * the outputs (central differences). This is the importance that
+   * applyGradients({ protect }) uses. The loss gradient cannot stand in for it:
+   * at a solved task it is about zero for every parameter, so it would call
+   * everything unimportant exactly when protection is needed.
+   *
+   * The block's state persists between forward passes, so it is put back to
+   * what it was before every one and after the last; the measurement leaves the
+   * block as it found it. Costs two forward passes per parameter.
+   */
+  outputSensitivity(input: Float32Array, opts: { eps?: number; run?: ElasticCoreRunOptions } = {}): { weights: Float32Array; biases: Float32Array; inputProjection: Float32Array; outputProjection: Float32Array } {
+    const eps = opts.eps ?? 1e-2;
+    const startState = this.state.slice();
+    const startResidual = this.quantizationResidual.slice();
+    const read = (): Float32Array => {
+      this.state.set(startState);
+      this.quantizationResidual.set(startResidual);
+      return this.forward(input, opts.run).output.slice();
+    };
+    const N = this.neuronCount;
+    const block = this.stateDim * this.stateDim;
+    const measure = (params: Float32Array, skip?: (i: number) => boolean): Float32Array => {
+      const out = new Float32Array(params.length);
+      for (let i = 0; i < params.length; i++) {
+        if (skip && skip(i)) continue;
+        const original = params[i];
+        params[i] = original + eps;
+        const hi = read();
+        params[i] = original - eps;
+        const lo = read();
+        params[i] = original;
+        let sum = 0;
+        for (let k = 0; k < hi.length; k++) { const d = (hi[k] - lo[k]) / (2 * eps); sum += d * d; }
+        out[i] = sum;
+      }
+      return out;
+    };
+    // A neuron's weight onto itself is never used (forward skips s === t), so it is not measured.
+    const weights = measure(this.weights, i => Math.floor(i / (N * block)) === Math.floor(i / block) % N);
+    const biases = measure(this.bias);
+    const inputProjection = measure(this.inputProjection);
+    const outputProjection = measure(this.outputProjection);
+    this.state.set(startState);
+    this.quantizationResidual.set(startResidual);
+    return { weights, biases, inputProjection, outputProjection };
   }
 
   forward(input: Float32Array, options: ElasticCoreRunOptions = {}): ElasticCoreResult {
@@ -2598,6 +2682,7 @@ export class ElasticCoreBlock {
     }
 
     let ticks = 0, residual = 0, converged = false;
+    const hold = options.holdDriven !== false;
     const next = this.nextState;
     const weights = this.weights;
     const bias = this.bias;
@@ -2607,7 +2692,7 @@ export class ElasticCoreBlock {
       const curr = this.state;
       for (let t = 0; t < N; t++) {
         const off = t * SD;
-        if (frozen[t]) {
+        if (frozen[t] || (hold && this.directInputFlags[t] === 1)) {
           for (let d = 0; d < SD; d++) next[off + d] = curr[off + d];
           continue;
         }
