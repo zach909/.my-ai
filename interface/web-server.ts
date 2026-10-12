@@ -31,7 +31,6 @@ import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AVATAR_HTML } from './avatar.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
-import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
@@ -3880,6 +3879,16 @@ export class WebServer {
           body.source,
           body.threadId
         );
+        // The assistant's message ends an exchange, which is the moment the
+        // turn has stopped: freeze the mesh's activity for this conversation
+        // (short-term context). Behind the doorway lock and in the background,
+        // so saving a message never waits on the mesh.
+        if (body.role === 'assistant') {
+          void import('../src/index.js')
+            .then(m => m.getNeuroclawSystem())
+            .then(system => system.freezeThread(thread.id))
+            .catch(() => undefined);
+        }
         this.sendJson(res, { threadId: thread.id });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -5357,6 +5366,13 @@ export class WebServer {
             plugins?: string[];
             includeHistory?: boolean;
             resume?: boolean;
+            /**
+             * Which conversation this run belongs to. With it, the stop freezes
+             * that conversation's neuron activity (short-term context) and
+             * `resume` thaws it, leaving the learned network alone. Without it,
+             * `resume` restores the last whole snapshot, as before.
+             */
+            threadId?: string;
             quietTicks?: number;
             maxTicks?: number;
           } | null;
@@ -5488,9 +5504,15 @@ export class WebServer {
         // to pick up. Skipped silently when there is no saved state -- a first
         // run has nothing to resume and that is not a failure.
         let resumed = false;
+        const threadId = typeof body?.threadId === 'string' && body.threadId ? body.threadId : undefined;
         if (body?.resume) {
-          const saved = await this.readSavedNetworkState();
-          if (saved) resumed = engine.restoreNetworkState(saved);
+          if (threadId && system.threadContext.has(threadId)) {
+            // This conversation's own frozen activity: only the neurons go back.
+            resumed = (await system.thawThread(threadId)).thawed;
+          } else {
+            const saved = await this.readSavedNetworkState();
+            if (saved) resumed = engine.restoreNetworkState(saved);
+          }
         }
 
         const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
@@ -5510,6 +5532,9 @@ export class WebServer {
         let savedNeurons = 0;
         if (result.networkState) {
           savedNeurons = await this.saveNetworkState(result.networkState);
+          // The network said stop: freeze this conversation's activity so the
+          // next turn can pick up exactly here.
+          if (threadId) system.holdThreadActivity(threadId, result.networkState as NetworkStateSnapshot);
         }
         this.sendJson(res, {
           ok: true,

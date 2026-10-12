@@ -17,7 +17,7 @@ import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/co
 
 /** Where something the mesh learns from came from. "web" is always refused -- see learnFrom(). */
 export type LearnSource = "user" | "response" | "correction" | "skill" | "file" | "tool" | "web";
-import { ZipLoopInterface, zipLoopIdsFor } from "../models && skills/core/onebrain.js";
+import { ZipLoopInterface, zipLoopIdsFor, type NetworkStateSnapshot } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
 import { HiveMind, SharedBlackboard, type HiveAgent } from "../models && skills/core/hive-mind.js";
@@ -48,6 +48,7 @@ import { PredictionEngine } from "../models && skills/core/prediction-engine.js"
 import { DoorwayRegistry } from "../models && skills/core/doorways.js";
 import { LiveStreams, PreNeedCache } from "../models && skills/core/live-content.js";
 import { ReplayStore, compressContext, primeWithReplay, zipLoopProbe } from "../models && skills/core/context-replay.js";
+import { ThreadContext, activityOf, type FrozenActivity } from "../models && skills/core/thread-context.js";
 import { SkillAccuracyLedger, type SkillStatus, type SkillSwitch } from "../models && skills/core/net-skill-accuracy.js";
 import type { NetSkillRouter } from "../models && skills/core/net-skill-router.js";
 import { DiscoveryEngine } from "../models && skills/core/discovery-engine.js";
@@ -214,6 +215,14 @@ export class NeuroclawSystem {
   doorways: DoorwayRegistry;
   /** Short prompts that give the mesh an old conversation's context through the Zip Loop (context-replay.ts). */
   contextReplay: ReplayStore;
+  /**
+   * Short-term context: each conversation's neuron activity as it was when
+   * its last turn stopped, kept in memory for a little while (thread-context.ts).
+   * The replay above is the long-term half.
+   */
+  threadContext = new ThreadContext({
+    ttlMs: Number(process.env.NEUROCLAW_THREAD_CONTEXT_TTL_MS) || undefined,
+  });
   private compactingThreads = new Set<string>();
   /** What the mesh is making right now that is already being used (live-content.ts). */
   live = new LiveStreams();
@@ -1042,25 +1051,67 @@ export class NeuroclawSystem {
    * about 37 ms a bit, so the history looked at is bounded
    * (NEUROCLAW_CONTEXT_REPLAY_HISTORY_BYTES, default 256).
    */
-  async continueThread(threadId: string, messages: Array<{ content: string }>): Promise<{ primed: boolean; replayBytes: number; compacting: boolean }> {
-    const text = this.replayHistory(messages);
-    if (Buffer.byteLength(text, "utf8") < 32) return { primed: false, replayBytes: 0, compacting: false };
+  async continueThread(threadId: string, messages: Array<{ content: string }>): Promise<{ primed: boolean; replayBytes: number; compacting: boolean; via: "frozen" | "replay" | "none"; frozenAgeMs?: number }> {
+    // Short term first: if this conversation's neurons were frozen when its
+    // last turn stopped and that was recent, put them back exactly. Instant,
+    // and nothing needs to go through the Zip Loop.
+    const thawed = await this.thawThread(threadId);
 
+    const text = this.replayHistory(messages);
+    if (Buffer.byteLength(text, "utf8") < 32) {
+      return thawed.thawed
+        ? { primed: true, replayBytes: 0, compacting: false, via: "frozen", frozenAgeMs: thawed.ageMs }
+        : { primed: false, replayBytes: 0, compacting: false, via: "none" };
+    }
+
+    // Long term: otherwise give the mesh its context as the short replay of
+    // the whole history. Skipped when the frozen state already did the job.
     const replay = this.contextReplay.replayFor(threadId);
-    let primed = false;
-    if (replay && replay.length > 0) {
+    let primed = thawed.thawed;
+    if (!thawed.thawed && replay && replay.length > 0) {
       try {
         primed = await this.primeReplay(replay);
       } catch (err) {
         console.warn("[context] could not prime the mesh with the replay:", err instanceof Error ? err.message : err);
       }
     }
+    // Whichever was used, keep the long-term replay current for next time.
     let compacting = this.compactingThreads.has(threadId);
     if (!compacting && !this.contextReplay.isCurrent(threadId, text)) {
       compacting = true;
       void this.compactThread(threadId, text);
     }
-    return { primed, replayBytes: replay?.length ?? 0, compacting };
+    const via = thawed.thawed ? "frozen" : primed ? "replay" : "none";
+    return { primed, replayBytes: replay?.length ?? 0, compacting, via, ...(thawed.thawed ? { frozenAgeMs: thawed.ageMs } : {}) };
+  }
+
+  /**
+   * Freeze the mesh's activity for a conversation: called when a turn stops.
+   * Held behind the doorway lock so it is taken after anything still being
+   * fed in, not in the middle of it.
+   */
+  async freezeThread(threadId: string): Promise<boolean> {
+    const engine = this.pipeline.getHyperEngine();
+    if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return false;
+    return this.promptFeed.lock().run(async () => {
+      this.threadContext.freeze(threadId, engine);
+      return true;
+    });
+  }
+
+  /** Keep activity a stopped run already captured (zip-halt takes one at every ending). */
+  holdThreadActivity(threadId: string, activity: FrozenActivity | NetworkStateSnapshot): void {
+    this.threadContext.hold(threadId, activityOf(activity as NetworkStateSnapshot));
+  }
+
+  /** Put a conversation's frozen activity back, if it has some and it is still fresh. */
+  async thawThread(threadId: string): Promise<{ thawed: true; ageMs: number } | { thawed: false }> {
+    const engine = this.pipeline.getHyperEngine();
+    if (!engine || !this.threadContext.has(threadId)) return { thawed: false };
+    return this.promptFeed.lock().run(async () => {
+      const result = this.threadContext.thaw(threadId, engine);
+      return result.thawed ? { thawed: true as const, ageMs: result.ageMs } : { thawed: false as const };
+    });
   }
 
   private replayHistory(messages: Array<{ content: string }>): string {
@@ -1086,9 +1137,14 @@ export class NeuroclawSystem {
         const engine = this.pipeline.getHyperEngine();
         if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return;
         const probe = zipLoopProbe(engine, new ZipLoopInterface(engine, zipLoopIdsFor(engine)));
+        const diagnostics: { reason?: "blind" } = {};
         const result = await compressContext(probe, new Uint8Array(Buffer.from(text, "utf8")), {
           maxMs: Number(process.env.NEUROCLAW_CONTEXT_REPLAY_MS) || 120_000,
+          diagnostics,
         });
+        if (diagnostics.reason === "blind") {
+          console.warn("[context] the mesh reacts the same to this history as to any other that ends the same way, so no replay can stand in for it; short-term context (freeze/thaw) still applies.");
+        }
         this.contextReplay.set(threadId, text, result);
       });
     } catch (err) {
