@@ -60,6 +60,28 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   <div class="links"><a href="/sharing">Lend or borrow a computer</a> · <a href="/">Back to the agent</a></div>
   <div id="msg" class="nc-dim"></div>
 
+  <section class="nc-glass" id="safety">
+    <h2>Safety: what asks first</h2>
+    <p class="nc-dim">Risky tools do not just go. When the agent wants to use one, the call is held and nothing happens until you approve it here. Approving runs that one call once. You can stop individual tools asking, or give it complete access.</p>
+    <h3>Waiting for you</h3>
+    <div id="approvals"></div>
+    <h3>Complete access</h3>
+    <div id="full-state" class="nc-dim"></div>
+    <div class="row" id="full-row">
+      <input class="nc-input grow" id="full-phrase" placeholder="Type the phrase shown to turn it on" autocomplete="off">
+      <button class="nc-btn primary" id="full-on">Give it complete access</button>
+    </div>
+    <h3>Deciding whether to keep going</h3>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="ac-on"> The agent decides for itself whether to keep going after a step</label>
+      <input class="nc-input" id="ac-max" type="number" min="1" max="10" step="1" style="width:90px" title="Most steps in a row">
+      <span class="nc-dim">steps at most</span>
+      <button class="nc-btn" id="ac-save">Save</button>
+    </div>
+    <p class="nc-dim">After a step it answers CONTINUE or STOP. Anything unclear stops, it never goes past this limit, and every step still has its normal checks and approvals.</p>
+    <details><summary>The risky tools</summary><div id="risky"></div></details>
+  </section>
+
   <section class="nc-glass">
     <h2>Leaderboard</h2>
     <p class="nc-dim">Points come from finishing project tasks, from lending your computer when you set a price, and from adding people who go on to do paid work. Spending points does not cost you your place; the board ranks what was earned.</p>
@@ -131,6 +153,39 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     <h2>League</h2>
     <p class="nc-dim">Every project published to the wiki, by anyone. The easy way to get one done is to leave it to the AI, which works on it in the background. To go faster, join and take tasks yourself: you are paid for what you finish.</p>
     <div id="league"></div>
+  </section>
+
+  <section class="nc-glass">
+    <h2>Schedule</h2>
+    <p class="nc-dim">Have the agent do something later, or over and over. A scheduled message goes to the agent exactly like one you typed, so a risky tool still waits for your approval above. You can also schedule from any chat: <em>schedule daily at 9am: check my email</em>.</p>
+    <div id="schedules"></div>
+    <div class="row">
+      <input class="nc-input" id="s-when" placeholder="When: every 2 hours" style="width:200px" maxlength="60">
+      <input class="nc-input grow" id="s-action" placeholder="What: check my email and tell me what is urgent" maxlength="500">
+      <button class="nc-btn primary" id="s-add">Schedule</button>
+    </div>
+    <p class="nc-dim">When: "in 30 minutes", "every 2 hours", "daily at 9am", "tomorrow at 14:30", "at 2026-10-17 09:00". What: a message to the agent, "hive &lt;project&gt;", "organize", or "expert &lt;id&gt;". Nothing runs more often than every 5 minutes.</p>
+  </section>
+
+  <section class="nc-glass">
+    <h2>Experts</h2>
+    <p class="nc-dim">An expert is its own AI for one job, such as email or computer maintenance. It starts by itself, keeps running, and keeps its own notes. A small team works together inside it: a lead decides what to do, specialists add what is missing, and a checker has to clearly approve before anything is done. Experts are separate from the hive and from each other: your email expert never sees what your maintenance expert is doing.</p>
+    <div id="experts"></div>
+    <h3>New expert</h3>
+    <div class="row">
+      <input class="nc-input grow" id="x-name" placeholder="Name, e.g. Email" maxlength="48">
+      <input class="nc-input grow" id="x-spec" placeholder="Expert in, e.g. email management" maxlength="80">
+    </div>
+    <textarea class="nc-input" id="x-mission" placeholder="What should it keep doing? e.g. Keep my inbox clear and flag anything urgent."></textarea>
+    <div class="row">
+      <select class="nc-input" id="x-team" title="Agents in its team">
+        <option value="2">Team of 2</option><option value="3" selected>Team of 3</option><option value="4">Team of 4</option><option value="5">Team of 5</option>
+      </select>
+      <input class="nc-input" id="x-every" type="number" min="5" max="1440" step="5" value="15" style="width:110px" title="Minutes between cycles">
+      <span class="nc-dim">minutes between cycles</span>
+      <label class="chk"><input type="checkbox" id="x-act" checked> Let it act on its own</label>
+      <button class="nc-btn primary" id="x-add">Create and start</button>
+    </div>
   </section>
 
   <section class="nc-glass">
@@ -338,6 +393,97 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     if (running) pollTimer = setTimeout(loadDetail, 4000);
   }
 
+  // ── Schedule ─────────────────────────────────────────────────────────
+  function renderSchedules(r) {
+    var S = $('schedules'); S.textContent = '';
+    if (!r.schedules.length) S.appendChild(el('p', { class: 'nc-dim', text: 'Nothing is scheduled.' }));
+    r.schedules.forEach(function (s) {
+      var next = s.nextAt && s.enabled ? 'next ' + new Date(s.nextAt).toLocaleString() : s.enabled ? 'done' : 'paused';
+      var last = s.history.length ? s.history[s.history.length - 1] : null;
+      var row = item(s.actionText.slice(0, 120), s.whenText + ' · ' + next + ' · ran ' + s.runs + ' time' + (s.runs === 1 ? '' : 's') + (s.failures ? ' · ' + s.failures + ' failed in a row' : ''), [
+        btn(s.enabled ? 'Pause' : 'Resume', function () { act(api('POST', '/api/commons/schedules/' + s.id, { enabled: !s.enabled })); }),
+        btn('Run now', function () { act(api('POST', '/api/commons/schedules/' + s.id + '/run', {})).then(function () { say('Started.'); }); }),
+        btn('Delete', function () { act(api('POST', '/api/commons/schedules/' + s.id + '/delete', {})); })
+      ], s.enabled ? '' : 'gone');
+      if (last) row.firstChild.appendChild(el('small', { text: 'Last: ' + last.result.slice(0, 160) }));
+      S.appendChild(row);
+    });
+  }
+
+  // ── Safety ───────────────────────────────────────────────────────────
+  function renderSafety(v) {
+    var A = $('approvals'); A.textContent = '';
+    var pending = v.approvals.filter(function (a) { return a.status === 'pending'; });
+    if (!pending.length) A.appendChild(el('p', { class: 'nc-dim', text: 'Nothing is waiting.' }));
+    pending.forEach(function (a) {
+      A.appendChild(item(a.label + ' wants to: ' + a.request, 'Asked ' + ago(a.requestedAt) + '. Nothing has been done.', [
+        btn('Approve', function () { act(api('POST', '/api/safety/approvals/' + a.id + '/approve', {})).then(function (r) { say(r.approval.result || 'Done.'); }); }, 'primary'),
+        btn('Deny', function () { act(api('POST', '/api/safety/approvals/' + a.id + '/deny', {})); })
+      ]));
+    });
+    v.approvals.filter(function (a) { return a.status !== 'pending'; }).slice(0, 4).forEach(function (a) {
+      A.appendChild(item(a.label + ': ' + a.request.slice(0, 90), a.status + (a.result ? ' · ' + a.result.slice(0, 120) : ''), [], 'gone'));
+    });
+
+    $('full-state').textContent = '';
+    $('full-state').appendChild(el('span', { class: v.fullAccess ? 'err' : 'on', text: v.fullAccess ? 'Complete access is ON. Nothing asks first and every capability is granted.' : 'Complete access is off.' }));
+    $('full-row').hidden = v.fullAccess;
+    if (v.fullAccess && !$('full-off')) {
+      var off = btn('Turn complete access off', function () { act(api('POST', '/api/safety/complete-access', { on: false })); }, 'primary');
+      off.id = 'full-off';
+      $('full-state').appendChild(el('div', { class: 'row' }, [off]));
+    }
+    if (!v.fullAccess && $('full-off')) $('full-off').parentNode.removeChild($('full-off'));
+    $('full-phrase').placeholder = 'Type exactly: ' + v.completeAccessPhrase;
+    $('full-phrase').setAttribute('data-phrase', v.completeAccessPhrase);
+
+    if (document.activeElement !== $('ac-max')) $('ac-max').value = v.autoContinue.maxSteps;
+    $('ac-on').checked = v.autoContinue.enabled;
+    $('ac-max').max = v.autoContinue.max;
+
+    var R = $('risky'); R.textContent = '';
+    v.tools.forEach(function (t) {
+      var box = el('input', { type: 'checkbox' });
+      box.checked = t.ask || v.fullAccess ? t.ask : false;
+      box.disabled = v.fullAccess;
+      box.addEventListener('change', function () { act(api('POST', '/api/safety/tools', { id: t.id, ask: box.checked })); });
+      R.appendChild(item(t.label, t.why, [chip(t.level, t.level === 'high' ? 'hot' : ''), el('label', { class: 'chk' }, [box, el('span', { text: 'Ask first' })])]));
+    });
+  }
+
+  // ── Experts ──────────────────────────────────────────────────────────
+  function ago(ms) {
+    if (!ms) return 'not yet';
+    var m = Math.round((Date.now() - ms) / 60000);
+    return m < 1 ? 'just now' : m < 90 ? m + ' min ago' : Math.round(m / 60) + ' h ago';
+  }
+  function renderExperts(r) {
+    var X = $('experts'); X.textContent = '';
+    if (!r.experts.length) X.appendChild(el('p', { class: 'nc-dim', text: 'No experts yet.' }));
+    r.experts.forEach(function (e) {
+      var last = e.history.length ? e.history[e.history.length - 1] : null;
+      var status = e.working ? 'working now' : !e.enabled ? 'paused' : 'next ' + (e.nextAt <= Date.now() ? 'any moment' : 'in ' + Math.max(1, Math.round((e.nextAt - Date.now()) / 60000)) + ' min');
+      var sub = e.agents.length + ' agents · every ' + e.intervalMin + ' min · ran ' + e.runs + ' time' + (e.runs === 1 ? '' : 's') + ' · ' + status + (e.mayAct ? '' : ' · only records plans');
+      var row = item(e.name, sub, [
+        btn(e.enabled ? 'Pause' : 'Resume', function () { act(api('POST', '/api/commons/experts/' + e.id, { enabled: !e.enabled })); }),
+        btn('Run now', function () { act(api('POST', '/api/commons/experts/' + e.id + '/run', {})).then(function () { say('Started.'); }); }),
+        btn(e.mayAct ? 'Only record' : 'Let it act', function () { act(api('POST', '/api/commons/experts/' + e.id, { mayAct: !e.mayAct })); }),
+        btn('Delete', function () { if (confirm('Delete ' + e.name + ' and its notes?')) act(api('POST', '/api/commons/experts/' + e.id + '/delete', {})); })
+      ], e.enabled ? '' : 'gone');
+      row.firstChild.firstChild.appendChild(chip(e.specialty, 'hot'));
+      if (last) row.firstChild.appendChild(el('small', { text: 'Last, ' + ago(last.at) + ': ' + (last.plan ? last.plan + ' — ' : '') + last.result.slice(0, 160) }));
+      if (e.history.length || e.notes.length) {
+        var d = el('details', {}, [el('summary', { text: 'Its cycles and notes' })]);
+        e.history.slice(-6).reverse().forEach(function (h) {
+          d.appendChild(el('pre', { text: ago(h.at) + ': ' + (h.plan || '(nothing to do)') + '\\n  checker: ' + h.review + (h.acted ? ', acted' : '') + '\\n  ' + h.result.slice(0, 300) }));
+        });
+        e.notes.slice(-6).forEach(function (n) { d.appendChild(el('pre', { text: 'note: ' + n })); });
+        row.firstChild.appendChild(d);
+      }
+      X.appendChild(row);
+    });
+  }
+
   // ── The market and the league ────────────────────────────────────────
   function renderMarket(m) {
     var O = $('orders'); O.textContent = '';
@@ -396,6 +542,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     api('GET', '/api/chat-history/groups').then(renderChats).catch(function () {});
     api('GET', '/api/commons/folders').then(renderFolders).catch(function () {});
     api('GET', '/api/commons/market').then(renderMarket).catch(function () {});
+    api('GET', '/api/commons/experts').then(renderExperts).catch(function () {});
     api('GET', '/api/commons/league').then(renderLeague).catch(function () {});
     if (openId) loadDetail();
   }
@@ -434,6 +581,24 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       refresh();
     }, function (e) { $('b-out').textContent = ''; say(e.message, true); });
   });
+  $('s-add').addEventListener('click', function () {
+    act(api('POST', '/api/commons/schedules', { when: $('s-when').value, action: $('s-action').value })).then(function () { $('s-when').value = ''; $('s-action').value = ''; say('Scheduled.'); });
+  });
+  $('full-on').addEventListener('click', function () {
+    if (!confirm('Complete access lets the agent run commands, change and delete files, send messages and use your camera without asking. Turn it on?')) return;
+    act(api('POST', '/api/safety/complete-access', { on: true, phrase: $('full-phrase').value })).then(function () { $('full-phrase').value = ''; });
+  });
+  $('ac-save').addEventListener('click', function () {
+    act(api('POST', '/api/safety/auto-continue', { enabled: $('ac-on').checked, maxSteps: Number($('ac-max').value) })).then(function () { say('Saved.'); });
+  });
+  setInterval(function () { api('GET', '/api/safety').then(renderSafety).catch(function () {}); }, 10000);
+  $('x-add').addEventListener('click', function () {
+    act(api('POST', '/api/commons/experts', {
+      name: $('x-name').value, specialty: $('x-spec').value, mission: $('x-mission').value,
+      teamSize: Number($('x-team').value), intervalMin: Number($('x-every').value), mayAct: $('x-act').checked
+    })).then(function () { $('x-name').value = ''; $('x-spec').value = ''; $('x-mission').value = ''; say('Created. It is starting now.'); });
+  });
+  setInterval(function () { api('GET', '/api/commons/experts').then(renderExperts).catch(function () {}); }, 15000);
   $('f-go').addEventListener('click', function () {
     say('The agent is filing things. This can take a while...');
     act(api('POST', '/api/commons/folders/organize', {})).then(function (r) {

@@ -14,6 +14,7 @@ import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
 import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
 import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/core/shared-mesh-sync.js";
+import { sharedToolGate } from "../models && skills/core/tool-safety.js";
 import { MeshAgentLearner, type AgentLearner } from "../models && skills/core/hive-learning.js";
 import { DoorwayLock } from "../models && skills/core/doorway-lock.js";
 
@@ -360,6 +361,8 @@ export class NeuroclawSystem {
     // neurons in the same all-to-all mesh as everything else, so a plugin
     // firing genuinely propagates into the rest of the network.
     this.pluginRegistry = new PluginRegistry(new NetSkillMesh(2, this.llm.mesh));
+    // Risky tools (terminal, email, files, camera, ...) ask first instead of just going.
+    this.pluginRegistry.setGate(sharedToolGate());
     // One ledger for all three routers (the language brain's, the pipeline's
     // and the plugin registry's), so a skill switched off for predicting badly
     // is off everywhere, and what was learned survives a restart.

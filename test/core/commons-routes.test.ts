@@ -27,6 +27,7 @@ const chat = async (m: string): Promise<string> => {
   if (m.includes('Break this project')) return 'Folder: Backend\n- Fetch data\n- Cache it\nFolder: Frontend\n- Draw the screen'
   if (m.includes('checking another AI')) return 'ACCEPT: fine'
   if (m.includes('removed from the team')) return 'NO'
+  if (m.includes('expert team')) return m.includes('Checker') ? 'APPROVE' : m.includes('Specialist') ? 'NOTHING' : 'Archive the newsletters'
   if (m.includes('Which folder')) return 'Backend'
   if (m.includes('You organise a library')) return 'Planning/Apps: 70\nNotes: 30'
   return 'Here is the finished work.'
@@ -40,6 +41,7 @@ beforeAll(async () => {
       parseBody: (r, m) => body(r, m),
       sendJson: (r, data, status = 200) => { r.writeHead(status, { 'Content-Type': 'application/json' }); r.end(JSON.stringify(data)) },
       chat,
+      act: async m => `did: ${m}`,
       status: () => ({ running: true }),
       learner: async () => null,
     })
@@ -50,7 +52,7 @@ beforeAll(async () => {
 })
 afterAll(() => new Promise<void>(r => server.close(() => r())))
 
-const ENV = ['CORONA_POINTS_FILE', 'CORONA_PROJECTS_FILE', 'CORONA_HIVES_FILE', 'CORONA_FOLDERS_FILE', 'CORONA_MARKET_FILE', 'CORONA_COMPUTE_FILE', 'NEUROCLAW_STORE_DIR'] as const
+const ENV = ['CORONA_POINTS_FILE', 'CORONA_PROJECTS_FILE', 'CORONA_HIVES_FILE', 'CORONA_FOLDERS_FILE', 'CORONA_MARKET_FILE', 'CORONA_COMPUTE_FILE', 'CORONA_EXPERTS_FILE', 'CORONA_SCHEDULE_FILE', 'NEUROCLAW_STORE_DIR'] as const
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), 'commons-routes-'))
   process.env.CORONA_POINTS_FILE = path.join(dir, 'points.json')
@@ -59,6 +61,8 @@ beforeEach(() => {
   process.env.CORONA_FOLDERS_FILE = path.join(dir, 'folders.json')
   process.env.CORONA_MARKET_FILE = path.join(dir, 'market.json')
   process.env.CORONA_COMPUTE_FILE = path.join(dir, 'compute.json')
+  process.env.CORONA_EXPERTS_FILE = path.join(dir, 'experts.json')
+  process.env.CORONA_SCHEDULE_FILE = path.join(dir, 'schedules.json')
   process.env.NEUROCLAW_STORE_DIR = path.join(dir, 'store')
 })
 afterEach(() => {
@@ -270,6 +274,74 @@ describe('the market and the league', () => {
     const r = await call('POST', '/api/commons/projects/quiet/background', { on: true })
     expect(r.json.background).toBe(true)
     expect((await call('POST', '/api/commons/projects/quiet/background', { on: 'yes' })).json.background).toBe(false) // only a real true turns it on
+  })
+})
+
+describe('experts', () => {
+  const make = (extra: Record<string, unknown> = {}) => call('POST', '/api/commons/experts', { name: 'Email', specialty: 'email management', mission: 'Keep the inbox clear.', ...extra })
+
+  it('creates one, and it starts by itself: its first cycle runs without anyone pressing anything', async () => {
+    const r = await make()
+    expect(r.status).toBe(201)
+    expect(r.json.expert.agents.map((a: any) => a.role)).toEqual(['lead', 'specialist', 'checker'])
+    let e = r.json.expert
+    for (let i = 0; i < 100 && e.runs === 0; i++) {
+      await new Promise(x => setTimeout(x, 20))
+      e = (await call('GET', '/api/commons/experts')).json.experts[0]
+    }
+    expect(e.runs).toBe(1)
+    expect(e.history[0]).toMatchObject({ review: 'approve', acted: true })
+    expect(e.history[0].result).toContain('did: email management: Archive the newsletters')
+  })
+
+  it('can be paused, set to only record, and deleted', async () => {
+    const id = (await make({ mayAct: false })).json.expert.id
+    expect((await call('POST', `/api/commons/experts/${id}`, { enabled: false })).json.expert.enabled).toBe(false)
+    expect((await call('POST', `/api/commons/experts/${id}`, { mayAct: true })).json.expert.mayAct).toBe(true)
+    expect((await call('POST', `/api/commons/experts/${id}/delete`, {})).json.deleted).toBe(true)
+    expect((await call('GET', '/api/commons/experts')).json.experts).toEqual([])
+  })
+
+  it('refuses nonsense, a duplicate name, and an unknown expert', async () => {
+    expect((await make({ teamSize: 1 })).status).toBe(400)
+    expect((await make({ intervalMin: 1 })).status).toBe(400)
+    await make()
+    expect((await make()).status).toBe(400)
+    expect((await call('POST', '/api/commons/experts/0000000000', { enabled: true })).status).toBe(404)
+  })
+})
+
+describe('schedules', () => {
+  const add = (when: string, action: string) => call('POST', '/api/commons/schedules', { when, action })
+
+  it('schedules an action, says when in words, and lists it', async () => {
+    const r = await add('every 2 hours', 'check my email')
+    expect(r.status).toBe(201)
+    expect(r.json.schedule).toMatchObject({ whenText: 'every 2 hours', actionText: 'check my email', enabled: true })
+    expect((await call('GET', '/api/commons/schedules')).json.schedules).toHaveLength(1)
+  })
+
+  it('explains what it can read when it cannot read the time', async () => {
+    const r = await add('whenever', 'x')
+    expect(r.status).toBe(400)
+    expect(r.json.error).toMatch(/in 30 minutes/)
+    expect((await add('every 1 minutes', 'x')).status).toBe(400)
+    expect((await add('daily at 9am', '')).status).toBe(400)
+    expect((await add('daily at 9am', 'schedule every 5 minutes: x')).status).toBe(400)
+  })
+
+  it('runs one now through the agent\'s tool path, pauses, resumes and deletes', async () => {
+    const id = (await add('every 1 hours', 'check my email')).json.schedule.id
+    expect((await call('POST', `/api/commons/schedules/${id}/run`, {})).status).toBe(202)
+    let s = (await call('GET', '/api/commons/schedules')).json.schedules[0]
+    for (let i = 0; i < 100 && s.runs === 0; i++) { await new Promise(x => setTimeout(x, 20)); s = (await call('GET', '/api/commons/schedules')).json.schedules[0] }
+    expect(s.history[0]).toMatchObject({ ok: true, result: 'did: check my email' }) // went through act, not text-only chat
+    expect((await call('POST', `/api/commons/schedules/${id}`, { enabled: false })).json.schedule.enabled).toBe(false)
+    expect((await call('POST', `/api/commons/schedules/${id}/delete`, {})).json.deleted).toBe(true)
+  })
+
+  it('an unknown schedule is a 404', async () => {
+    expect((await call('POST', '/api/commons/schedules/00000000', { enabled: true })).status).toBe(404)
   })
 })
 

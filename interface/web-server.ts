@@ -35,7 +35,11 @@ import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambien
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
 import { COMMONS_PAGE } from './commons-page.js';
-import { handleCommonsRoutes, withTimeout, runFolderSweep } from './commons-routes.js';
+import { handleCommonsRoutes, withTimeout, runFolderSweep, expertDepsFor, schedulerDepsFor } from './commons-routes.js';
+import { startScheduler } from '../models && skills/core/scheduler.js';
+import { handleSafetyRoutes, isSafetyRoute } from './safety-routes.js';
+import { sharedToolGate } from '../models && skills/core/tool-safety.js';
+import { startExperts } from '../models && skills/core/experts.js';
 import { startBackgroundHives } from '../models && skills/core/hive-background.js';
 import { titleGroupsWithAgent } from '../models && skills/core/agent-organizer.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
@@ -1327,6 +1331,8 @@ export class WebServer {
   private server: http.Server | null = null;
   private stopScreenDonor: (() => void) | null = null;
   private stopBackgroundHives: (() => void) | null = null;
+  private stopExperts: (() => void) | null = null;
+  private stopScheduler: (() => void) | null = null;
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
@@ -1491,8 +1497,37 @@ export class WebServer {
           } catch {
             learner = null;
           }
-          return { think: (_agent, prompt) => withTimeout(this.runner.generate(prompt)), learner };
+          return { think: (_agent, prompt) => withTimeout(this.runner.generateText(prompt)), learner };
         },
+      });
+    }
+    // Experts are standing AIs, one job each, that run by themselves
+    // (experts.ts). They start with the server and every enabled one resumes
+    // after a restart. NEUROCLAW_EXPERTS=0 turns them off.
+    if (process.env.NEUROCLAW_EXPERTS !== '0' && !process.env.VITEST) {
+      this.stopExperts = startExperts({
+        deps: async () => expertDepsFor(m => this.runner.generateText(m), m => this.runner.generate(m)),
+      });
+    }
+    // The clock for scheduled actions (scheduler.ts). A scheduled message goes
+    // to the agent by its normal path, so risky tools still ask first.
+    // NEUROCLAW_SCHEDULER=0 turns it off.
+    if (process.env.NEUROCLAW_SCHEDULER !== '0' && !process.env.VITEST) {
+      this.stopScheduler = startScheduler({
+        deps: async () => schedulerDepsFor({
+          chat: m => this.runner.generateText(m),
+          act: m => this.runner.generate(m),
+          chats: this.chatHistory,
+          learn: text => this.learnFromFiling(text),
+          learner: async () => {
+            try {
+              const { getNeuroclawSystem } = await import('../src/index.js');
+              return (await getNeuroclawSystem()).hiveLearner();
+            } catch {
+              return null;
+            }
+          },
+        }),
       });
     }
     // Same reasoning, same placement: loading every saved extension is
@@ -1760,6 +1795,10 @@ export class WebServer {
     this.stopScreenDonor = null;
     this.stopBackgroundHives?.();
     this.stopBackgroundHives = null;
+    this.stopExperts?.();
+    this.stopExperts = null;
+    this.stopScheduler?.();
+    this.stopScheduler = null;
     return new Promise<void>((resolve) => {
       this.server?.close(() => { this.server = null; resolve(); });
     });
@@ -1824,7 +1863,7 @@ export class WebServer {
     this.organizingFolders = true;
     void runFolderSweep({
       chats: this.chatHistory,
-      think: prompt => withTimeout(this.runner.generate(prompt)),
+      think: prompt => withTimeout(this.runner.generateText(prompt)),
       learn: text => this.learnFromFiling(text),
       limit: 2,
     })
@@ -1843,7 +1882,7 @@ export class WebServer {
   private nameChatGroupsInBackground(): void {
     if (this.namingChatGroups || process.env.NEUROCLAW_AGENT_ORGANIZE === '0') return;
     this.namingChatGroups = true;
-    void titleGroupsWithAgent(this.chatHistory, prompt => withTimeout(this.runner.generate(prompt)))
+    void titleGroupsWithAgent(this.chatHistory, prompt => withTimeout(this.runner.generateText(prompt)))
       .catch(() => undefined)
       .finally(() => { this.namingChatGroups = false; });
   }
@@ -2547,6 +2586,23 @@ export class WebServer {
       if (handled) return;
     }
 
+    // ── Risky tools, approvals, complete access, auto-continue ──────────
+    // See safety-routes.ts: owner routes behind the normal gate.
+    if (isSafetyRoute(pathname)) {
+      const handled = await handleSafetyRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        gate: sharedToolGate(),
+        access: async () => (await import('../models && skills/core/access-settings.js')).sharedAccessManager(),
+        runApproved: async (toolId, request) => {
+          const { getNeuroclawSystem } = await import('../src/index.js');
+          return (await getNeuroclawSystem()).pluginRegistry.runApproved(toolId, request);
+        },
+      });
+      if (handled) return;
+    }
+
     // ── Points, projects and the hive ───────────────────────────────────
     // See commons-routes.ts: owner routes behind the normal gate.
     if (pathname === '/api/commons' || pathname.startsWith('/api/commons/')) {
@@ -2554,7 +2610,9 @@ export class WebServer {
         req, res, pathname, method,
         parseBody: (r, max) => this.parseBody(r, max),
         sendJson: (r, data, status) => this.sendJson(r, data, status),
-        chat: message => this.runner.generate(message),
+        // Text only, never a tool: see NeuroclawRunner.generateText().
+        chat: message => this.runner.generateText(message),
+        act: message => this.runner.generate(message),
         status: () => ({ running: this.runner.getStatus().running }),
         chats: this.chatHistory,
         learn: text => this.learnFromFiling(text),

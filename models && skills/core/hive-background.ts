@@ -18,6 +18,8 @@
 
 import { loadProjects, type ProjectCtx } from "./projects.js";
 import { getHive, isHiveRunning, runHive, type HiveDeps } from "./project-hive.js";
+import { chainSteps, type ChainOptions } from "./auto-continue.js";
+import { loadSafety } from "./tool-safety.js";
 
 export const DEFAULT_BACKGROUND_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -27,6 +29,8 @@ export interface BackgroundOptions {
   intervalMs?: number;
   project?: ProjectCtx;
   hivesFile?: string;
+  /** Whether the AI may choose to do more rounds straight away. Settings by default. */
+  autoContinue?: ChainOptions;
 }
 
 /** Which project the AI should work on next, or null if there is nothing worth doing. */
@@ -46,7 +50,22 @@ export async function backgroundTick(opts: BackgroundOptions): Promise<{ ran: st
   if (!id) return { ran: null };
   try {
     const deps = await opts.deps();
-    await runHive(id, { ...deps, project: opts.project ?? deps.project, file: opts.hivesFile ?? deps.file, maxRounds: 1 });
+    const run = { ...deps, project: opts.project ?? deps.project, file: opts.hivesFile ?? deps.file, maxRounds: 1 };
+    const doneCount = (): number => (loadProjects(run.project?.file).find(p => p.id === id)?.tasks.filter(t => t.status === "done").length ?? 0);
+    // One round; then, if it got somewhere and the AI says there is more worth doing now, another (auto-continue.ts).
+    await chainSteps(
+      async () => {
+        const before = doneCount();
+        const h = await runHive(id, run);
+        const stillOpen = loadProjects(run.project?.file).find(p => p.id === id)?.status === "open";
+        return { progressed: stillOpen && h.state !== "stalled" && h.state !== "complete" && (doneCount() > before || h.events.length > 0) };
+      },
+      async () => {
+        const original = getHive(id, run.file)?.agents[0];
+        return original ? run.think(original, `The team just finished a round on this project. Is there more worth doing right now? Start your reply with CONTINUE or STOP.`) : "STOP";
+      },
+      opts.autoContinue ?? loadSafety().autoContinue,
+    );
   } catch {
     // The hive records why it stopped. A background pass must never take anything down.
   }

@@ -30,6 +30,12 @@
  *   POST /api/commons/market/orders            {side, cu, points}
  *   POST /api/commons/market/orders/:id/cancel
  *   POST /api/commons/market/borrow            {prompt}          the cheapest computer you know
+ *   GET/POST /api/commons/experts              standing AIs, one job each, running by themselves
+ *   POST /api/commons/experts/:id              {enabled?, mayAct?, intervalMin?, mission?}
+ *   POST /api/commons/experts/:id/(run|delete)
+ *   GET/POST /api/commons/schedules            do things later or on repeat
+ *   POST /api/commons/schedules/:id            {enabled}
+ *   POST /api/commons/schedules/:id/(run|delete)
  *   POST /api/commons/projects/:id/tasks/:t/(claim|release|submit|review)
  *   GET  /api/commons/projects/:id/hive
  *   POST /api/commons/projects/:id/hive/(run|merge)
@@ -66,7 +72,7 @@ import {
   type Think,
   type Worker,
 } from "../models && skills/core/projects.js";
-import { hiveView, mergeHive, startHiveRun, type HiveDeps } from "../models && skills/core/project-hive.js";
+import { hiveView, mergeHive, runHive, startHiveRun, type HiveDeps } from "../models && skills/core/project-hive.js";
 import { gatherItems, organizeItems, pruneGone, type OrganizeReport } from "../models && skills/core/folder-organizer.js";
 import { TreeError, parsePath, placeItem, viewTree, type PlaceSpec } from "../models && skills/core/folder-tree.js";
 import type { ChatHistoryStore } from "../models && skills/core/chat-history-store.js";
@@ -74,6 +80,10 @@ import type { AgentLearner } from "../models && skills/core/hive-learning.js";
 import { borrowBest } from "../models && skills/core/compute-market.js";
 import { MarketError, allOrders, cancelOrder, currentBid, currentOffer, placeOrder } from "../models && skills/core/market.js";
 import { leaderboard } from "../models && skills/core/points.js";
+import { ExpertError, createExpert, deleteExpert, isExpertRunning, loadExperts, runExpertChain, updateExpert, expertsFile, type ExpertDeps } from "../models && skills/core/experts.js";
+import {
+  ScheduleError, createSchedule, deleteSchedule, loadSchedules, runSchedule, updateSchedule, schedulesFile, describeAction, describeWhen, type SchedulerDeps,
+} from "../models && skills/core/scheduler.js";
 import { WikiNameError } from "../models && skills/core/wiki-store.js";
 import type { RouteContext } from "./corona-routes.js";
 
@@ -84,6 +94,47 @@ export interface CommonsContext extends RouteContext {
   chats?: ChatHistoryStore | null;
   /** Where each filing is passed on for the mesh to learn from (NeuroclawSystem.learnFrom). */
   learn?: (text: string) => void;
+  /** The agent's normal path WITH its tools, for an expert's approved actions. `chat` above is text only. */
+  act?: (message: string) => Promise<string>;
+}
+
+/**
+ * How scheduled actions are carried out. A scheduled message goes by the agent's
+ * normal path (`act`, with its tools), so risky tools still wait for approval.
+ * Everything the agent only thinks about goes by `chat`, which is text only.
+ */
+export function schedulerDepsFor(opts: {
+  chat: (m: string) => Promise<string>;
+  act?: (m: string) => Promise<string>;
+  chats?: ChatHistoryStore | null;
+  learn?: (text: string) => void;
+  learner?: () => Promise<AgentLearner | null>;
+}): SchedulerDeps {
+  return {
+    chat: async m => (opts.act ? await withTimeout(opts.act(m)) : await withTimeout(opts.chat(m))),
+    hive: async projectId => {
+      const deps: HiveDeps = { think: (_a, p) => withTimeout(opts.chat(p)), learner: opts.learner ? await opts.learner() : null, maxRounds: 1 };
+      const h = await runHive(projectId, deps);
+      return `${h.state}: ${h.note || `round ${h.round}`}`;
+    },
+    organize: async () => {
+      const r = await runFolderSweep({ chats: opts.chats, think: p => withTimeout(opts.chat(p)), learn: opts.learn, limit: 3 });
+      return `asked ${r.asked}, filed ${r.placed}, left ${r.left}`;
+    },
+    expert: async expertId => {
+      const r = await runExpertChain(expertId, expertDepsFor(opts.chat, opts.act));
+      const last = r.steps[r.steps.length - 1]?.expert.history.slice(-1)[0];
+      return last ? `${last.plan || "nothing to do"}: ${last.result}`.slice(0, 300) : "no result";
+    },
+  };
+}
+
+/** What an expert needs, from this server's agent: text-only thinking, and a gated way to act. */
+export function expertDepsFor(chat: (m: string) => Promise<string>, act?: (m: string) => Promise<string>): ExpertDeps {
+  return {
+    think: (_agent, prompt) => withTimeout(chat(prompt)),
+    act: instruction => (act ? withTimeout(act(instruction)) : Promise.reject(new Error("This server cannot act on its own."))),
+  };
 }
 
 /**
@@ -122,7 +173,7 @@ export function withTimeout(promise: Promise<string>, ms = THINK_TIMEOUT_MS): Pr
 function statusOf(err: unknown): number {
   if (err instanceof ProjectError || err instanceof PointsError) return err.status;
   if (err instanceof WikiNameError) return 400;
-  if (err instanceof TreeError || err instanceof MarketError) return err.status;
+  if (err instanceof TreeError || err instanceof MarketError || err instanceof ExpertError || err instanceof ScheduleError) return err.status;
   const s = (err as { status?: unknown } | null)?.status;
   return typeof s === "number" ? s : 500;
 }
@@ -235,6 +286,57 @@ async function route(ctx: CommonsContext): Promise<boolean> {
       return json({ project: summarize(project), plannedBy: source }, 201);
     }
     return json({ project: summarize(createProject(base)), plannedBy: "you" }, 201);
+  }
+
+  if (pathname === "/api/commons/experts" && method === "GET") {
+    const file = expertsFile();
+    return json({ experts: loadExperts().map(e => ({ ...e, working: isExpertRunning(file, e.id) })) });
+  }
+  if (pathname === "/api/commons/experts" && method === "POST") {
+    const b = await bodyOf(8 * 1024);
+    const expert = createExpert({
+      name: String(b.name ?? ""), specialty: String(b.specialty ?? ""), mission: String(b.mission ?? ""),
+      teamSize: b.teamSize === undefined ? undefined : Number(b.teamSize),
+      intervalMin: b.intervalMin === undefined ? undefined : Number(b.intervalMin),
+      mayAct: b.mayAct !== false,
+    });
+    // It starts by itself: do not wait for the next look.
+    void runExpertChain(expert.id, expertDepsFor(ctx.chat, ctx.act)).catch(() => undefined);
+    return json({ expert }, 201);
+  }
+  if (pathname === "/api/commons/schedules" && method === "GET") {
+    return json({ schedules: loadSchedules().map(s => ({ ...s, actionText: describeAction(s.action), whenText: describeWhen(s.when) })) });
+  }
+  if (pathname === "/api/commons/schedules" && method === "POST") {
+    const b = await bodyOf(4 * 1024);
+    const s = createSchedule({ when: String(b.when ?? ""), action: String(b.action ?? ""), name: typeof b.name === "string" && b.name ? b.name : undefined });
+    return json({ schedule: { ...s, actionText: describeAction(s.action), whenText: describeWhen(s.when) } }, 201);
+  }
+  const sc = /^\/api\/commons\/schedules\/([a-f0-9]{8})(?:\/(run|delete))?$/.exec(pathname);
+  if (sc && method === "POST") {
+    const b = await bodyOf(1024);
+    if (sc[2] === "delete") return json({ deleted: deleteSchedule(sc[1]) });
+    if (sc[2] === "run") {
+      void runSchedule(sc[1], schedulerDepsFor({ chat: ctx.chat, act: ctx.act, chats: ctx.chats, learn: ctx.learn, learner: ctx.learner })).catch(() => undefined);
+      return json({ started: true }, 202);
+    }
+    return json({ schedule: updateSchedule(sc[1], { enabled: typeof b.enabled === "boolean" ? b.enabled : undefined }) });
+  }
+
+  const ex = /^\/api\/commons\/experts\/([a-f0-9]{10})(?:\/(run|delete))?$/.exec(pathname);
+  if (ex && method === "POST") {
+    const b = await bodyOf(8 * 1024);
+    if (ex[2] === "delete") return json({ deleted: deleteExpert(ex[1]) });
+    if (ex[2] === "run") {
+      void runExpertChain(ex[1], expertDepsFor(ctx.chat, ctx.act)).catch(() => undefined);
+      return json({ started: true }, 202);
+    }
+    return json({ expert: updateExpert(ex[1], {
+      enabled: typeof b.enabled === "boolean" ? b.enabled : undefined,
+      mayAct: typeof b.mayAct === "boolean" ? b.mayAct : undefined,
+      intervalMin: b.intervalMin === undefined ? undefined : Number(b.intervalMin),
+      mission: typeof b.mission === "string" ? b.mission : undefined,
+    }) });
   }
 
   const m = /^\/api\/commons\/projects\/([a-z0-9][a-z0-9-]{0,47})(?:\/(.*))?$/.exec(pathname);
