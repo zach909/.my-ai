@@ -34,6 +34,9 @@ import { startScreenDonor } from '../models && skills/core/data-donor.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
+import { COMMONS_PAGE } from './commons-page.js';
+import { handleCommonsRoutes, withTimeout } from './commons-routes.js';
+import { titleGroupsWithAgent } from '../models && skills/core/agent-organizer.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
 import {
@@ -1780,6 +1783,22 @@ export class WebServer {
     this.sendJson(res, { error: msg }, status);
   }
 
+  private namingChatGroups = false;
+
+  /**
+   * Has the agent give any unnamed chat group a proper topic name (see
+   * agent-organizer.ts). Runs after the list has already been sent, one pass
+   * at a time, and never delays or fails a request; the keyword name stays
+   * until the agent's replaces it. NEUROCLAW_AGENT_ORGANIZE=0 turns it off.
+   */
+  private nameChatGroupsInBackground(): void {
+    if (this.namingChatGroups || process.env.NEUROCLAW_AGENT_ORGANIZE === '0') return;
+    this.namingChatGroups = true;
+    void titleGroupsWithAgent(this.chatHistory, prompt => withTimeout(this.runner.generate(prompt)))
+      .catch(() => undefined)
+      .finally(() => { this.namingChatGroups = false; });
+  }
+
   /**
    * `maxBytes` defaults to 1MB -- right for the other 40+ callers, all
    * small config/command payloads where a bigger body is itself a warning
@@ -2292,6 +2311,12 @@ export class WebServer {
       return;
     }
 
+    // Points, the leaderboard, projects and the hive: one page, same gate.
+    if (pathname === '/commons' && method === 'GET') {
+      this.sendHtml(res, COMMONS_PAGE);
+      return;
+    }
+
     if (pathname === '/login' && method === 'GET') {
       this.sendHtml(res, this.loginPage());
       return;
@@ -2468,6 +2493,27 @@ export class WebServer {
         status: () => {
           const st = this.runner.getStatus();
           return { running: st.running, uptime: Math.floor(st.uptime) };
+        },
+      });
+      if (handled) return;
+    }
+
+    // ── Points, projects and the hive ───────────────────────────────────
+    // See commons-routes.ts: owner routes behind the normal gate.
+    if (pathname === '/api/commons' || pathname.startsWith('/api/commons/')) {
+      const handled = await handleCommonsRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        chat: message => this.runner.generate(message),
+        status: () => ({ running: this.runner.getStatus().running }),
+        learner: async () => {
+          try {
+            const { getNeuroclawSystem } = await import('../src/index.js');
+            return (await getNeuroclawSystem()).hiveLearner();
+          } catch {
+            return null;
+          }
         },
       });
       if (handled) return;
@@ -3829,6 +3875,7 @@ export class WebServer {
     // "create group" step anywhere in this API on purpose.
     if (pathname === '/api/chat-history/groups' && method === 'GET') {
       this.sendJson(res, { groups: this.chatHistory.listGroupsWithThreads() });
+      this.nameChatGroupsInBackground();
       return;
     }
 

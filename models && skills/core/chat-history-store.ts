@@ -185,6 +185,16 @@ export class ChatHistoryStore {
     return this.organizer.listGroups();
   }
 
+  /** Groups the agent still has to name (agent-organizer.ts). */
+  groupsNeedingTitle(minGapMs: number, now?: number): ChatGroupRecord[] {
+    return this.organizer.groupsNeedingTitle(minGapMs, now);
+  }
+
+  /** Store the agent's title for a group; null records that it was asked and gave nothing usable. */
+  setGroupTitle(groupId: string, title: string | null, now?: number): boolean {
+    return this.organizer.setTitle(groupId, title, now);
+  }
+
   /** The group a given thread was automatically filed into, if any. */
   groupForThread(threadId: string): ChatGroupRecord | undefined {
     return this.organizer.getGroupForThread(threadId);

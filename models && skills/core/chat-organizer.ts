@@ -32,6 +32,15 @@ export interface ChatGroupRecord {
   threadIds: string[];
   createdAt: number;
   updatedAt: number;
+  /**
+   * A topic name the agent gave the group (agent-organizer.ts). Kept apart from
+   * `name` on purpose: assign() rewrites `name` from keywords on every save, and
+   * the agent's title must survive that. Show `title ?? name`.
+   */
+  title?: string;
+  /** How many threads the group held when the agent last named it, so a group that grew gets looked at again. */
+  titledWith?: number;
+  titledAt?: number;
 }
 
 interface OrganizerIndex {
@@ -203,6 +212,29 @@ export class ChatOrganizer {
 
   listGroups(): ChatGroupRecord[] {
     return this.load().groups.slice().sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  /** Groups the agent has not named yet, or that have gained or lost threads since it did, and were not looked at too recently. */
+  groupsNeedingTitle(minGapMs: number, now = Date.now()): ChatGroupRecord[] {
+    return this.listGroups().filter(
+      (g) => (g.title === undefined || g.titledWith !== g.threadIds.length) && now - (g.titledAt ?? 0) >= minGapMs,
+    );
+  }
+
+  /**
+   * Record the agent's title for a group. `title` null means "asked, got no
+   * usable answer": the group keeps its keyword name but is not asked again
+   * until it changes or the gap passes.
+   */
+  setTitle(groupId: string, title: string | null, now = Date.now()): boolean {
+    const index = this.load();
+    const group = index.groups.find((g) => g.id === groupId);
+    if (!group) return false;
+    if (title !== null) group.title = title;
+    group.titledWith = group.threadIds.length;
+    group.titledAt = now;
+    this.persist(index);
+    return true;
   }
 
   getGroupForThread(threadId: string): ChatGroupRecord | undefined {
