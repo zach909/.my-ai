@@ -1,43 +1,57 @@
 /**
- * The hive that works a project: AIs with equal say who check each other.
+ * The hive that works a project: one AI that grows into a collective of equals.
  *
- * Given a project, the hive creates a team of agents (one per folder of tasks,
- * and always enough that there are at least MIN_COUNCIL), lets each take and
- * do tasks, has the others check every hand-in, and when every task is done
- * merges what the agents learned into the shared network.
+ * ── How it starts ──────────────────────────────────────────────────────
  *
- * ── Equal authority ────────────────────────────────────────────────────
+ * A hive begins as ONE AI, the Original. It reads the project and decides
+ * whether it needs help. Either way it adds variants of itself, because nobody
+ * can check their own work: there are always at least MIN_COUNCIL of them. If it
+ * asks for help it adds an agent for each folder of tasks, and sub-AIs (helpers)
+ * for folders with a lot to do.
  *
- * Every agent has exactly one vote, always. Review and removal are decided by
- * counting votes, never by weighing them, so no agent can outrank another.
+ * Variants are copies: each starts from what its parent had learned and then
+ * goes its own way, so they are different AIs that descend from the Original.
+ *
+ * ── Equal power, and everything is a vote ──────────────────────────────
+ *
+ * From then on no agent decides anything alone. Every agent has exactly one
+ * vote, always, and anything that changes the team is put to all of them:
+ *
+ *   clone    a proven agent is copied, so the good approach spreads
+ *   add      a fresh variant of the Original joins when there is far more work
+ *            than hands
+ *   delete   an agent whose work keeps being rejected is removed and what it
+ *            learned is thrown away
+ *   retire   an agent leaves when there is less work left than agents. It is
+ *            not a punishment, and what it learned is kept
+ *
+ * A motion carries only with a strict majority of ALL the agents allowed to
+ * vote (the one being removed or retired does not vote on that). A reply that
+ * is not clearly YES counts as no. Votes are counted, never weighed.
  *
  * Separately, each agent carries a VALUE: the zero-sum trust budget from
- * hive-mind.ts (a fixed total that moves between agents as their work is
- * accepted or rejected). Value does not buy a vote. It decides how much an
- * agent's learning counts when the team's weights are averaged
- * (hive-learning.ts), so an agent whose work kept being rejected pulls the
- * result less.
+ * hive-mind.ts. Value does not buy a vote. It decides how much an agent's
+ * learning counts when the team's weights are averaged (hive-learning.ts).
  *
- * ── Checking each other ────────────────────────────────────────────────
+ * ── Everyone reviews everyone ──────────────────────────────────────────
  *
- * - Every hand-in is checked by REVIEWERS other agents. Each answers ACCEPT or
- *   REJECT; the work is accepted only if accepts strictly outnumber rejects.
- *   A tie rejects. A reply that is not clearly one or the other counts for
- *   neither, and if NOBODY is clear the task is left for a person rather than
- *   decided on noise.
- * - An agent whose work keeps getting rejected can be voted out. Every OTHER
- *   agent votes; it takes a strict majority of all of them (a muddled reply
- *   counts as "keep"), the team never drops below MIN_AGENTS, and the removed
- *   agent's learning is thrown away. It keeps the points it already earned.
+ * - Every hand-in is checked by REVIEWERS other agents. Accept needs strictly
+ *   more accepts than rejects; a tie rejects; a reply that is not clearly
+ *   ACCEPT or REJECT counts for neither, and if NOBODY is clear the task waits
+ *   for a person rather than being decided on noise.
  * - The hive only checks the work of its OWN agents. A person's hand-in is
  *   reviewed by a person: a vote of AIs never releases points to a human.
  *
  * ── Sub-AIs ────────────────────────────────────────────────────────────
  *
- * An agent with a lot of tasks summons sub-AIs (up to MAX_HELPERS) that do
- * tasks on its behalf. They have no vote, no value and learn nothing of their
- * own; the agent is the one accountable, checked and paid for what they hand
- * in.
+ * Helpers do tasks on an agent's behalf. They have no vote, no value and learn
+ * nothing of their own; the agent is accountable, checked and paid for what
+ * they hand in.
+ *
+ * ── When the goal is done ──────────────────────────────────────────────
+ *
+ * The agents still standing (retired ones included, deleted ones not) are
+ * combined into one averaged contributor and published (hive-learning.ts).
  *
  * State is per-device: ~/.neuroclaw/project-hives.json (override
  * CORONA_HIVES_FILE).
@@ -68,18 +82,25 @@ export const MIN_AGENTS = 2;
 export const MIN_COUNCIL = 3;
 export const MAX_AGENTS = 8;
 export const MAX_HELPERS = 3;
+export const MAX_CLONES = 2;
 export const REVIEWERS = 2;
 export const TASKS_PER_HELPER = 3;
+/** A project with at most this many tasks is one the Original is happy to start alone on. */
+export const SOLO_LIMIT = 3;
 export const VALUE_STEP = 3;
 export const MAX_ROUNDS = 8;
 export const UNDECIDED_LIMIT = 2;
+/** An agent is worth cloning at or above this share of its hand-ins accepted. */
+export const CLONE_SCORE = 0.7;
 const MAX_EVENTS = 200;
 const TOTAL_VALUE = 100;
+/** The folder of an agent that takes work from every folder. */
+export const ANY_FOLDER = "*";
 
 export interface HiveAgentRecord {
   id: string;
   name: string;
-  /** The folder it owns. Empty for a checker, who only reviews. */
+  /** The folder it owns, ANY_FOLDER for all of them, or empty for a checker who only reviews. */
   folder: string;
   value: number;
   accepted: number;
@@ -87,15 +108,23 @@ export interface HiveAgentRecord {
   reviewed: number;
   helpers: number;
   taught: number;
+  /** Who this is a variant of. Null for the Original. */
+  parent: string | null;
+  /** How many copies away from the Original. */
+  generation: number;
+  clones: number;
   lastMotionRound: number;
+  /** Deleted by the others: its learning is discarded. */
   removedAt: number | null;
   removedReason: string;
+  /** Stepped down because there was less work than agents: its learning is kept. */
+  retiredAt: number | null;
 }
 
 export interface HiveEvent {
   at: number;
   round: number;
-  kind: "staff" | "work" | "review" | "vote" | "remove" | "merge" | "note";
+  kind: "staff" | "work" | "review" | "vote" | "clone" | "add" | "remove" | "retire" | "merge" | "note";
   text: string;
 }
 
@@ -115,6 +144,8 @@ export interface HiveRecord {
   updatedAt: number;
   state: "idle" | "running" | "complete" | "stalled";
   round: number;
+  /** What the Original decided when it first looked at the project. */
+  help: "help" | "alone" | null;
   agents: HiveAgentRecord[];
   events: HiveEvent[];
   /** Rounds a hand-in has gone without a clear verdict, by task id. */
@@ -154,14 +185,19 @@ function cleanAgent(raw: unknown): HiveAgentRecord | null {
   const a = raw as Partial<HiveAgentRecord> | null;
   if (!a || typeof a !== "object" || typeof a.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(a.id)) return null;
   const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+  const at = (v: unknown): number | null => (typeof v === "number" ? v : null);
   return {
     id: a.id,
     name: typeof a.name === "string" ? a.name.slice(0, 64) : a.id,
     folder: typeof a.folder === "string" ? a.folder.slice(0, 40) : "",
     value: n(a.value), accepted: n(a.accepted), rejected: n(a.rejected), reviewed: n(a.reviewed),
-    helpers: Math.min(MAX_HELPERS, Math.floor(n(a.helpers))), taught: n(a.taught), lastMotionRound: n(a.lastMotionRound),
-    removedAt: typeof a.removedAt === "number" ? a.removedAt : null,
+    helpers: Math.min(MAX_HELPERS, Math.floor(n(a.helpers))), taught: n(a.taught),
+    parent: typeof a.parent === "string" ? a.parent : null,
+    generation: Math.floor(n(a.generation)), clones: Math.min(MAX_CLONES, Math.floor(n(a.clones))),
+    lastMotionRound: n(a.lastMotionRound),
+    removedAt: at(a.removedAt),
     removedReason: typeof a.removedReason === "string" ? a.removedReason.slice(0, 200) : "",
+    retiredAt: at(a.retiredAt),
   };
 }
 
@@ -177,6 +213,7 @@ function cleanHive(raw: unknown): HiveRecord | null {
     updatedAt: typeof h.updatedAt === "number" ? h.updatedAt : 0,
     state,
     round: typeof h.round === "number" ? h.round : 0,
+    help: h.help === "help" || h.help === "alone" ? h.help : null,
     agents,
     events: (Array.isArray(h.events) ? h.events : []).slice(-MAX_EVENTS),
     undecided: h.undecided && typeof h.undecided === "object" ? h.undecided : {},
@@ -212,7 +249,10 @@ export function getHive(projectId: string, file = hivesFile()): HiveRecord | nul
   return loadHives(file).find(h => h.projectId === projectId) ?? null;
 }
 
-const active = (h: HiveRecord): HiveAgentRecord[] => h.agents.filter(a => a.removedAt === null);
+/** The agents that are on the team and have a vote. */
+const active = (h: HiveRecord): HiveAgentRecord[] => h.agents.filter(a => a.removedAt === null && a.retiredAt === null);
+/** The agents whose learning counts at the end: the team, and those who stepped down honourably. Never the deleted. */
+const contributors = (h: HiveRecord): HiveAgentRecord[] => h.agents.filter(a => a.removedAt === null);
 
 function log(h: HiveRecord, kind: HiveEvent["kind"], text: string, now: number): void {
   h.events.push({ at: now, round: h.round, kind, text: text.slice(0, 300) });
@@ -245,14 +285,30 @@ function adjustValue(h: HiveRecord, change: { id: string; delta: number } | { re
   }
 }
 
-// ── Staffing ───────────────────────────────────────────────────────────
+const equalValues = (h: HiveRecord): void => {
+  const team = active(h);
+  for (const a of team) a.value = round6(TOTAL_VALUE / team.length);
+};
+
+// ── Starting as one ────────────────────────────────────────────────────
 
 const agentIdFor = (projectId: string, n: number): string => `hive-${projectId.slice(0, 40)}-${n}`;
 
+function blankAgent(id: string, name: string, folder: string, parent: HiveAgentRecord | null): HiveAgentRecord {
+  return {
+    id, name, folder, value: 0, accepted: 0, rejected: 0, reviewed: 0, helpers: 0, taught: 0,
+    parent: parent?.id ?? null, generation: parent ? parent.generation + 1 : 0, clones: 0,
+    lastMotionRound: 0, removedAt: null, removedReason: "", retiredAt: null,
+  };
+}
+
+/** The next free number for an agent id, so a removed agent's id is never reused. */
+const nextNumber = (h: HiveRecord): number => h.agents.reduce((m, a) => Math.max(m, Number(a.id.split("-").pop()) || 0), 0) + 1;
+
 /**
- * Creates the team the first time, from the project's folders. One agent per
- * folder that has work, then checkers until there are enough to check each
- * other. Staffing again changes nothing.
+ * Creates the hive the first time: ONE agent, the Original. Nothing else
+ * exists until the Original has looked at the project and decided what it needs
+ * (growHive). Calling it again changes nothing.
  */
 export function staffHive(projectId: string, deps: HiveDeps): HiveRecord {
   const file = fileOf(deps);
@@ -263,28 +319,83 @@ export function staffHive(projectId: string, deps: HiveDeps): HiveRecord {
   if (!project) throw new ProjectError("No such project.", 404);
 
   const hive: HiveRecord = existing ?? {
-    projectId, createdAt: now, updatedAt: now, state: "idle", round: 0, agents: [], events: [], undecided: {}, merge: null, note: "",
+    projectId, createdAt: now, updatedAt: now, state: "idle", round: 0, help: null, agents: [], events: [], undecided: {}, merge: null, note: "",
   };
-  const folders = project.folders.filter(f => project.tasks.some(t => t.folder === f && t.status !== "done")).slice(0, MAX_AGENTS);
-  folders.forEach((folder, i) => {
-    const tasks = project.tasks.filter(t => t.folder === folder && t.status !== "done").length;
-    hive.agents.push({
-      id: agentIdFor(projectId, i + 1), name: `${folder} agent`, folder, value: 0, accepted: 0, rejected: 0, reviewed: 0,
-      helpers: Math.min(MAX_HELPERS, Math.max(0, Math.ceil(tasks / TASKS_PER_HELPER) - 1)),
-      taught: 0, lastMotionRound: 0, removedAt: null, removedReason: "",
-    });
-  });
-  while (hive.agents.length < MIN_COUNCIL) {
-    const n = hive.agents.length + 1;
-    hive.agents.push({
-      id: agentIdFor(projectId, n), name: `Checker ${n}`, folder: "", value: 0, accepted: 0, rejected: 0, reviewed: 0,
-      helpers: 0, taught: 0, lastMotionRound: 0, removedAt: null, removedReason: "",
-    });
+  const original = blankAgent(agentIdFor(projectId, 1), "Original", ANY_FOLDER, null);
+  original.value = TOTAL_VALUE;
+  hive.agents.push(original);
+  log(hive, "staff", "The hive starts as one AI: the Original.", now);
+  saveHive(hive, file, now);
+  return hive;
+}
+
+/** Reads HELP or ALONE from the start of a reply. */
+export function parseHelp(reply: string): "help" | "alone" | null {
+  const line = String(reply ?? "").split(/\r?\n/).map(l => l.trim()).find(Boolean)?.replace(/^[\s"'“”‘’*_`>#-]+/, "") ?? "";
+  if (/^(help|team|more)\b/i.test(line)) return "help";
+  if (/^(alone|solo|myself|no)\b/i.test(line)) return "alone";
+  return null;
+}
+
+/**
+ * The Original looks at the project and decides whether it needs help, then
+ * grows the team. It is the only decision one agent ever makes alone: there is
+ * nobody else yet.
+ *
+ * - It always adds enough variants of itself to be checked (MIN_COUNCIL).
+ * - If it wants help it adds an agent for each other folder of tasks, and
+ *   sub-AIs for folders with a lot to do.
+ * - A reply it cannot read falls back to a plain rule: help if the project has
+ *   more than SOLO_LIMIT tasks.
+ */
+export async function growHive(projectId: string, deps: HiveDeps): Promise<HiveRecord> {
+  const file = fileOf(deps);
+  const now = nowOf(deps);
+  const hive = staffHive(projectId, deps);
+  if (hive.agents.length > 1) return hive;
+  const project = getProject(projectId, deps.project ?? {});
+  if (!project) throw new ProjectError("No such project.", 404);
+  const original = hive.agents[0];
+
+  const open = project.tasks.filter(t => t.status !== "done");
+  const folders = project.folders.filter(f => open.some(t => t.folder === f)).slice(0, MAX_AGENTS);
+  const reply = await safeThink(
+    deps, original,
+    `You are the Original, the one AI working on the project "${project.title}".\n${project.goal ? `The project is: ${project.goal}\n` : ""}` +
+      `It has ${open.length} tasks in ${folders.length} folders: ${folders.join(", ") || "none"}.\n` +
+      "Would it go better with help from a team of other AIs? Start your reply with HELP or ALONE.",
+  );
+  const said = parseHelp(reply);
+  const choice = said ?? (open.length > SOLO_LIMIT ? "help" : "alone");
+  hive.help = choice;
+  log(hive, "staff", said ? `The Original looked at the project and chose ${choice === "help" ? "to get help" : "to start alone"}.` : `The Original gave no clear answer, so by the plain rule it ${choice === "help" ? "gets help" : "starts alone"} (${open.length} tasks).`, now);
+
+  const born: string[] = [];
+  const spawn = (name: string, folder: string): HiveAgentRecord => {
+    const a = blankAgent(agentIdFor(projectId, nextNumber(hive)), name, folder, original);
+    hive.agents.push(a);
+    deps.learner?.clone(original.id, a.id);
+    born.push(a.name);
+    return a;
+  };
+
+  if (choice === "help" && folders.length > 0) {
+    original.folder = folders[0];
+    for (const f of folders.slice(1)) spawn(`${f} agent`, f);
+    for (const a of hive.agents) {
+      const tasks = open.filter(t => t.folder === a.folder).length;
+      a.helpers = Math.min(MAX_HELPERS, Math.max(0, Math.ceil(tasks / TASKS_PER_HELPER) - 1));
+    }
   }
-  // Equal shares to start: everyone has the same standing until their work says otherwise.
-  for (const a of hive.agents) a.value = round6(TOTAL_VALUE / hive.agents.length);
+  while (hive.agents.length < MIN_COUNCIL) spawn(`Checker ${hive.agents.length + 1}`, "");
+  equalValues(hive);
+
   const helpers = hive.agents.reduce((n, a) => n + a.helpers, 0);
-  log(hive, "staff", `Made ${hive.agents.length} agents with equal say${helpers ? ` and ${helpers} sub-AI helper${helpers === 1 ? "" : "s"}` : ""}: ${hive.agents.map(a => a.name).join(", ")}.`, now);
+  log(hive, "add",
+    `The Original added ${born.length} variant${born.length === 1 ? "" : "s"} of itself: ${born.join(", ")}. Nobody can check their own work, so there are always at least ${MIN_COUNCIL}.` +
+      (helpers ? ` It also summoned ${helpers} sub-AI helper${helpers === 1 ? "" : "s"}.` : ""),
+    now);
+  log(hive, "note", "From here on every decision is a vote, and every agent has one vote.", now);
   saveHive(hive, file, now);
   return hive;
 }
@@ -304,11 +415,11 @@ export function parseVerdict(reply: string): "accept" | "reject" | null {
   return null;
 }
 
-/** YES or NO to "should it be removed", only if the reply starts by saying so. */
+/** YES or NO, only if the reply starts by saying so. */
 export function parseYesNo(reply: string): "yes" | "no" | null {
   const line = firstLine(reply);
-  if (/^(yes|remove)\b/i.test(line)) return "yes";
-  if (/^(no|keep)\b/i.test(line)) return "no";
+  if (/^(yes|remove|agree)\b/i.test(line)) return "yes";
+  if (/^(no|keep|disagree)\b/i.test(line)) return "no";
   return null;
 }
 
@@ -316,8 +427,8 @@ export type Decision = "accept" | "reject" | "undecided";
 
 /**
  * Accept only if accepts strictly outnumber rejects. A tie rejects, a reply
- * that was not clear counts for neither, and with no clear reply at all there
- * is no decision to make.
+ * that was not clearly one or the other counts for neither, and with no clear
+ * reply at all there is no decision to make.
  */
 export function decide(votes: Array<"accept" | "reject" | null>): Decision {
   const accepts = votes.filter(v => v === "accept").length;
@@ -326,7 +437,7 @@ export function decide(votes: Array<"accept" | "reject" | null>): Decision {
   return accepts > rejects ? "accept" : "reject";
 }
 
-/** Whether a removal carries: a strict majority of ALL the other agents, not just those who answered. */
+/** Whether a motion carries: a strict majority of ALL who may vote, not just of those who answered. */
 export function removalCarries(votes: Array<"yes" | "no" | null>): boolean {
   return votes.filter(v => v === "yes").length * 2 > votes.length;
 }
@@ -384,9 +495,9 @@ async function doWork(h: HiveRecord, agent: HiveAgentRecord, deps: HiveDeps, now
   if (!project || project.status === "complete") return 0;
   const worker = workerOf(agent, pctx);
   const mine = project.tasks.filter(t => t.assignee?.id === agent.id && t.status === "claimed");
-  // Its own folder first; whatever is left open anywhere else only once the folder's own agent is gone.
-  const owned = new Set(active(h).filter(a => a.folder).map(a => a.folder));
-  const open = project.tasks.filter(t => t.status === "open" && (t.folder === agent.folder || !owned.has(t.folder)));
+  // Its own folder first. A folder nobody owns is anyone's.
+  const owned = (folder: string): boolean => active(h).some(a => a.folder === folder || a.folder === ANY_FOLDER);
+  const open = project.tasks.filter(t => t.status === "open" && (agent.folder === ANY_FOLDER || t.folder === agent.folder || !owned(t.folder)));
   const queue = [...mine, ...open];
   let did = 0;
   for (const task of queue) {
@@ -463,41 +574,133 @@ async function doReviews(h: HiveRecord, deps: HiveDeps, now: number): Promise<nu
   return settled;
 }
 
-/** An agent whose work keeps being rejected can be voted out by the rest. */
-async function doRemovals(h: HiveRecord, deps: HiveDeps, now: number): Promise<number> {
-  let removed = 0;
-  for (const accused of active(h).filter(a => a.rejected >= 2 && a.rejected > a.accepted && a.lastMotionRound < h.round)) {
-    const team = active(h);
-    if (team.length <= MIN_AGENTS) break;
-    const voters = team.filter(a => a.id !== accused.id);
-    accused.lastMotionRound = h.round;
-    const votes: Array<"yes" | "no" | null> = [];
-    for (const v of voters) {
-      const reply = await safeThink(
-        deps, v,
-        `Should ${accused.name} be removed from the team? Its work was rejected ${accused.rejected} times and accepted ${accused.accepted} times.\nStart your reply with YES or NO.`,
-      );
-      votes.push(parseYesNo(reply));
-    }
-    const yes = votes.filter(x => x === "yes").length;
-    log(h, "vote", `Vote on removing ${accused.name}: ${yes} yes, ${votes.filter(x => x === "no").length} no, out of ${voters.length}.`, now);
-    if (!removalCarries(votes)) continue;
+// ── Votes ──────────────────────────────────────────────────────────────
 
-    const pctx = deps.project ?? {};
+export interface VoteResult {
+  carried: boolean;
+  yes: number;
+  no: number;
+  /** How many were allowed to vote. */
+  voters: number;
+}
+
+/**
+ * Puts a motion to every agent allowed to vote on it: all of them, except the
+ * one it is about when it is about removing or retiring that agent. One vote
+ * each. It carries only with a strict majority of ALL who may vote, so a
+ * reply that is not clearly YES counts as no.
+ */
+export async function holdVote(h: HiveRecord, deps: HiveDeps, question: string, exclude: string | null, now: number): Promise<VoteResult> {
+  const voters = active(h).filter(a => a.id !== exclude);
+  const votes: Array<"yes" | "no" | null> = [];
+  for (const v of voters) votes.push(parseYesNo(await safeThink(deps, v, `${question}\nStart your reply with YES or NO.`)));
+  const yes = votes.filter(x => x === "yes").length;
+  const no = votes.filter(x => x === "no").length;
+  const carried = removalCarries(votes);
+  log(h, "vote", `${question} ${yes} yes, ${no} no, of ${voters.length}: ${carried ? "carried" : "not carried"}.`, now);
+  return { carried, yes, no, voters: voters.length };
+}
+
+/** How well an agent's work has gone: the share of its hand-ins accepted, leaning towards the middle until there is evidence. */
+export const scoreOf = (a: HiveAgentRecord): number => (a.accepted + 1) / (a.accepted + a.rejected + 2);
+
+/** Puts a fresh variant of `parent` on the team, copying what it learned. */
+function addVariant(h: HiveRecord, parent: HiveAgentRecord, name: string, folder: string, deps: HiveDeps): HiveAgentRecord {
+  const a = blankAgent(agentIdFor(h.projectId, nextNumber(h)), name, folder, parent);
+  h.agents.push(a);
+  deps.learner?.clone(parent.id, a.id);
+  return a;
+}
+
+/**
+ * What the team decides about itself after each round. Every change is a vote.
+ *
+ *   delete  an agent whose work keeps being rejected
+ *   clone   the agent whose work is proven, when there is more work than hands
+ *   add     a new variant of the Original, when there is far more work than hands
+ *   retire  an agent, when there is less work left than agents
+ *
+ * At most one of each per round, so the team changes in steps.
+ */
+async function evolve(h: HiveRecord, deps: HiveDeps, now: number): Promise<number> {
+  const pctx = deps.project ?? {};
+  let changes = 0;
+
+  // Delete: the others decide, the accused does not vote.
+  for (const accused of active(h).filter(a => a.rejected >= 2 && a.rejected > a.accepted && a.lastMotionRound < h.round)) {
+    if (active(h).length <= MIN_AGENTS) break;
+    accused.lastMotionRound = h.round;
+    const result = await holdVote(h, deps, `Should ${accused.name} be removed from the team? Its work was rejected ${accused.rejected} times and accepted ${accused.accepted} times.`, accused.id, now);
+    if (!result.carried) continue;
     for (const t of getProject(h.projectId, pctx)?.tasks ?? []) {
       if (t.assignee?.id === accused.id && t.status === "claimed") releaseTask(h.projectId, t.id, workerOf(accused, pctx), pctx);
     }
     adjustValue(h, { remove: accused.id });
     accused.removedAt = now;
-    accused.removedReason = `voted out: ${yes} of ${voters.length}`;
+    accused.removedReason = `voted out: ${result.yes} of ${result.voters}`;
     deps.learner?.forget(accused.id);
-    log(h, "remove", `${accused.name} was removed by the other agents. What it learned is discarded.`, now);
-    removed++;
+    log(h, "remove", `${accused.name} was deleted by the other agents. What it learned is discarded.`, now);
+    changes++;
   }
-  return removed;
+
+  const project = getProject(h.projectId, pctx);
+  if (!project || project.status === "complete") return changes;
+  const remaining = project.tasks.filter(t => t.status !== "done").length;
+  const backlog = project.tasks.filter(t => t.status === "open" || t.status === "claimed").length;
+  const team = active(h);
+
+  // Clone: copy what works.
+  let grew = false;
+  if (team.length < MAX_AGENTS && backlog > team.length) {
+    const best = team.filter(a => a.accepted >= 2 && a.clones < MAX_CLONES && scoreOf(a) >= CLONE_SCORE).sort((a, b) => scoreOf(b) - scoreOf(a) || b.accepted - a.accepted)[0];
+    if (best) {
+      const result = await holdVote(h, deps, `${best.name} has had ${best.accepted} hand-ins accepted and ${best.rejected} sent back, and there is more work than hands. Should it be cloned?`, null, now);
+      if (result.carried) {
+        const copy = addVariant(h, best, `${best.name} (clone ${best.clones + 1})`, best.folder, deps);
+        best.clones++;
+        const half = round6(best.value / 2);
+        best.value = half;
+        copy.value = half; // the copy shares its parent's standing, so the total stays fixed
+        log(h, "clone", `${best.name} was cloned by vote: ${copy.name} is a new variant that starts from what it learned.`, now);
+        changes++;
+        grew = true;
+      }
+    }
+  }
+
+  // Add: far more work than hands, and nobody proven enough to copy.
+  if (!grew && team.length < MAX_AGENTS && backlog > 4 * team.length) {
+    const original = h.agents.find(a => a.parent === null && a.removedAt === null) ?? team[0];
+    const result = await holdVote(h, deps, `There are ${backlog} tasks waiting and only ${team.length} agents. Should another variant of the Original join?`, null, now);
+    if (result.carried) {
+      const fresh = addVariant(h, original, `Variant ${nextNumber(h)}`, ANY_FOLDER, deps);
+      equalValues(h);
+      log(h, "add", `${fresh.name} joined by vote.`, now);
+      changes++;
+    }
+  }
+
+  // Retire: less work than hands. Not a punishment, so what it learned stays.
+  if (active(h).length > MIN_COUNCIL && remaining < active(h).length) {
+    const leaving = active(h).filter(a => a.parent !== null).sort((a, b) => a.accepted - b.accepted || b.generation - a.generation)[0];
+    if (leaving && leaving.lastMotionRound < h.round) {
+      leaving.lastMotionRound = h.round;
+      const result = await holdVote(h, deps, `Only ${remaining} tasks are left and there are ${active(h).length} agents. Should ${leaving.name} step down? Its learning is kept.`, leaving.id, now);
+      if (result.carried) {
+        for (const t of getProject(h.projectId, pctx)?.tasks ?? []) {
+          if (t.assignee?.id === leaving.id && t.status === "claimed") releaseTask(h.projectId, t.id, workerOf(leaving, pctx), pctx);
+        }
+        adjustValue(h, { remove: leaving.id });
+        leaving.retiredAt = now;
+        log(h, "retire", `${leaving.name} stepped down by vote. What it learned is kept.`, now);
+        changes++;
+      }
+    }
+  }
+  return changes;
 }
 
-/** Combine what the surviving agents learned, weighted by value, and publish it as one contributor. */
+/** Combine what the agents learned, weighted by value, and publish it as one contributor. */
 export function mergeHive(projectId: string, deps: HiveDeps): HiveRecord {
   const file = fileOf(deps);
   const now = nowOf(deps);
@@ -508,7 +711,7 @@ export function mergeHive(projectId: string, deps: HiveDeps): HiveRecord {
   if (h.merge) return h;
 
   const base = deps.learner?.base() ?? null;
-  const parts = !deps.learner || !base ? [] : active(h).flatMap(a => {
+  const parts = !deps.learner || !base ? [] : contributors(h).flatMap(a => {
     const delta = deps.learner!.delta(a.id);
     return delta ? [{ id: a.id, weight: a.value, delta }] : [];
   });
@@ -539,7 +742,7 @@ export async function runHive(projectId: string, deps: HiveDeps): Promise<HiveRe
   running.add(projectId);
   const file = fileOf(deps);
   try {
-    const hive = staffHive(projectId, deps);
+    const hive = await growHive(projectId, deps);
     hive.state = "running";
     hive.note = "";
     saveHive(hive, file, nowOf(deps));
@@ -556,7 +759,7 @@ export async function runHive(projectId: string, deps: HiveDeps): Promise<HiveRe
       for (const agent of active(hive)) progress += await doWork(hive, agent, deps, now);
       saveHive(hive, file, now);
       progress += await doReviews(hive, deps, now);
-      progress += await doRemovals(hive, deps, now);
+      progress += await evolve(hive, deps, now);
       saveHive(hive, file, now);
       if (progress === 0) break;
     }

@@ -50,7 +50,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { SELF_ID, award, ensureMember, loadPoints, pointsFile } from "./points.js";
-import { publishWikiPage, publishWikiPageAndSync, readWikiPage, WikiNameError } from "./wiki-store.js";
+import { listWikiPages, publishWikiPage, publishWikiPageAndSync, readWikiPage, WikiNameError } from "./wiki-store.js";
 import type { StoreSyncResult } from "./store-sync.js";
 
 export class ProjectError extends Error {
@@ -119,6 +119,13 @@ export interface Project {
   paidOut: number;
   bonusPaid: boolean;
   nextTask: number;
+  /**
+   * Whether the AI works on this project by itself in the background
+   * (hive-background.ts). The easy way to get a project done; people can still
+   * take tasks to go faster. A project brought in from the wiki starts off, so
+   * another install's project never starts using this device's brain unasked.
+   */
+  background: boolean;
 }
 
 export interface ProjectCtx {
@@ -220,6 +227,7 @@ export function cleanProject(raw: unknown): Project | null {
     paidOut: round(paidOut),
     bonusPaid,
     nextTask,
+    background: p.background === true,
   };
 }
 
@@ -319,6 +327,8 @@ export interface CreateProjectInput {
   pot: number;
   tasks?: TaskSpec[];
   folders?: string[];
+  /** The AI works on it in the background. On unless you say otherwise. */
+  background?: boolean;
 }
 
 export function createProject(input: CreateProjectInput, ctx: ProjectCtx = {}): Project {
@@ -336,12 +346,23 @@ export function createProject(input: CreateProjectInput, ctx: ProjectCtx = {}): 
   const p: Project = {
     id, title: input.title.trim(), goal: (input.goal ?? "").trim(), pot: round(input.pot), status: "open",
     createdAt: now, updatedAt: now, folders: [], tasks: [], paidOut: 0, bonusPaid: false, nextTask: 1,
+    background: input.background !== false,
   };
   for (const f of input.folders ?? []) useFolder(p, f);
   for (const spec of input.tasks ?? []) newTask(p, spec);
   projects.push(p);
   saveProjects(projects, file);
   writeProjectPage(p);
+  return p;
+}
+
+/** Turn the AI's background work on this project on or off. */
+export function setBackground(projectId: string, on: boolean, ctx: ProjectCtx = {}): Project {
+  const file = fileOf(ctx);
+  const projects = loadProjects(file);
+  const p = must(projects, projectId);
+  p.background = on === true;
+  saveProjects(projects, file);
   return p;
 }
 
@@ -529,12 +550,14 @@ export interface ProjectSummary {
   tasks: number;
   done: number;
   folders: string[];
+  background: boolean;
 }
 
 export function summarize(p: Project): ProjectSummary {
   return {
     id: p.id, title: p.title, goal: p.goal, pot: p.pot, paidOut: p.paidOut, remaining: round(Math.max(0, p.pot - p.paidOut)),
     status: p.status, tasks: p.tasks.length, done: p.tasks.filter(t => t.status === "done").length, folders: p.folders,
+    background: p.background,
   };
 }
 
@@ -620,6 +643,7 @@ export interface CreateFromGoalInput {
   title: string;
   goal: string;
   pot: number;
+  background?: boolean;
 }
 
 /** Make a project from a goal and let the agent lay out its folders and tasks. */
@@ -628,7 +652,7 @@ export async function createProjectFromGoal(input: CreateFromGoalInput, think: T
   const plan = await planFromGoal(input.goal, think);
   const tasks: TaskSpec[] = [];
   for (const f of plan.folders) for (const t of f.tasks) tasks.push({ title: t.title, folder: f.name });
-  const project = createProject({ title: input.title, goal: input.goal, pot: input.pot, folders: plan.folders.map(f => f.name), tasks }, ctx);
+  const project = createProject({ title: input.title, goal: input.goal, pot: input.pot, background: input.background, folders: plan.folders.map(f => f.name), tasks }, ctx);
   return { project, source: plan.source };
 }
 
@@ -760,11 +784,40 @@ export async function publishProject(projectId: string, ctx: ProjectCtx = {}): P
  * Bring in a project another install published. Replaces a local copy only if
  * the incoming one is newer. Never pays anyone.
  */
+export interface LeagueProject extends ProjectSummary {
+  /** The wiki page it lives on. */
+  page: string;
+  /** Whether this device already has it. */
+  local: boolean;
+}
+
+/**
+ * Every project published to the wiki, whoever made it: the league. Each is
+ * read strictly, so a page that only looks like a project is left out.
+ */
+export function listWikiProjects(ctx: ProjectCtx = {}): LeagueProject[] {
+  const mine = new Set(loadProjects(fileOf(ctx)).map(p => p.id));
+  const out: LeagueProject[] = [];
+  for (const page of listWikiPages()) {
+    if (!page.name.startsWith("projects/")) continue;
+    let project: Project | null = null;
+    try {
+      const full = readWikiPage(page.name);
+      project = full ? parseProjectPage(full.content) : null;
+    } catch {
+      project = null;
+    }
+    if (project) out.push({ ...summarize(project), page: page.name, local: mine.has(project.id) });
+  }
+  return out;
+}
+
 export function importProject(pageName: string, ctx: ProjectCtx = {}): { project: Project; replaced: boolean } {
   const page = readWikiPage(pageName);
   if (!page) throw new ProjectError("No such wiki page.", 404);
   const incoming = parseProjectPage(page.content);
   if (!incoming) throw new ProjectError("That page is not a project, or its data is damaged.");
+  incoming.background = false; // somebody else's project does not start using this brain until its owner here says so
   const file = fileOf(ctx);
   const projects = loadProjects(file);
   const at = projects.findIndex(p => p.id === incoming.id);

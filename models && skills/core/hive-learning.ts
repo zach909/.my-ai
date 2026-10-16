@@ -40,7 +40,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NetworkStateSnapshot } from "./onebrain.js";
 import type { DoorwayLock } from "./doorway-lock.js";
@@ -112,8 +112,10 @@ export interface AgentLearner {
   teach(agentId: string, text: string): Promise<{ ok: boolean; reason?: string }>;
   /** What this agent has learned so far, as a change from the shared base. Null if nothing. */
   delta(agentId: string): CoreArrays | null;
-  /** Throw away what this agent learned (it was removed). */
+  /** Throw away what this agent learned (it was deleted). */
   forget(agentId: string): void;
+  /** Give `toId` a copy of what `fromId` has learned, so a variant starts where its parent is. False if there was nothing to copy. */
+  clone(fromId: string, toId: string): boolean;
   /** The base every delta is measured against, or null if there is none to learn on. */
   base(): { baseId: string; shape: MeshShape } | null;
 }
@@ -168,6 +170,19 @@ export class MeshAgentLearner implements AgentLearner {
   forget(agentId: string): void {
     const file = this.pathFor(agentId);
     if (file) rmSync(file, { force: true });
+  }
+
+  clone(fromId: string, toId: string): boolean {
+    const from = this.pathFor(fromId);
+    const to = this.pathFor(toId);
+    if (!from || !to || !existsSync(from)) return false;
+    try {
+      mkdirSync(this.opts.dir, { recursive: true });
+      copyFileSync(from, to);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async teach(agentId: string, text: string): Promise<{ ok: boolean; reason?: string }> {

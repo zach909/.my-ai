@@ -35,7 +35,8 @@ import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambien
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
 import { COMMONS_PAGE } from './commons-page.js';
-import { handleCommonsRoutes, withTimeout } from './commons-routes.js';
+import { handleCommonsRoutes, withTimeout, runFolderSweep } from './commons-routes.js';
+import { startBackgroundHives } from '../models && skills/core/hive-background.js';
 import { titleGroupsWithAgent } from '../models && skills/core/agent-organizer.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
@@ -1325,6 +1326,7 @@ export class WebServer {
   private launcher: AppLauncher;
   private server: http.Server | null = null;
   private stopScreenDonor: (() => void) | null = null;
+  private stopBackgroundHives: (() => void) | null = null;
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
@@ -1476,6 +1478,23 @@ export class WebServer {
       const { sharedAccessManager } = await import('../models && skills/core/access-settings.js');
       return new DesktopControl(sharedAccessManager()).screenshot();
     });
+    // The AI works on projects that have it switched on, one round at a time,
+    // in the background (hive-background.ts). NEUROCLAW_HIVE_BACKGROUND=0 turns it off.
+    if (process.env.NEUROCLAW_HIVE_BACKGROUND !== '0' && !process.env.VITEST) {
+      this.stopBackgroundHives = startBackgroundHives({
+        intervalMs: Number(process.env.NEUROCLAW_HIVE_INTERVAL_MS) || undefined,
+        deps: async () => {
+          let learner = null;
+          try {
+            const { getNeuroclawSystem } = await import('../src/index.js');
+            learner = (await getNeuroclawSystem()).hiveLearner();
+          } catch {
+            learner = null;
+          }
+          return { think: (_agent, prompt) => withTimeout(this.runner.generate(prompt)), learner };
+        },
+      });
+    }
     // Same reasoning, same placement: loading every saved extension is
     // real work (parsing N files, remembering M neurons) that only makes
     // sense to pay once per actual live server process, not once per
@@ -1739,6 +1758,8 @@ export class WebServer {
     this.selfImprovementServer.shutdown();
     this.stopScreenDonor?.();
     this.stopScreenDonor = null;
+    this.stopBackgroundHives?.();
+    this.stopBackgroundHives = null;
     return new Promise<void>((resolve) => {
       this.server?.close(() => { this.server = null; resolve(); });
     });
@@ -1781,6 +1802,34 @@ export class WebServer {
     const msg = err instanceof Error ? err.message : String(err);
     const status = statusForError(err);
     this.sendJson(res, { error: msg }, status);
+  }
+
+  private organizingFolders = false;
+
+  /** Hands one filing decision to the mesh to learn from, through its one door for learning. Never throws. */
+  private learnFromFiling(text: string): void {
+    void import('../src/index.js')
+      .then(m => m.getNeuroclawSystem())
+      .then(system => system.learnFrom(text, 'tool'))
+      .catch(() => undefined);
+  }
+
+  /**
+   * Has the agent file chats, wiki pages and projects into folders (see
+   * folder-organizer.ts): a few at a time, one pass at a time, after the
+   * response has gone out. NEUROCLAW_AGENT_ORGANIZE=0 turns it off.
+   */
+  private organizeFoldersInBackground(): void {
+    if (this.organizingFolders || process.env.NEUROCLAW_AGENT_ORGANIZE === '0') return;
+    this.organizingFolders = true;
+    void runFolderSweep({
+      chats: this.chatHistory,
+      think: prompt => withTimeout(this.runner.generate(prompt)),
+      learn: text => this.learnFromFiling(text),
+      limit: 2,
+    })
+      .catch(() => undefined)
+      .finally(() => { this.organizingFolders = false; });
   }
 
   private namingChatGroups = false;
@@ -2507,6 +2556,8 @@ export class WebServer {
         sendJson: (r, data, status) => this.sendJson(r, data, status),
         chat: message => this.runner.generate(message),
         status: () => ({ running: this.runner.getStatus().running }),
+        chats: this.chatHistory,
+        learn: text => this.learnFromFiling(text),
         learner: async () => {
           try {
             const { getNeuroclawSystem } = await import('../src/index.js');
@@ -3876,6 +3927,7 @@ export class WebServer {
     if (pathname === '/api/chat-history/groups' && method === 'GET') {
       this.sendJson(res, { groups: this.chatHistory.listGroupsWithThreads() });
       this.nameChatGroupsInBackground();
+      this.organizeFoldersInBackground();
       return;
     }
 

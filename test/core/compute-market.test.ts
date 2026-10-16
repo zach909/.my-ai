@@ -11,16 +11,26 @@ import {
 } from '../../models && skills/core/compute-share.js'
 import { runPricedJob, borrowPriced, leaseOffer } from '../../models && skills/core/compute-market.js'
 import { setRates, award, loadPoints, SELF_ID } from '../../models && skills/core/points.js'
+import { placeOrder, openOrders, remainingOf, currentOffer } from '../../models && skills/core/market.js'
+import { borrowBest } from '../../models && skills/core/compute-market.js'
 
 let dir: string
 let cfile: string
 let pfile: string
+let mfile: string
+const savedMarket = process.env.CORONA_MARKET_FILE
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), 'corona-market-'))
   cfile = path.join(dir, 'compute.json')
   pfile = path.join(dir, 'points.json')
+  mfile = path.join(dir, 'market.json')
+  process.env.CORONA_MARKET_FILE = mfile
 })
-afterEach(() => rmSync(dir, { recursive: true, force: true }))
+afterEach(() => {
+  if (savedMarket === undefined) delete process.env.CORONA_MARKET_FILE
+  else process.env.CORONA_MARKET_FILE = savedMarket
+  rmSync(dir, { recursive: true, force: true })
+})
 
 function clock() {
   let t = Date.now()
@@ -192,5 +202,136 @@ describe('borrower side', () => {
     expect(r.points).toBeUndefined()
     expect(loadCompute(cfile).balance).toBe(-2)
     expect(myPoints()).toBe(0)
+  })
+})
+
+describe('standing orders', () => {
+  it('a sell order sets the price and caps the job at what is left, then is filled', async () => {
+    setLending(true, cfile)
+    placeOrder({ side: 'sell', cu: 3, points: 9 }, { file: mfile }) // 3 CU at 3 points each
+    const { token } = grantLease({ label: 'Sam', hours: 1, capCu: 100 }, cfile)
+    expect(leaseOffer(token, { file: cfile, pointsFile: pfile })).toMatchObject({ pointsPerCu: 3, forSaleCu: 3 })
+    const c = clock()
+    const runner: JobRunner = { chat: async () => { c.advance(2000); return 'ok' } }
+    const r = await runPricedJob(token, { job: 'chat', prompt: 'hi', maxPointsPerCu: 3 }, runner, { file: cfile, pointsFile: pfile, now: c.now, mops: REFERENCE_MOPS })
+    expect(r).toMatchObject({ cu: 2, points: 6, pointsPerCu: 3 })
+    expect(myPoints()).toBe(6)
+    expect(remainingOf(openOrders('sell', { file: mfile })[0])).toBe(1)
+  })
+
+  it('a job cannot use more than the order has left', async () => {
+    setLending(true, cfile)
+    placeOrder({ side: 'sell', cu: 1, points: 2 }, { file: mfile })
+    const { token } = grantLease({ label: 'Sam', hours: 1, capCu: 100 }, cfile)
+    const runner: JobRunner = { chat: () => new Promise<string>(() => undefined) } // runs until it is cut off
+    await expect(runPricedJob(token, { job: 'chat', prompt: 'hi', maxPointsPerCu: 5 }, runner, { file: cfile, pointsFile: pfile, mops: REFERENCE_MOPS }))
+      .rejects.toMatchObject({ status: 408 })
+    expect(myPoints()).toBeGreaterThan(0)
+    expect(myPoints()).toBeLessThanOrEqual(2 + 1e-9) // at most the 1 CU it offered, at 2 points
+  })
+
+  it('when the orders are all used up the plain rate in Settings applies again', async () => {
+    setLending(true, cfile)
+    setRates({ ask: 0 }, pfile)
+    placeOrder({ side: 'sell', cu: 2, points: 4 }, { file: mfile })
+    const { token } = grantLease({ label: 'Sam', hours: 1, capCu: 100 }, cfile)
+    const c = clock()
+    const runner: JobRunner = { chat: async () => { c.advance(2000); return 'ok' } }
+    await runPricedJob(token, { job: 'chat', prompt: 'hi', maxPointsPerCu: 2 }, runner, { file: cfile, pointsFile: pfile, now: c.now, mops: REFERENCE_MOPS })
+    expect(currentOffer({ file: mfile })).toBeNull()
+    expect(leaseOffer(token, { file: cfile, pointsFile: pfile })).toMatchObject({ pointsPerCu: 0, forSaleCu: null })
+  })
+
+  it('a buy order limits what is spent and is filled by the trade', async () => {
+    const peer = addPeer({ name: 'Sam laptop', baseUrl: 'http://10.0.0.5:7861', leaseToken: 'cl_abc' }, cfile)
+    award(SELF_ID, 1000, 'task', 'x', pfile)
+    placeOrder({ side: 'buy', cu: 10, points: 40 }, { file: mfile }) // up to 10 CU at 4 each
+    const sent: Array<Record<string, unknown>> = []
+    const fetchImpl: FetchLike = async (url, init) => {
+      if (url.endsWith('/compute/lease')) return { ok: true, status: 200, json: async () => ({ remainingCu: 100, pointsPerCu: 3, forSaleCu: 8 }) }
+      sent.push(JSON.parse(init.body ?? '{}'))
+      return { ok: true, status: 200, json: async () => ({ result: 'answer', cu: 2, remainingCu: 90, mops: 1000, pointsPerCu: 3 }) }
+    }
+    const r = await borrowPriced(peer.id, 'hello', { file: cfile, pointsFile: pfile, market: { file: mfile }, fetchImpl })
+    expect(r).toMatchObject({ points: 6, pointsPerCu: 3 })
+    // Capped by the seller's room (8), not by 1000 points or the order's 10.
+    expect(sent[0].maxCu).toBe(8)
+    expect(sent[0].maxPointsPerCu).toBe(4) // the buy order's price is the ceiling
+    expect(remainingOf(openOrders('buy', { file: mfile })[0])).toBe(8)
+  })
+
+  it('refuses a seller above the buy order limit even if the plain bid would allow it', async () => {
+    const peer = addPeer({ name: 'Sam laptop', baseUrl: 'http://10.0.0.5:7861', leaseToken: 'cl_abc' }, cfile)
+    award(SELF_ID, 100, 'task', 'x', pfile)
+    setRates({ bid: 50 }, pfile)
+    placeOrder({ side: 'buy', cu: 10, points: 10 }, { file: mfile }) // limit 1
+    const fetchImpl: FetchLike = async () => ({ ok: true, status: 200, json: async () => ({ remainingCu: 100, pointsPerCu: 3 }) })
+    await expect(borrowPriced(peer.id, 'hello', { file: cfile, pointsFile: pfile, market: { file: mfile }, fetchImpl })).rejects.toMatchObject({ status: 409 })
+  })
+})
+
+describe('matching across the computers you know', () => {
+  function network(table: Record<string, { ask?: number; room?: number; remaining?: number; fail?: number; cu?: number }>) {
+    const called: string[] = []
+    const fetchImpl: FetchLike = async (url, init) => {
+      const host = new URL(url).hostname
+      const spec = table[host]
+      if (!spec) throw new Error('unreachable')
+      if (url.endsWith('/compute/lease')) return { ok: true, status: 200, json: async () => ({ remainingCu: spec.remaining ?? 100, ...(spec.ask === undefined ? {} : { pointsPerCu: spec.ask }), ...(spec.room === undefined ? {} : { forSaleCu: spec.room }) }) }
+      called.push(host)
+      if (spec.fail) return { ok: false, status: spec.fail, json: async () => ({ error: 'no' }) }
+      return { ok: true, status: 200, json: async () => ({ result: `from ${host}`, cu: spec.cu ?? 1, remainingCu: 9, mops: 1000, pointsPerCu: spec.ask }) }
+    }
+    return { fetchImpl, called }
+  }
+  const add = (name: string, host: string) => addPeer({ name, baseUrl: `http://${host}:7861`, leaseToken: 'cl_abc' }, cfile)
+
+  it('goes to the cheapest computer it can afford', async () => {
+    add('Ann', '10.0.0.1'); add('Bo', '10.0.0.2'); add('Cy', '10.0.0.3')
+    award(SELF_ID, 100, 'task', 'x', pfile)
+    setRates({ bid: 4 }, pfile)
+    const { fetchImpl, called } = network({ '10.0.0.1': { ask: 3 }, '10.0.0.2': { ask: 1.5 }, '10.0.0.3': { ask: 9 } })
+    const r = await borrowBest('hello', { file: cfile, pointsFile: pfile, fetchImpl })
+    expect(r.result).toBe('from 10.0.0.2')
+    expect(r.matched).toMatchObject({ peer: 'Bo', pointsPerCu: 1.5 })
+    expect(r.matched.considered.map(c => c.peer).sort()).toEqual(['Ann', 'Bo', 'Cy'])
+    expect(called).toEqual(['10.0.0.2'])
+    expect(myPoints()).toBe(98.5)
+  })
+
+  it('a computer that lends for credit counts as free, so it is the cheapest of all', async () => {
+    add('Ann', '10.0.0.1'); add('Friend', '10.0.0.2')
+    award(SELF_ID, 100, 'task', 'x', pfile)
+    const { fetchImpl } = network({ '10.0.0.1': { ask: 1 }, '10.0.0.2': {} })
+    const r = await borrowBest('hello', { file: cfile, pointsFile: pfile, fetchImpl })
+    expect(r.matched.peer).toBe('Friend')
+    expect(myPoints()).toBe(100)
+  })
+
+  it('falls through to the next cheapest when the first turns the job down', async () => {
+    add('Ann', '10.0.0.1'); add('Bo', '10.0.0.2')
+    award(SELF_ID, 100, 'task', 'x', pfile)
+    const { fetchImpl, called } = network({ '10.0.0.1': { ask: 1, fail: 429 }, '10.0.0.2': { ask: 2 } })
+    const r = await borrowBest('hello', { file: cfile, pointsFile: pfile, fetchImpl })
+    expect(r.matched.peer).toBe('Bo')
+    expect(called).toEqual(['10.0.0.1', '10.0.0.2'])
+  })
+
+  it('skips computers that cannot be reached or have nothing left', async () => {
+    add('Gone', '10.0.0.9'); add('Empty', '10.0.0.1'); add('Ok', '10.0.0.2')
+    award(SELF_ID, 100, 'task', 'x', pfile)
+    const { fetchImpl } = network({ '10.0.0.1': { ask: 1, remaining: 0 }, '10.0.0.2': { ask: 2 } })
+    expect((await borrowBest('hello', { file: cfile, pointsFile: pfile, fetchImpl })).matched.peer).toBe('Ok')
+  })
+
+  it('says what the cheapest price was when nobody is within your limit, and when you know nobody', async () => {
+    await expect(borrowBest('hi', { file: cfile, pointsFile: pfile })).rejects.toMatchObject({ status: 404 })
+    add('Ann', '10.0.0.1')
+    award(SELF_ID, 100, 'task', 'x', pfile)
+    setRates({ bid: 1 }, pfile)
+    const { fetchImpl } = network({ '10.0.0.1': { ask: 5 } })
+    const err = await borrowBest('hi', { file: cfile, pointsFile: pfile, fetchImpl }).catch(e => e)
+    expect(err.status).toBe(409)
+    expect(err.message).toMatch(/asks 5 points per CU and your limit is 1/)
   })
 })

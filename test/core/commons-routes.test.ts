@@ -28,6 +28,7 @@ const chat = async (m: string): Promise<string> => {
   if (m.includes('checking another AI')) return 'ACCEPT: fine'
   if (m.includes('removed from the team')) return 'NO'
   if (m.includes('Which folder')) return 'Backend'
+  if (m.includes('You organise a library')) return 'Planning/Apps: 70\nNotes: 30'
   return 'Here is the finished work.'
 }
 
@@ -49,12 +50,15 @@ beforeAll(async () => {
 })
 afterAll(() => new Promise<void>(r => server.close(() => r())))
 
-const ENV = ['CORONA_POINTS_FILE', 'CORONA_PROJECTS_FILE', 'CORONA_HIVES_FILE', 'NEUROCLAW_STORE_DIR'] as const
+const ENV = ['CORONA_POINTS_FILE', 'CORONA_PROJECTS_FILE', 'CORONA_HIVES_FILE', 'CORONA_FOLDERS_FILE', 'CORONA_MARKET_FILE', 'CORONA_COMPUTE_FILE', 'NEUROCLAW_STORE_DIR'] as const
 beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), 'commons-routes-'))
   process.env.CORONA_POINTS_FILE = path.join(dir, 'points.json')
   process.env.CORONA_PROJECTS_FILE = path.join(dir, 'projects.json')
   process.env.CORONA_HIVES_FILE = path.join(dir, 'hives.json')
+  process.env.CORONA_FOLDERS_FILE = path.join(dir, 'folders.json')
+  process.env.CORONA_MARKET_FILE = path.join(dir, 'market.json')
+  process.env.CORONA_COMPUTE_FILE = path.join(dir, 'compute.json')
   process.env.NEUROCLAW_STORE_DIR = path.join(dir, 'store')
 })
 afterEach(() => {
@@ -179,7 +183,8 @@ describe('the hive over the API', () => {
     await call('POST', '/api/commons/projects', { title: 'Weather', goal: 'Build a weather app', pot: 100, agentPlan: true })
     const started = await call('POST', '/api/commons/projects/weather/hive/run', {})
     expect(started.status).toBe(202)
-    expect(started.json.hive.agents.length).toBeGreaterThanOrEqual(3)
+    expect(started.json.hive.agents).toHaveLength(1) // it starts as one AI, the Original, and grows from there
+    expect(started.json.hive.agents[0].name).toBe('Original')
 
     let hive = started.json.hive
     for (let i = 0; i < 200 && hive.state !== 'complete' && hive.state !== 'stalled'; i++) {
@@ -190,6 +195,7 @@ describe('the hive over the API', () => {
     expect((await call('GET', '/api/commons/projects/weather')).json.project.status).toBe('complete')
 
     const board = (await call('GET', '/api/commons')).json.points.board
+    expect(hive.agents.length).toBeGreaterThanOrEqual(3)
     expect(board.filter((m: any) => m.kind === 'agent').length).toBeGreaterThanOrEqual(2)
     expect(board.reduce((n: number, m: any) => n + m.earned, 0)).toBeCloseTo(100, 3)
   })
@@ -198,6 +204,72 @@ describe('the hive over the API', () => {
     await call('POST', '/api/commons/projects', { title: 'Open', pot: 10 })
     await call('POST', '/api/commons/projects/open/tasks', { title: 'x' })
     expect((await call('POST', '/api/commons/projects/open/hive/merge', {})).status).toBe(404) // no hive yet
+  })
+})
+
+describe('folders', () => {
+  it('the agent files a project into two places at once and the view shows both', async () => {
+    await call('POST', '/api/commons/projects', { title: 'Weather', goal: 'Build a weather app', pot: 10 })
+    const r = await call('POST', '/api/commons/folders/organize', { only: ['project'] })
+    expect(r.status).toBe(200)
+    expect(r.json.report).toMatchObject({ asked: 1, placed: 1, split: 1 })
+    const top = r.json.view.top
+    expect(top.map((f: any) => f.title).sort()).toEqual(['Notes', 'Planning'])
+    expect(top.find((f: any) => f.title === 'Planning').children[0].children[0]).toMatchObject({ title: 'Weather', weight: 0.7 })
+    expect((await call('GET', '/api/commons/folders')).json.counts.split).toBe(1)
+  })
+
+  it('a person can place something by hand, with how much belongs in each place', async () => {
+    const r = await call('POST', '/api/commons/folders/place', { kind: 'wiki', ref: 'Home', title: 'Home', places: [{ path: 'Docs', weight: 100 }, { path: 'Start/Here', weight: 40 }] })
+    expect(r.status).toBe(200)
+    expect(r.json.counts).toMatchObject({ items: 1, split: 1 })
+  })
+
+  it('refuses a place that is not a clean path, or no place to put it', async () => {
+    expect((await call('POST', '/api/commons/folders/place', { kind: 'wiki', ref: 'x', places: [{ path: '<b>', weight: 50 }] })).status).toBe(400)
+    expect((await call('POST', '/api/commons/folders/place', { kind: 'nope', ref: 'x', places: [] })).status).toBe(400)
+  })
+})
+
+describe('the market and the league', () => {
+  it('posts, lists and cancels standing orders, and shows the price they work out to', async () => {
+    const sell = await call('POST', '/api/commons/market/orders', { side: 'sell', cu: 50, points: 120 })
+    expect(sell.status).toBe(201)
+    expect(sell.json.offer).toEqual({ pointsPerCu: 2.4, cu: 50 })
+    await call('POST', '/api/commons/market/orders', { side: 'buy', cu: 10, points: 20 })
+    const m = (await call('GET', '/api/commons/market')).json
+    expect(m.orders).toHaveLength(2)
+    expect(m.bid).toEqual({ pointsPerCu: 2, cu: 10 })
+    const id = m.orders.find((o: any) => o.side === 'buy').id
+    expect((await call('POST', `/api/commons/market/orders/${id}/cancel`, {})).json.cancelled).toBe(true)
+    expect((await call('GET', '/api/commons/market')).json.bid).toBeNull()
+  })
+
+  it('refuses a bad order', async () => {
+    expect((await call('POST', '/api/commons/market/orders', { side: 'swap', cu: 1, points: 1 })).status).toBe(400)
+    expect((await call('POST', '/api/commons/market/orders', { side: 'buy', cu: 0, points: 1 })).status).toBe(400)
+    expect((await call('POST', '/api/commons/market/orders', { side: 'buy', cu: 'lots', points: 1 })).status).toBe(400)
+  })
+
+  it('matching with no computers known says so plainly', async () => {
+    const r = await call('POST', '/api/commons/market/borrow', { prompt: 'hi' })
+    expect(r.status).toBe(404)
+    expect(r.json.error).toMatch(/do not know any computers/)
+  })
+
+  it('the league lists wiki projects, and joining one imports it with the AI off', async () => {
+    await call('POST', '/api/commons/projects', { title: 'Weather', goal: 'Build a weather app', pot: 10, agentPlan: true })
+    const league = (await call('GET', '/api/commons/league')).json
+    expect(league.board.length).toBeGreaterThanOrEqual(1)
+    expect(league.projects.find((p: any) => p.id === 'weather')).toMatchObject({ page: 'projects/weather', local: true, background: true })
+  })
+
+  it('the AI\'s background work can be switched per project', async () => {
+    await call('POST', '/api/commons/projects', { title: 'Quiet', pot: 10, background: false })
+    expect((await call('GET', '/api/commons/projects/quiet')).json.project.background).toBe(false)
+    const r = await call('POST', '/api/commons/projects/quiet/background', { on: true })
+    expect(r.json.background).toBe(true)
+    expect((await call('POST', '/api/commons/projects/quiet/background', { on: 'yes' })).json.background).toBe(false) // only a real true turns it on
   })
 })
 

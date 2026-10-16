@@ -85,6 +85,24 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       <button class="nc-btn primary" id="r-save">Save</button>
     </div>
     <p class="nc-dim" id="rate-note"></p>
+
+    <h3>Standing orders</h3>
+    <p class="nc-dim">Say exactly what you will trade and it waits until someone matches it. While you have open orders on a side they are what you trade; with none, your plain rate above applies. When you want compute, you are matched with the cheapest computer you know that is at or under your limit.</p>
+    <div class="row">
+      <select class="nc-input" id="o-side">
+        <option value="buy">I give points for compute</option>
+        <option value="sell">I give compute for points</option>
+      </select>
+      <input class="nc-input" id="o-cu" type="number" min="0.1" step="0.1" placeholder="CU" style="width:100px">
+      <input class="nc-input" id="o-pts" type="number" min="0.1" step="0.1" placeholder="points" style="width:110px">
+      <button class="nc-btn primary" id="o-add">Post</button>
+    </div>
+    <p class="nc-dim" id="o-price"></p>
+    <div id="orders"></div>
+    <h3>Use the cheapest computer I know</h3>
+    <textarea class="nc-input" id="b-prompt" placeholder="Ask it something"></textarea>
+    <div class="row"><button class="nc-btn primary" id="b-go">Match and ask</button></div>
+    <div id="b-out" class="nc-dim"></div>
   </section>
 
   <section class="nc-glass">
@@ -108,6 +126,20 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   </section>
 
   <section class="nc-glass" id="detail" hidden></section>
+
+  <section class="nc-glass">
+    <h2>League</h2>
+    <p class="nc-dim">Every project published to the wiki, by anyone. The easy way to get one done is to leave it to the AI, which works on it in the background. To go faster, join and take tasks yourself: you are paid for what you finish.</p>
+    <div id="league"></div>
+  </section>
+
+  <section class="nc-glass">
+    <h2>Folders</h2>
+    <p class="nc-dim">The agent files your chats, wiki pages and projects into folders, and folders inside folders. Something can belong in two places at once: a percentage next to it says how much of it belongs in that folder, and it shows up in each place. The agent also learns from how it files.</p>
+    <div id="folder-note" class="nc-dim"></div>
+    <div id="folders"></div>
+    <div class="row"><button class="nc-btn primary" id="f-go">Let the agent organise now</button></div>
+  </section>
 
   <section class="nc-glass">
     <h2>Your chats, organised by the agent</h2>
@@ -230,6 +262,10 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     var bar = el('div', { class: 'bar' }, [el('i', {})]);
     bar.firstChild.style.width = (p.tasks.length ? Math.round(100 * done / p.tasks.length) : 0) + '%';
     D.appendChild(bar);
+    var bg = el('input', { type: 'checkbox' });
+    bg.checked = p.background === true;
+    bg.addEventListener('change', function () { act(api('POST', base() + '/background', { on: bg.checked })).then(loadDetail); });
+    D.appendChild(el('label', { class: 'chk' }, [bg, el('span', { text: 'The AI works on this in the background' })]));
     D.appendChild(el('p', { class: 'nc-dim', text: done + ' of ' + p.tasks.length + ' tasks done · ' + fix(p.paidOut) + ' of ' + fix(p.pot) + ' points paid out · the pot is final' }));
 
     p.folders.forEach(function (f) {
@@ -267,7 +303,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
 
   function renderHive(D, p, h) {
     D.appendChild(el('h3', { text: 'The hive' }));
-    D.appendChild(el('p', { class: 'nc-dim', text: 'A team of AIs with equal say. Each takes a folder, the others check every hand-in, and one that keeps failing can be voted out. When every task is done, what they learned is averaged into the shared network, not swapped in for it. The hive only checks AI work: a person\\'s hand-in is checked by a person.' }));
+    D.appendChild(el('p', { class: 'nc-dim', text: 'The hive starts as one AI. It decides whether it needs help, then adds variants of itself, because nobody can check their own work. After that every decision is a vote and every agent has one: good agents are cloned, ones that keep failing are deleted, and when there is less work than agents some step down. When every task is done, what the last ones learned is averaged into the shared network, not swapped in for it. The hive only checks AI work: a person\\'s hand-in is checked by a person.' }));
     var running = h && h.state === 'running';
     var row = [];
     row.push(btn(running ? 'Working...' : (h && h.agents.length ? 'Run the hive again' : 'Run the hive'), function () {
@@ -280,10 +316,14 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     D.appendChild(el('div', { class: 'row' }, row));
     if (!h) return;
     if (h.note) D.appendChild(el('p', { text: h.note }));
+    if (h.help) D.appendChild(el('p', { class: 'nc-dim', text: 'The Original chose ' + (h.help === 'help' ? 'to get help.' : 'to start alone.') }));
+    var nameOf = {};
+    h.agents.forEach(function (a) { nameOf[a.id] = a.name; });
     h.agents.forEach(function (a) {
       var gone = a.removedAt !== null;
-      var sub = (a.folder ? 'Folder: ' + a.folder + ' · ' : 'Checker · ') + a.accepted + ' accepted, ' + a.rejected + ' sent back, checked ' + a.reviewed + ' · taught ' + a.taught + (a.helpers ? ' · ' + a.helpers + ' sub-AI' + (a.helpers > 1 ? 's' : '') : '');
-      D.appendChild(item(a.name, gone ? a.removedReason : sub, [chip(gone ? 'removed' : 'value ' + fix(a.value), gone ? '' : 'hot')], gone ? 'gone' : ''));
+      var left = a.retiredAt !== null;
+      var sub = (a.folder === '*' ? 'Any folder · ' : a.folder ? 'Folder: ' + a.folder + ' · ' : 'Checker · ') + (a.parent ? 'variant of ' + nameOf[a.parent] + ' · ' : 'the Original · ') + a.accepted + ' accepted, ' + a.rejected + ' sent back, checked ' + a.reviewed + ' · taught ' + a.taught + (a.helpers ? ' · ' + a.helpers + ' sub-AI' + (a.helpers > 1 ? 's' : '') : '');
+      D.appendChild(item(a.name, gone ? a.removedReason : sub, [chip(gone ? 'deleted' : left ? 'stepped down' : 'value ' + fix(a.value), gone || left ? '' : 'hot')], gone || left ? 'gone' : ''));
     });
     if (h.merge) {
       D.appendChild(el('p', { class: 'on', text: 'Merged ' + h.merge.agents.length + ' agents into one contributor (' + h.merge.file + '). ' + (h.merge.push === 'queued' ? 'Being pushed to GitHub.' : (h.merge.reason || '')) }));
@@ -298,6 +338,50 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     if (running) pollTimer = setTimeout(loadDetail, 4000);
   }
 
+  // ── The market and the league ────────────────────────────────────────
+  function renderMarket(m) {
+    var O = $('orders'); O.textContent = '';
+    if (!m.orders.length) O.appendChild(el('p', { class: 'nc-dim', text: 'No standing orders.' }));
+    m.orders.slice(0, 12).forEach(function (o) {
+      var open = o.closedAt === null && o.filledCu < o.cu - 0.000001;
+      var title = o.side === 'buy' ? 'Give ' + fix(o.points) + ' points for up to ' + fix(o.cu) + ' CU' : 'Give up to ' + fix(o.cu) + ' CU for ' + fix(o.points) + ' points';
+      var sub = fix(o.points / o.cu) + ' points per CU · ' + fix(o.filledCu) + ' of ' + fix(o.cu) + ' CU traded' + (open ? '' : o.filledCu >= o.cu - 0.000001 ? ' · filled' : ' · cancelled');
+      O.appendChild(item(title, sub, open ? [btn('Cancel', function () { act(api('POST', '/api/commons/market/orders/' + o.id + '/cancel', {})); })] : [], open ? '' : 'gone'));
+    });
+  }
+  function renderLeague(r) {
+    var L = $('league'); L.textContent = '';
+    if (!r.projects.length) L.appendChild(el('p', { class: 'nc-dim', text: 'No projects in the wiki yet. Publish one of yours to start the league.' }));
+    r.projects.forEach(function (p) {
+      var row = item(p.title, p.done + ' of ' + p.tasks + ' tasks · pot ' + fix(p.pot) + ' points · ' + fix(p.paidOut) + ' paid out',
+        [p.local ? chip('you have it', 'done') : btn('Join', function () { act(api('POST', '/api/commons/import', { name: p.page })).then(function (x) { openProject(x.project.id); }); }, 'primary')]);
+      L.appendChild(row);
+    });
+  }
+
+  // ── Folders ──────────────────────────────────────────────────────────
+  function folderRows(into, nodes, depth) {
+    nodes.forEach(function (n) {
+      var chips = [];
+      if (n.weight < 1) chips.push(chip(Math.round(n.weight * 100) + '% here', 'hot'));
+      if (n.kind !== 'folder') chips.push(chip(n.kind));
+      var row = item(n.title, null, chips, n.kind === 'folder' ? '' : 'gone');
+      row.style.marginLeft = (depth * 18) + 'px';
+      into.appendChild(row);
+      folderRows(into, n.children, depth + 1);
+    });
+  }
+  function renderFolders(v) {
+    var F = $('folders'); F.textContent = '';
+    folderRows(F, v.top, 0);
+    if (v.unsorted.length) {
+      F.appendChild(el('h3', { text: 'Not filed yet' }));
+      v.unsorted.forEach(function (u) { F.appendChild(item(u.title, null, [chip(u.kind)], 'gone')); });
+    }
+    if (!v.top.length && !v.unsorted.length) F.appendChild(el('p', { class: 'nc-dim', text: 'Nothing to file yet.' }));
+    $('folder-note').textContent = v.counts.folders + ' folders, ' + v.counts.items + ' things filed, ' + v.counts.split + ' in more than one place.';
+  }
+
   // ── Chats ────────────────────────────────────────────────────────────
   function renderChats(r) {
     var C = $('chats'); C.textContent = '';
@@ -310,6 +394,9 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   function refresh() {
     api('GET', '/api/commons').then(function (r) { renderBoard(r.points); renderProjects(r.projects); }).catch(function (e) { say(e.message, true); });
     api('GET', '/api/chat-history/groups').then(renderChats).catch(function () {});
+    api('GET', '/api/commons/folders').then(renderFolders).catch(function () {});
+    api('GET', '/api/commons/market').then(renderMarket).catch(function () {});
+    api('GET', '/api/commons/league').then(renderLeague).catch(function () {});
     if (openId) loadDetail();
   }
 
@@ -329,6 +416,28 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       $('p-title').value = ''; $('p-goal').value = '';
       say(r.plannedBy === 'agent' ? 'Created. The agent laid out the folders and tasks.' : r.plannedBy === 'fallback' ? 'Created. The agent\\'s plan could not be read, so the goal was split into tasks instead.' : 'Created.');
       openProject(r.project.id);
+    });
+  });
+  function orderPrice() {
+    var cu = Number($('o-cu').value), pts = Number($('o-pts').value);
+    $('o-price').textContent = cu > 0 && pts > 0 ? 'That is ' + fix(pts / cu) + ' points per CU.' : '';
+  }
+  $('o-cu').addEventListener('input', orderPrice);
+  $('o-pts').addEventListener('input', orderPrice);
+  $('o-add').addEventListener('click', function () {
+    act(api('POST', '/api/commons/market/orders', { side: $('o-side').value, cu: Number($('o-cu').value), points: Number($('o-pts').value) })).then(function () { $('o-cu').value = ''; $('o-pts').value = ''; orderPrice(); });
+  });
+  $('b-go').addEventListener('click', function () {
+    $('b-out').textContent = 'Finding the cheapest computer...';
+    api('POST', '/api/commons/market/borrow', { prompt: $('b-prompt').value }).then(function (r) {
+      $('b-out').textContent = r.result + '  (' + r.matched.peer + ' at ' + fix(r.matched.pointsPerCu) + ' points per CU, ' + fix(r.cu) + ' CU)';
+      refresh();
+    }, function (e) { $('b-out').textContent = ''; say(e.message, true); });
+  });
+  $('f-go').addEventListener('click', function () {
+    say('The agent is filing things. This can take a while...');
+    act(api('POST', '/api/commons/folders/organize', {})).then(function (r) {
+      say('Asked about ' + r.report.asked + ': filed ' + r.report.placed + ' (' + r.report.split + ' in two places), left ' + r.report.left + ' for later.');
     });
   });
   $('i-go').addEventListener('click', function () {

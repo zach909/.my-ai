@@ -157,6 +157,23 @@ describe('MeshAgentLearner', () => {
     expect(existsSync(path.join(root, '..', 'escape.delta.json.gz'))).toBe(false)
   })
 
+  it('a variant starts from a copy of what its parent learned, then goes its own way', async () => {
+    const { learner } = setupLearner()
+    await learner.teach('parent', 'a lesson the parent learned')
+    expect(learner.clone('parent', 'child')).toBe(true)
+    expect(same(learner.delta('child')!, learner.delta('parent')!)).toBe(true)
+    await learner.teach('child', 'something only the child was taught, and at some length')
+    expect(same(learner.delta('child')!, learner.delta('parent')!)).toBe(false)
+    expect(learner.delta('parent')).not.toBeNull() // the parent is untouched
+  })
+
+  it('has nothing to copy from an agent that learned nothing, and refuses bad ids', () => {
+    const { learner } = setupLearner()
+    expect(learner.clone('nobody', 'child')).toBe(false)
+    expect(learner.delta('child')).toBeNull()
+    expect(learner.clone('../x', 'child')).toBe(false)
+  })
+
   it('forgets an agent that was removed', async () => {
     const { learner } = setupLearner()
     await learner.teach('alpha', 'a lesson')
