@@ -5,12 +5,12 @@
   "description": "A Net Skill grafted into the live mesh: 3 neurons, all-to-all with the rest of the network. Not installable as a file -- see the descriptor for what it means, and net-skill-graft.ts for how a mesh grows one.",
   "author": "neuroclaw-agent",
   "publishedAt": "2026-09-02T21:17:22.345Z",
-  "updatedAt": "2026-10-17T23:27:13.595Z",
+  "updatedAt": "2026-10-17T23:33:45.061Z",
   "files": [
     {
       "filename": "conversation-learning.net-skill.json",
-      "bytes": 290,
-      "sha256": "685d027dd4488030e1edb75a84581741b57b0b2791745108334bfce7d6122896"
+      "bytes": 293,
+      "sha256": "484e1d74ebf62bd3244a861bcd8d7b78e45c4083da7006460e2e6f59355db5e7"
     }
   ]
 }
