@@ -100,15 +100,15 @@ try {
 // on Windows `npx` is `npx.cmd`, which spawn() can't launch without a shell
 // (fails with ENOENT).
 const viteBin = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
-// `--config-loader=runner` loads vite.config.ts through Vite's module runner
-// instead of re-bundling it with rolldown. Without it, a torn/partially
-// installed package (e.g. after an npm install crashed) makes rolldown's
-// internal [plugin externalize-deps] resolver hard-fail at startup with an
-// opaque "Failed to resolve entry for package ..." error even when plain Node
-// can resolve the package fine. With the runner loader, bare imports are
-// resolved as normal runtime modules and any real breakage surfaces as an
-// honest ERR_MODULE_NOT_FOUND naming the broken package.
-const vite = spawn(process.execPath, [viteBin, '--config-loader=runner'], { cwd: ROOT, stdio: 'inherit' });
+// No --config-loader flag: Vite's default `bundle` loader is used. An earlier
+// revision forced `--config-loader=runner` to dodge rolldown's opaque
+// "Failed to resolve entry" error on torn installs, but the runner introduced
+// a worse failure ("Cannot find module '@tanstack/react-start/plugin/vite'"
+// for packages plain Node resolves fine). vite.config.ts now self-checks its
+// own bare imports and only falls back to the runner when the install is
+// genuinely incomplete — so the flag must NOT be passed here or that logic
+// would be bypassed/forced.
+const vite = spawn(process.execPath, [viteBin], { cwd: ROOT, stdio: 'inherit' });
 
 function shutdown() {
   backend.kill();
