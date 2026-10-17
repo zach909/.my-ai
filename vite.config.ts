@@ -248,7 +248,6 @@ if (HAS_CONFIG_LOADER_FLAG) {
 
 export default defineConfig({
   plugins: [
-    configDepsExternal,
     ensureRootCss(),
     routeTreeHealth(),
     // Tailwind v4 via the official Vite plugin. Handles `@import "tailwindcss"`
@@ -260,6 +259,10 @@ export default defineConfig({
     // HTML on the first request. `prerender` emits crawlable static HTML at build time.
     // NOTE: the Start plugin MUST come before the React plugin.
     tanstackStart({
+      // We register viteReact() explicitly below; without this flag Start
+      // silently injects its own copy of the React plugin (duplicate) and
+      // prints a deprecation warning.
+      customViteReactPlugin: true,
       prerender: {
         enabled: true,
         // Follow in-app links from the prerendered entry to statically render
