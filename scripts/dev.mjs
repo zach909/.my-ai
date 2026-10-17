@@ -100,7 +100,15 @@ try {
 // on Windows `npx` is `npx.cmd`, which spawn() can't launch without a shell
 // (fails with ENOENT).
 const viteBin = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
-const vite = spawn(process.execPath, [viteBin], { cwd: ROOT, stdio: 'inherit' });
+// `--config-loader=runner` loads vite.config.ts through Vite's module runner
+// instead of re-bundling it with rolldown. Without it, a torn/partially
+// installed package (e.g. after an npm install crashed) makes rolldown's
+// internal [plugin externalize-deps] resolver hard-fail at startup with an
+// opaque "Failed to resolve entry for package ..." error even when plain Node
+// can resolve the package fine. With the runner loader, bare imports are
+// resolved as normal runtime modules and any real breakage surfaces as an
+// honest ERR_MODULE_NOT_FOUND naming the broken package.
+const vite = spawn(process.execPath, [viteBin, '--config-loader=runner'], { cwd: ROOT, stdio: 'inherit' });
 
 function shutdown() {
   backend.kill();
