@@ -61,10 +61,18 @@ const SURGE_PERIOD = 3.6
  * - COOL_DOWN_SECONDS: how long the wind-down takes once the reply lands.
  *   Deliberately longer than the spin-up: a machine that races when handed
  *   work and glides back to rest looks alive; one that stops dead looks off.
+ * - THINKING_ENERGY: the rate held for the WHOLE duration of a reply being
+ *   composed ("thinking"). Effectively infinite in human terms — the crown
+ *   becomes a blur, which is exactly what a spinning-blur status light is.
+ *   It cannot be expressed as a normal `energy` number because energy also
+ *   scales the core glow (a literal infinity would blow out the lighting),
+ *   so the frame loop special-cases the thinking flag instead.
  */
 const ENERGY_TARGET = 0.28
 const SPIN_UP_SECONDS = 1.4
 const COOL_DOWN_SECONDS = 4.5
+/** Revolutions-per-second floor while thinking: far past readable motion. */
+const THINKING_ENERGY = 60
 
 /** Mouse-tracking limits for the parallax tilt. */
 const PARALLAX_X = 0.1
@@ -143,6 +151,8 @@ interface RingMotionState {
   parallaxY: number
   /** Extra revolutions-per-second currently injected by message pulses. */
   energy: number
+  /** True while the assistant is composing a reply: spin at blur speed. */
+  thinking: boolean
 }
 
 /**
@@ -208,6 +218,11 @@ function OrbitingRingCrown({ motion }: { motion: MutableRefObject<RingMotionStat
   // cooling down slows it smoothly, never teleporting it.
   const angleRef = useRef(0)
   const lastTimeRef = useRef<number | null>(null)
+  // Eased blur-speed factor while thinking: ramps to full speed over a few
+  // frames and back down after, so the ring is flung up rather than tele-
+  // ported — but far faster than the pulse ramp, because "thinking" should
+  // read as instant.
+  const spinFactorRef = useRef(0)
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime
@@ -217,10 +232,21 @@ function OrbitingRingCrown({ motion }: { motion: MutableRefObject<RingMotionStat
     const dt = Math.min(delta, 0.1)
     lastTimeRef.current = t
 
+    // Exponential approach to 1 while thinking, 0 when idle (~0.25s each way).
+    const target = m.thinking ? 1 : 0
+    spinFactorRef.current += (target - spinFactorRef.current) * (1 - Math.exp(-4 * dt))
+
     if (orbitRef.current) {
       // Idle surge keeps the pace uneven so the motion reads even when calm.
       const surge = 1 + SURGE_AMOUNT * Math.sin((t / SURGE_PERIOD) * Math.PI * 2)
-      const rate = ORBIT_RATE * surge + m.energy
+      // While thinking the rate goes to THINKING_ENERGY rev/s — effectively
+      // infinite: at ~60 rev/s on a 60Hz display the crown advances a full
+      // revolution or more per frame, so it renders as pure blur. The idle
+      // surge multiplier is dropped in that regime (it would only add jitter
+      // nobody can see under a blur anyway).
+      const rate = m.thinking || spinFactorRef.current > 0.02
+        ? THREE.MathUtils.lerp(ORBIT_RATE * surge + m.energy, THINKING_ENERGY, spinFactorRef.current)
+        : ORBIT_RATE * surge + m.energy
       // Negative yaw: the ring circles the sphere the other way than before.
       angleRef.current -= rate * Math.PI * 2 * dt
       orbitRef.current.rotation.y = angleRef.current
@@ -233,8 +259,10 @@ function OrbitingRingCrown({ motion }: { motion: MutableRefObject<RingMotionStat
       tiltRef.current.rotation.z = -m.parallaxX * 0.5
     }
     if (glowRef.current) {
-      // The core brightens while the ring is spun up, then fades back.
-      glowRef.current.intensity = 0.6 + m.energy * 6
+      // The core brightens while the ring is spun up, then fades back. Capped
+      // contribution from the thinking state so a blur-speed spin glows hot
+      // but never blows out the lighting.
+      glowRef.current.intensity = 0.6 + m.energy * 6 + (m.thinking ? 1.5 : 0)
     }
   })
 
@@ -295,17 +323,25 @@ export function RingCrownBackground({ opacity = 0.3 }: { opacity?: number }) {
 
   // One mutable object shared by reference into both frame loops; nothing
   // here is state because per-frame changes must never re-render React.
-  const motion = useRef<RingMotionState>({ mouse: { x: 0, y: 0 }, parallaxX: 0, parallaxY: 0, energy: 0 })
+  const motion = useRef<RingMotionState>({ mouse: { x: 0, y: 0 }, parallaxX: 0, parallaxY: 0, energy: 0, thinking: false })
 
   // Energy ramp: pulse() drives the target up fast, settle() drops it back
   // to zero, and the actual value eases exponentially toward the target each
   // frame — so repeated sends stack into one continuous surge instead of
   // restarting the animation, and the wind-down always glides.
+  // thinking/idle are the sustained state: while the assistant composes a
+  // reply the flag is set and the frame loop holds the spin at blur speed;
+  // it is written straight to the ref because nothing about it needs a React
+  // render — only the pulse ramp below does.
   const [energyTarget, setEnergyTarget] = useState(0)
   useEffect(() => {
     return onRingEvent((event) => {
       if (event === 'pulse') {
         setEnergyTarget((prev) => Math.min(prev + ENERGY_TARGET, ENERGY_TARGET * 2))
+      } else if (event === 'thinking') {
+        motion.current.thinking = true
+      } else if (event === 'idle') {
+        motion.current.thinking = false
       } else {
         setEnergyTarget(0)
       }
