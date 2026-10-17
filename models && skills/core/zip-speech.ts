@@ -46,6 +46,14 @@ export interface SpeechOptions {
   maxAnswerBytes?: number;
   /** Idle ticks after the question before the mesh is read. Default 0. */
   settleTicks?: number;
+  /**
+   * What of the mesh is read. "last" (default) reads it once, after the last
+   * byte: with the memory on that is mostly the last few bytes of the question.
+   * "mean" also reads it after every byte and keeps the average, so a word at
+   * the start of a question leaves a mark on what the readout sees as well as
+   * the tail does. Both are read straight off the mesh; nothing else is added.
+   */
+  pooling?: "last" | "mean";
 }
 
 export interface SpeechPair {
@@ -105,6 +113,9 @@ export class ZipSpeaker {
   private readonly ridge: number;
   private readonly maxAnswerBytes: number;
   private readonly settleTicks: number;
+  private readonly pooling: "last" | "mean";
+  /** The mesh is deterministic from blank activity, so a question read once never needs reading again. Cleared by forget(). */
+  private readonly featureCache = new Map<string, Float64Array>();
   private readonly blank: FrozenActivity;
   private readonly zip: ZipLoopInterface;
   private readonly doorway: Set<number>;
@@ -122,6 +133,7 @@ export class ZipSpeaker {
     this.ridge = opts.ridge ?? 1e-9;
     this.maxAnswerBytes = opts.maxAnswerBytes ?? 16;
     this.settleTicks = opts.settleTicks ?? 0;
+    this.pooling = opts.pooling ?? "last";
     const ids = zipLoopIdsFor(engine);
     this.zip = new ZipLoopInterface(engine, ids, this.memoryVale > 0 ? { memory: { vale: this.memoryVale } } : {});
     this.doorway = new Set(Object.values(ids).filter((v): v is number => typeof v === "number"));
@@ -132,22 +144,54 @@ export class ZipSpeaker {
     return this.alpha !== null;
   }
 
-  /** Feed the question from blank activity and read the mesh once: every neuron outside the doorway, content and energy. */
-  private features(question: Uint8Array): Float64Array {
-    thawActivity(this.engine, this.blank);
-    for (const byte of question) this.zip.sendByte(byte);
-    for (let t = 0; t < this.settleTicks; t++) this.zip.idleTick();
+  /** The mesh outside the doorway, content and energy of every neuron, written into `into` starting at `at`. */
+  private snapshot(into: Float64Array, at: number, scratch: Float32Array): void {
     const n = this.engine.getNeuronCount();
     const dims = this.engine.getDimensions();
-    const scratch = new Float32Array(dims);
-    const f = new Float64Array((n - this.doorway.size) * (dims + 1));
-    let k = 0;
+    let k = at;
     for (let i = 0; i < n; i++) {
       if (this.doorway.has(i)) continue;
       const wrote = this.engine.readNeuronContent(i, scratch);
-      for (let d = 0; d < dims; d++) f[k++] = d < wrote ? scratch[d] : 0;
-      f[k++] = this.engine.getNeuronEnergy(i);
+      for (let d = 0; d < dims; d++) into[k++] = d < wrote ? scratch[d] : 0;
+      into[k++] = this.engine.getNeuronEnergy(i);
     }
+  }
+
+  /** Forget everything read so far (call it if the mesh's weights were changed after teaching). */
+  forget(): void {
+    this.featureCache.clear();
+  }
+
+  /** Feed the question from blank activity and read the mesh: once at the end, or (pooling "mean") after every byte too. */
+  private features(question: Uint8Array): Float64Array {
+    const key = Buffer.from(question).toString("latin1");
+    const cached = this.featureCache.get(key);
+    if (cached) return cached;
+    thawActivity(this.engine, this.blank);
+    const n = this.engine.getNeuronCount();
+    const dims = this.engine.getDimensions();
+    const width = (n - this.doorway.size) * (dims + 1);
+    const scratch = new Float32Array(dims);
+    const pooled = this.pooling === "mean" ? new Float64Array(width) : null;
+    const snap = pooled ? new Float64Array(width) : null;
+    let reads = 0;
+    for (const byte of question) {
+      this.zip.sendByte(byte);
+      if (pooled && snap) {
+        this.snapshot(snap, 0, scratch);
+        for (let j = 0; j < width; j++) pooled[j] += snap[j];
+        reads++;
+      }
+    }
+    for (let t = 0; t < this.settleTicks; t++) this.zip.idleTick();
+    const f = new Float64Array(pooled ? width * 2 : width);
+    this.snapshot(f, 0, scratch);
+    if (pooled) {
+      const denom = Math.max(1, reads);
+      for (let j = 0; j < width; j++) f[width + j] = pooled[j] / denom;
+    }
+    if (this.featureCache.size >= 4096) this.featureCache.clear();
+    this.featureCache.set(key, f);
     return f;
   }
 
