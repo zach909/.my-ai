@@ -80,7 +80,7 @@ export interface TeachReport {
 const toBytes = (v: string | Uint8Array): Uint8Array => (typeof v === "string" ? new Uint8Array(Buffer.from(v, "utf8")) : v);
 
 /** Solve (A + lambda I) x = b for symmetric positive semi-definite A by Gaussian elimination with partial pivoting. */
-function solveRidge(a: Float64Array, n: number, lambda: number, b: Float64Array[]): Float64Array[] {
+export function solveRidge(a: Float64Array, n: number, lambda: number, b: Float64Array[]): Float64Array[] {
   const m = new Float64Array(n * n);
   for (let i = 0; i < n * n; i++) m[i] = a[i];
   for (let i = 0; i < n; i++) m[i * n + i] += lambda;
