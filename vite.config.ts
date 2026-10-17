@@ -4,6 +4,7 @@ import viteReact from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 
 // Guarantee global CSS survives an AI coding agent's rewrite of
 // src/routes/__root.tsx. TanStack Start only emits a stylesheet for CSS
@@ -194,8 +195,60 @@ function routeTreeHealth() {
   };
 }
 
+// Resilient loading of vite.config.ts itself (reported crash: `npm run dev`
+// booted the backend, then died with "failed to load config from vite.config.ts"
+// + 'Failed to resolve entry for package "@vitejs/plugin-react"' coming from
+// Vite's internal [plugin externalize-deps]).
+//
+// Background: by default Vite loads this file by re-bundling it with rolldown,
+// whose `externalize-deps` plugin runs Vite's OWN package resolver on every bare
+// import. If an installed package's files don't match its package.json exports
+// map — a torn npm install, e.g. after an install crashed mid-way with the
+// arborist "edgesOut" bug seen in this repo — that resolver hard-fails and the
+// dev server never starts, even though plain Node resolves the package fine.
+// Verified experimentally here: deleting node_modules/@vitejs/plugin-react/dist/
+// index.js reproduces the exact reported error under the bundler path, while
+// plain Node still resolved the package.
+//
+// Fix: load the config through Vite's module runner (`--config-loader runner`)
+// instead of the rolldown bundler — bare deps are then imported as normal
+// runtime modules, so a partially-torn install surfaces as an honest
+// ERR_MODULE_NOT_FOUND naming the broken package (fixable by reinstalling it)
+// rather than an opaque resolution veto at startup. A healthy install behaves
+// identically. scripts/dev.mjs passes the flag explicitly; this block extends
+// the same protection to plain `npx vite` / `vite build`: if no loader was
+// specified, we re-exec the SAME command once with --config-loader=runner
+// (env-guarded against loops). An explicit user choice always wins, and any
+// failure falls back to the original behaviour.
+const HAS_CONFIG_LOADER_FLAG = process.argv.some(
+  (a) => a === '--config-loader' || a.startsWith('--config-loader='),
+);
+if (HAS_CONFIG_LOADER_FLAG) {
+  // Mark this process tree so the re-exec guard below stays inert.
+  process.env.NEUROCLAW_CONFIG_LOADER_GUARD = '1';
+} else if (
+  !process.env.NEUROCLAW_CONFIG_LOADER_GUARD &&
+  process.env.VITEST === undefined // vitest loads configs programmatically
+) {
+  process.env.NEUROCLAW_CONFIG_LOADER_GUARD = '1';
+  try {
+    const { spawnSync } = await import('node:child_process');
+    const r = spawnSync(
+      process.execPath,
+      [...process.execArgv, ...process.argv.slice(1), '--config-loader=runner'],
+      { stdio: 'inherit', env: process.env },
+    );
+    if (!r.error && r.status !== null) process.exit(r.status);
+    // Could not re-exec meaningfully — fall through and load normally.
+  } catch {
+    /* fail open: original startup behaviour */
+  }
+  delete process.env.NEUROCLAW_CONFIG_LOADER_GUARD;
+}
+
 export default defineConfig({
   plugins: [
+    configDepsExternal,
     ensureRootCss(),
     routeTreeHealth(),
     // Tailwind v4 via the official Vite plugin. Handles `@import "tailwindcss"`
