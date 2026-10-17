@@ -257,8 +257,12 @@ export const LINUX_PERMISSION_TOOLS: LinuxPermissionTool[] = allSpecs.map((spec)
 });
 
 /** Resolve a tool by its public name; useful to connect this catalogue to the agent's tool-call router. */
-export function getLinuxPermissionTool(name: string): LinuxPermissionTool | undefined {
-  return LINUX_PERMISSION_TOOLS.find(tool => tool.name === name);
+export function getLinuxPermissionTool(nameOrPermission: string): LinuxPermissionTool | undefined {
+  // By tool name ("linux_service_control") or by the permission it needs
+  // ("linux-service-control"): the two differ only in punctuation, and callers
+  // holding a permission id (the Access page, adapters keyed by permission)
+  // should not have to translate it first.
+  return LINUX_PERMISSION_TOOLS.find(tool => tool.name === nameOrPermission || tool.permission === nameOrPermission);
 }
 
 /** Tool names and required permissions for UI discovery and permission screens. */

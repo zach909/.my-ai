@@ -31,7 +31,6 @@ import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AVATAR_HTML } from './avatar.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
-import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
 import { COMMONS_PAGE } from './commons-page.js';
@@ -1072,7 +1071,12 @@ class PasswordLock {
  */
 export function isWikiPublicRoute(pathname: string, method: string): boolean {
   if (method === 'GET') {
-    return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(pathname);
+    if (pathname === '/api/wiki') return true;
+    if (!/^\/api\/wiki\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(pathname)) return false;
+    // Page names can be nested ("getting-started/installation"), so "<name>/backups" has the
+    // same shape as a page called "backups" under <name>. It is not one: it is the edit history
+    // of an existing page, which is not public. Those two words are reserved sub-routes.
+    return !/\/(?:backups|restore)$/.test(pathname);
   }
   if (method === 'POST') {
     return pathname === '/api/wiki';
@@ -1973,7 +1977,12 @@ export class WebServer {
    * (or none) pass their own ceiling explicitly; nobody else's behavior
    * changes.
    */
-  private async parseBody(req: http.IncomingMessage, maxBytes: number = Number.POSITIVE_INFINITY): Promise<unknown> {
+  // The default is 1 MB: an ordinary JSON endpoint has no business reading more, and with no limit
+  // anyone who can reach the server could exhaust its memory with one request. A route that really
+  // takes big bodies (skill uploads, the zip loop) passes its own limit, `Number.POSITIVE_INFINITY`
+  // included. (Commit 358030f6 changed this default to unlimited while only meaning to lift the
+  // skill-upload cap, which was already passed explicitly at that call site.)
+  private async parseBody(req: http.IncomingMessage, maxBytes: number = 1024 * 1024): Promise<unknown> {
     // CSRF: this server has no auth and setSecurityHeaders() never sends
     // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
     // response -- but that alone doesn't stop the *request* from being
@@ -4159,6 +4168,16 @@ export class WebServer {
           body.source,
           body.threadId
         );
+        // The assistant's message ends an exchange, which is the moment the
+        // turn has stopped: freeze the mesh's activity for this conversation
+        // (short-term context). Behind the doorway lock and in the background,
+        // so saving a message never waits on the mesh.
+        if (body.role === 'assistant') {
+          void import('../src/index.js')
+            .then(m => m.getNeuroclawSystem())
+            .then(system => system.freezeThread(thread.id))
+            .catch(() => undefined);
+        }
         this.sendJson(res, { threadId: thread.id });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -4403,6 +4422,25 @@ export class WebServer {
       return;
     }
 
+    // (This comes BEFORE the page read below on purpose: names can be nested, so the page
+    // pattern also matches "<name>/backups", and with the page read first this route was
+    // unreachable -- the request was answered as "No wiki page named <name>/backups".)
+    // GET /api/wiki/:name/backups — every snapshot backupBeforeChange() has
+    // taken of this bot-published page (before each overwrite/edit/delete),
+    // oldest first, so a caller can see what's recoverable before choosing
+    // one to restore.
+    const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/backups$/);
+    if (backupsMatch && method === 'GET') {
+      try {
+        const backups = listWikiBackups(backupsMatch[1]);
+        this.sendJson(res, { backups, total: backups.length });
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
     // GET /api/wiki/:name — one page's raw markdown. `name` can be nested
     // paths like "getting-started/installation" (letters/digits/-/_/\/ only),
     // which rules out both `..` traversal and an absolute-path override.
@@ -4437,22 +4475,6 @@ export class WebServer {
       try {
         await deleteWikiPageAndSync(wikiMatch[1]);
         this.sendJson(res, { name: wikiMatch[1], deleted: true });
-      } catch (err) {
-        const status = err instanceof WikiNameError ? 400 : 500;
-        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
-      }
-      return;
-    }
-
-    // GET /api/wiki/:name/backups — every snapshot backupBeforeChange() has
-    // taken of this bot-published page (before each overwrite/edit/delete),
-    // oldest first, so a caller can see what's recoverable before choosing
-    // one to restore.
-    const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/backups$/);
-    if (backupsMatch && method === 'GET') {
-      try {
-        const backups = listWikiBackups(backupsMatch[1]);
-        this.sendJson(res, { backups, total: backups.length });
       } catch (err) {
         const status = err instanceof WikiNameError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
@@ -5636,6 +5658,13 @@ export class WebServer {
             plugins?: string[];
             includeHistory?: boolean;
             resume?: boolean;
+            /**
+             * Which conversation this run belongs to. With it, the stop freezes
+             * that conversation's neuron activity (short-term context) and
+             * `resume` thaws it, leaving the learned network alone. Without it,
+             * `resume` restores the last whole snapshot, as before.
+             */
+            threadId?: string;
             quietTicks?: number;
             maxTicks?: number;
           } | null;
@@ -5767,9 +5796,15 @@ export class WebServer {
         // to pick up. Skipped silently when there is no saved state -- a first
         // run has nothing to resume and that is not a failure.
         let resumed = false;
+        const threadId = typeof body?.threadId === 'string' && body.threadId ? body.threadId : undefined;
         if (body?.resume) {
-          const saved = await this.readSavedNetworkState();
-          if (saved) resumed = engine.restoreNetworkState(saved);
+          if (threadId && system.threadContext.has(threadId)) {
+            // This conversation's own frozen activity: only the neurons go back.
+            resumed = (await system.thawThread(threadId)).thawed;
+          } else {
+            const saved = await this.readSavedNetworkState();
+            if (saved) resumed = engine.restoreNetworkState(saved);
+          }
         }
 
         const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
@@ -5789,6 +5824,9 @@ export class WebServer {
         let savedNeurons = 0;
         if (result.networkState) {
           savedNeurons = await this.saveNetworkState(result.networkState);
+          // The network said stop: freeze this conversation's activity so the
+          // next turn can pick up exactly here.
+          if (threadId) system.holdThreadActivity(threadId, result.networkState as NetworkStateSnapshot);
         }
         this.sendJson(res, {
           ok: true,

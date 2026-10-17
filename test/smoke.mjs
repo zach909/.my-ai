@@ -1731,7 +1731,9 @@ async function testResearchPlugin() {
   // extension-builder/Moby (a vendored moby/moby source tree, 13,000+
   // files) used to make this true incidentally, but a regression guard
   // shouldn't depend on unrelated repo contents that could be removed.
-  const bfsDir = mkdtempSync(join(tmpdir(), 'neuroclaw-bfs-'));
+  // Inside the working directory, not tmpdir(): searchDrive() refuses any root outside process.cwd()
+  // (path-traversal guard), so a fixture in the system temp directory is rejected before it is searched.
+  const bfsDir = mkdtempSync(join(process.cwd(), '.neuroclaw-bfs-'));
   try {
     const bigDir = join(bfsDir, 'aaa_big_sibling');
     mkdirSync(bigDir);
