@@ -195,41 +195,121 @@ function routeTreeHealth() {
   };
 }
 
-// Resilient loading of vite.config.ts itself (reported crash: `npm run dev`
-// booted the backend, then died with "failed to load config from vite.config.ts"
-// + 'Failed to resolve entry for package "@vitejs/plugin-react"' coming from
-// Vite's internal [plugin externalize-deps]).
+// Resilient loading of vite.config.ts itself (reported crashes: `npm run dev`
+// booted the backend, then died with "failed to load config from
+// vite.config.ts" + 'Failed to resolve entry for package
+// "@vitejs/plugin-react"' coming from Vite's internal [plugin
+// externalize-deps], and later "Cannot find module
+// '@tanstack/react-start/plugin/vite'" from the module-runner path).
 //
 // Background: by default Vite loads this file by re-bundling it with rolldown,
-// whose `externalize-deps` plugin runs Vite's OWN package resolver on every bare
-// import. If an installed package's files don't match its package.json exports
-// map — a torn npm install, e.g. after an install crashed mid-way with the
-// arborist "edgesOut" bug seen in this repo — that resolver hard-fails and the
-// dev server never starts, even though plain Node resolves the package fine.
-// Verified experimentally here: deleting node_modules/@vitejs/plugin-react/dist/
-// index.js reproduces the exact reported error under the bundler path, while
-// plain Node still resolved the package.
+// whose `externalize-deps` plugin runs Vite's OWN package resolver on every
+// bare import. If an installed package's files don't match its package.json
+// exports map — a torn npm install, e.g. after an install crashed mid-way with
+// the arborist "edgesOut" bug seen in this repo — that resolver hard-fails and
+// the dev server never starts, even though plain Node resolves the package
+// fine. Verified experimentally here: deleting
+// node_modules/@vitejs/plugin-react/dist/index.js reproduces the exact
+// reported error under the bundler path, while plain Node still resolved it.
 //
-// Fix: load the config through Vite's module runner (`--config-loader runner`)
-// instead of the rolldown bundler — bare deps are then imported as normal
-// runtime modules, so a partially-torn install surfaces as an honest
-// ERR_MODULE_NOT_FOUND naming the broken package (fixable by reinstalling it)
-// rather than an opaque resolution veto at startup. A healthy install behaves
-// identically. scripts/dev.mjs passes the flag explicitly; this block extends
-// the same protection to plain `npx vite` / `vite build`: if no loader was
-// specified, we re-exec the SAME command once with --config-loader=runner
-// (env-guarded against loops). An explicit user choice always wins, and any
-// failure falls back to the original behaviour.
+// The FIRST fix here switched to Vite's module runner (`--config-loader=runner`)
+// to sidestep rolldown's resolver — but that introduced a worse failure mode on
+// real user machines: the runner imports bare deps through Vite's own module
+// pipeline with its own resolution/caching semantics, so it can die with
+// ERR_MODULE_NOT_FOUND for packages plain Node resolves perfectly (e.g. stale
+// runner caches or strict conditional-export handling around
+// '@tanstack/react-start/plugin/vite'). That is exactly the second crash above.
+//
+// Final approach: do NOT force any loader. Keep Vite's default `bundle` path
+// (verified working end-to-end here: config loads, route tree generates, server
+// listens), and add a self-healing fallback: before Vite touches the bundle
+// pipeline, verify every bare import this config needs actually resolves AND
+// that all files listed in each package's package.json "exports"/"main" exist
+// on disk. Only when the install is genuinely torn — i.e. the bundler WOULD die
+// with the opaque "Failed to resolve entry" error — do we re-exec the SAME
+// command once with `--config-loader=runner` as a last resort (an honest
+// ERR_MODULE_NOT_FOUND naming the broken package beats a silent startup veto),
+// guarded by an env var against loops. On a healthy install none of this runs
+// and behaviour is identical to stock Vite. scripts/dev.mjs likewise no longer
+// forces a loader.
+const CONFIG_BARE_DEPS = [
+  'vite',
+  '@tanstack/react-start',
+  // Subpath exactly as imported by this config, so the check verifies the
+  // real specifier (plain Node resolves '<pkg>/package.json' even when the
+  // package's "exports" map omits it — which is what rolldown's stricter
+  // externalize-deps pass then dies on at bundle time).
+  '@tanstack/react-start/plugin/vite',
+  '@vitejs/plugin-react',
+  '@tailwindcss/vite',
+];
+
+/**
+ * True only when `specifier` resolves through Node's own ESM resolver AND
+ * every concrete file target listed in the owning package's package.json
+ * "exports"/"main" exists on disk. Additionally, if the package's "exports"
+ * map has no entry covering `specifier` at all (bare or subpath), the
+ * specifier is treated as broken — that mismatch is precisely what Vite's
+ * rolldown `externalize-deps` pass chokes on after a torn install, while
+ * legacy CJS require() would happily succeed.
+ */
+function configDepIsIntact(specifier: string): boolean {
+  try {
+    const require_ = createRequire(import.meta.url);
+    // 1) The exact specifier must resolve via Node's modern resolver (honours
+    //    the "exports" map). Throws for missing packages/files and for
+    //    subpaths excluded by exports.
+    const resolved = require_.resolve(specifier);
+    // 2) Walk up from the resolved file to the owning package root.
+    let pkgDir = path.dirname(resolved);
+    for (;;) {
+      if (path.basename(pkgDir) === 'node_modules') return false;
+      if (fs.existsSync(path.join(pkgDir, 'package.json'))) break;
+      const parent = path.dirname(pkgDir);
+      if (parent === pkgDir) return false;
+      pkgDir = parent;
+    }
+    const pkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
+    const pkgName = specifier.startsWith('@')
+      ? specifier.split('/').slice(0, 2).join('/')
+      : specifier.split('/')[0];
+    // Belt-and-braces: confirm this really is the package we asked for.
+    if (pkg.name !== pkgName) return false;
+    const targets: string[] = [];
+    const walk = (v: unknown) => {
+      if (typeof v === 'string') targets.push(v);
+      else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+    };
+    if (pkg.exports) walk(pkg.exports);
+    if (typeof pkg.main === 'string') targets.push(pkg.main);
+    for (const t of targets) {
+      // Skip wildcard export patterns like './dist/client/*' — they are
+      // mapping rules, not concrete files, and don't exist on disk as-is.
+      if (t.startsWith('.') && !t.includes('*') && !fs.existsSync(path.join(pkgDir, t))) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const BROKEN_CONFIG_DEPS = CONFIG_BARE_DEPS.filter((d) => !configDepIsIntact(d));
 const HAS_CONFIG_LOADER_FLAG = process.argv.some(
   (a) => a === '--config-loader' || a.startsWith('--config-loader='),
 );
-if (HAS_CONFIG_LOADER_FLAG) {
-  // Mark this process tree so the re-exec guard below stays inert.
-  process.env.NEUROCLAW_CONFIG_LOADER_GUARD = '1';
-} else if (
+if (
+  BROKEN_CONFIG_DEPS.length > 0 &&
+  !HAS_CONFIG_LOADER_FLAG &&
   !process.env.NEUROCLAW_CONFIG_LOADER_GUARD &&
   process.env.VITEST === undefined // vitest loads configs programmatically
 ) {
+  console.error(
+    `[vite.config] Incomplete install detected for: ${BROKEN_CONFIG_DEPS.join(', ')}. ` +
+      'Retrying config load with --config-loader=runner. If this still fails, repair the ' +
+      'install: `rm -rf node_modules && npm install --legacy-peer-deps`.',
+  );
   process.env.NEUROCLAW_CONFIG_LOADER_GUARD = '1';
   try {
     const { spawnSync } = await import('node:child_process');
