@@ -349,6 +349,30 @@ export class ZipSpeaker {
     }
   }
 
+  /**
+   * How wrong the readout is about one question: mean squared distance between
+   * its scores and the +-1 targets for `answer`. 1 is what a readout that has
+   * learned nothing scores (every output 0); 0 is exact. Before anything is
+   * taught the answer is 1, which is the "before training" number.
+   */
+  loss(question: string | Uint8Array, answer: string | Uint8Array): number {
+    const target = this.targets(toBytes(answer).subarray(0, this.maxAnswerBytes));
+    if (!this.alpha || !this.memory || !this.featureMean) return 1;
+    const found = freezeActivity(this.engine);
+    try {
+      const x = this.features(toBytes(question));
+      const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
+      const scores = this.scores(z);
+      let sum = 0;
+      // Clipped to [-1, 1]: only the sign of a score is ever spoken, and an unseen question can push a linear readout
+      // arbitrarily far, which would make this number meaningless. Worst case is then 4, chance is about 1.
+      for (let o = 0; o < target.length; o++) sum += (Math.max(-1, Math.min(1, scores[o])) - target[o]) ** 2;
+      return sum / target.length;
+    } finally {
+      thawActivity(this.engine, found);
+    }
+  }
+
   /** Speak the answer to a question. Reads the mesh but leaves it as it was found. */
   speak(question: string | Uint8Array): Uint8Array {
     if (!this.alpha || !this.memory || !this.featureMean) throw new Error("ZipSpeaker.speak: nothing has been taught yet");
