@@ -9,8 +9,12 @@ Points are only created in bounded ways, so the pile cannot grow forever:
 - **A project's pot.** Fixed when the project is made, never raised. Tasks are paid out of it; amounts round down, so paid-out is always at or under the pot.
 - **Adding people.** 100 points, once per person you add, paid only after that person does their first paid work (up to 20 people). Adding a name alone pays nothing.
 - **Trading compute moves points, it never makes them.**
+- **Adding a person takes 10 from everyone else.** The 10 points come out of the other people on the board in equal shares (someone with less gives what they have and the rest is split among the others), and go to whoever added the person. What you gain, they lose, so nothing is printed. It happens for your first 20 adds only, and it does not count toward the leaderboard because it is not work.
+- **Hiring.** Hire a person or an AI and they go under you, but it costs: you pay a wage up front out of your own points (you cannot hire for nothing), and you can pay them more later or let them go. One employer at a time, and nobody can hire someone above them. Wages are moved, not made, and do not count as earned.
 
 The leaderboard ranks lifetime points earned, so spending points does not cost you your place. It ranks the people and AIs *this device* has dealt with: a club scoreboard on one device, not a bank. Two devices each keep their own copy of a trade.
+
+**Names cannot be borrowed.** A name on the board is a label somebody typed, so a regular user cannot add, or rename themselves to, the name of another account, and a computer that calls itself by an account's name is shown as "(peer)". The owner and the admin are exempt so they can list a friend who also has an account. Each person's board is their own ledger, so this protects what you see on your own board and what you put on it; it does not make one person's points visible or editable by another.
 
 ## What your compute is worth (Settings on /commons)
 
@@ -111,3 +115,7 @@ A scheduled message goes to the agent like a typed one, so a risky tool still wa
 **The brain is shared.** By default it does **not** learn from or remember what other people say, and they cannot read what the owner put in, so one person's chat cannot surface in another's answer. The admin can turn learning on. What the brain has already learned stays shared either way.
 
 Projects were being written to the public wiki folder on every change; they are now private until you tick **Share in the league**.
+
+## Taking your chats with you
+
+Resetting a machine? On `/commons`, under your chats, **Export my chats (.zip)** downloads every conversation you have as one zip (`manifest.json` plus `threads/<id>.json`; it opens in any zip tool). On the new machine, choose the zip and press **Import chats**. Chats are filed into groups as usual. Chats already there are never overwritten, so importing the same zip twice is safe. Imported chats are kept, not re-taught to the AI. Each person exports and imports only their own chats. The zip is read defensively: size limits, checksums, and only well-formed chats are accepted.

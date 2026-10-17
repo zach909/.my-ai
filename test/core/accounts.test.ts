@@ -253,7 +253,7 @@ describe('working out who is asking', () => {
 })
 
 describe('what a regular user may reach', () => {
-  const yes = ['/', '/commons', '/api/chat', '/api/chat-history/threads', '/api/chat-history/threads/abc', '/api/chat-history/threads/abc/pin', '/api/commons', '/api/commons/projects', '/api/commons/projects/weather/tasks/t1/claim', '/api/commons/folders/organize', '/api/commons/experts', '/api/commons/schedules', '/api/commons/league', '/api/accounts/me', '/api/auth/logout']
+  const yes = ['/', '/commons', '/api/chat', '/api/chat-history/threads', '/api/chat-history/export', '/api/chat-history/threads/abc', '/api/chat-history/threads/abc/pin', '/api/commons', '/api/commons/projects', '/api/commons/projects/weather/tasks/t1/claim', '/api/commons/folders/organize', '/api/commons/experts', '/api/commons/schedules', '/api/commons/league', '/api/accounts/me', '/api/auth/logout']
   const no = [
     '/api/terminals', '/api/apps/launch', '/api/apps/list', '/api/memory', '/api/memory/all', '/api/profile', '/api/system/install', '/api/access/switch', '/api/settings/brain',
     '/api/store/install', '/api/store/uninstall', '/api/updates/apply', '/api/github/publish', '/api/extension/build', '/api/train', '/api/phone-sync', '/api/captures',
@@ -264,6 +264,10 @@ describe('what a regular user may reach', () => {
   ]
   it('reaches what it needs: chat, its own chats, the Commons, and its own account', () => {
     for (const p of yes) expect(userMayReach(p, 'GET'), p).toBe(true)
+  })
+  it('can export, and import, its own chats', () => {
+    expect(userMayReach('/api/chat-history/export', 'GET')).toBe(true)
+    expect(userMayReach('/api/chat-history/import', 'POST')).toBe(true)
   })
   it('reaches NOTHING that runs or changes the machine, reads the owner\'s data, or manages other people', () => {
     for (const p of no) expect(userMayReach(p, 'POST'), p).toBe(false)
@@ -360,5 +364,37 @@ describe('the shared brain', () => {
     // The admin still gets asked, as before.
     expect(runAs(user('aaaaaaaa', 'zach', 'admin'), () => gate.check('terminal', 'terminal run ls', 100))).toMatchObject({ allow: false })
     expect(gate.pending()).toHaveLength(1)
+  })
+})
+
+describe('nobody passes for another account on the points board', () => {
+  it('a regular user cannot use someone else\'s account name, but can use their own and any free name', async () => {
+    const { nameBelongsToAnotherAccount } = await import('../../models && skills/core/accounts.js')
+    const s = await setup()
+    const sam = await s.register('sam', PW)
+    const ann = await s.register('ann', PW)
+    const as = (w: Who) => (name: string) => runAs(w, () => nameBelongsToAnotherAccount(s, name))
+    const samAsks = as(user(sam.id, 'sam'))
+    expect(samAsks('ann')).toBe(true)
+    expect(samAsks('ANN')).toBe(true) // case does not matter
+    expect(samAsks('zach')).toBe(true) // nor does it matter that it is the admin
+    expect(samAsks('sam')).toBe(false) // their own
+    expect(samAsks('Pat')).toBe(false) // free
+    expect(as(user(ann.id, 'ann'))('sam')).toBe(true)
+  })
+
+  it('the owner and the admin may list a friend who has an account', async () => {
+    const { nameBelongsToAnotherAccount } = await import('../../models && skills/core/accounts.js')
+    const s = await setup()
+    const sam = await s.register('sam', PW)
+    void sam
+    expect(runAs(OWNER, () => nameBelongsToAnotherAccount(s, 'sam'))).toBe(false)
+    expect(runAs(user('adminid', 'zach', 'admin'), () => nameBelongsToAnotherAccount(s, 'sam'))).toBe(false)
+  })
+
+  it('refuses when it cannot read the accounts, rather than letting a name through', async () => {
+    const { nameBelongsToAnotherAccount } = await import('../../models && skills/core/accounts.js')
+    const broken = { listUsers: () => { throw new Error('damaged') } } as unknown as AccountsStore
+    expect(runAs(user('x', 'x'), () => nameBelongsToAnotherAccount(broken, 'anyone'))).toBe(true)
   })
 })

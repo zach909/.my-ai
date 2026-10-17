@@ -45,6 +45,9 @@
 import {
   PointsError,
   addMember,
+  hire,
+  payWage,
+  letGo,
   pointsSummary,
   setRates,
   setSelfName,
@@ -227,6 +230,16 @@ async function route(ctx: CommonsContext): Promise<boolean> {
   if (pathname === "/api/commons/members" && method === "POST") {
     const b = await bodyOf(1024);
     return json({ member: addMember(String(b.name ?? "")), points: pointsSummary() }, 201);
+  }
+  // Hiring is you (the owner of this ledger) hiring someone on it: the wage comes out of your own balance.
+  const staff = /^\/api\/commons\/members\/([A-Za-z0-9][A-Za-z0-9._:-]{0,95})\/(hire|pay|let-go)$/.exec(pathname);
+  if (staff && method === "POST") {
+    const b = await bodyOf(1024);
+    const id = staff[1];
+    if (staff[2] === "hire") hire(SELF_ID, id, Number(b.amount));
+    else if (staff[2] === "pay") payWage(SELF_ID, id, Number(b.amount));
+    else letGo(SELF_ID, id);
+    return json(pointsSummary());
   }
   if (pathname === "/api/commons/league" && method === "GET") {
     return json({ board: leaderboard(), projects: listWikiProjects() });

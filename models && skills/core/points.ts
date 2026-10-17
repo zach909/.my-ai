@@ -4,7 +4,7 @@
  *
  * ── Where points come from (and why there is a ceiling) ────────────────
  *
- * Points are only ever created in three bounded ways, so the pile cannot
+ * Points are only ever created in two bounded ways, so the pile cannot
  * grow without limit:
  *
  *   1. A project's pot (projects.ts). Fixed when the project is made and never
@@ -14,7 +14,10 @@
  *      added, and only after that person has done real work (see award()) --
  *      adding a name alone pays nothing -- and at most `referralCap` times.
  *   3. Nothing else. Trading compute MOVES points from the borrower to the
- *      lender (recordBorrow / recordLend); it never makes new ones.
+ *      lender (recordBorrow / recordLend); it never makes new ones. So do the
+ *      two newer ways of moving them: adding a person takes JOIN_GRAB from
+ *      everyone else for whoever added them (addMember), and hiring pays a
+ *      wage out of the employer's own balance (hire / payWage).
  *
  * ── The exchange rate ──────────────────────────────────────────────────
  *
@@ -63,6 +66,8 @@ export const DEFAULT_BID = 2;
 export const MAX_RATE = 1000;
 export const REFERRAL_BONUS = 100;
 export const REFERRAL_CAP = 20;
+/** What adding a person takes, in total, from everyone else (see addMember). Moved, not made. */
+export const JOIN_GRAB = 10;
 export const SELF_ID = "me";
 const MAX_MEMBERS = 500;
 const MAX_ENTRIES = 500;
@@ -82,9 +87,11 @@ export interface Member {
   referredBy: string | null;
   /** Whether the referrer has been paid for adding this member. */
   referralPaid: boolean;
+  /** Who hired this member, if anyone. Hiring is paid in points and is the only thing that puts someone "under" you. */
+  hiredBy: string | null;
 }
 
-export type EntryKind = "task" | "project" | "referral" | "lend" | "borrow";
+export type EntryKind = "task" | "project" | "referral" | "lend" | "borrow" | "join" | "wage";
 
 export interface PointsEntry {
   at: number;
@@ -115,7 +122,7 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/;
 
 const freshSelf = (now = Date.now()): Member => ({
-  id: SELF_ID, name: "You", kind: "person", points: 0, earned: 0, joinedAt: now, referredBy: null, referralPaid: true,
+  id: SELF_ID, name: "You", kind: "person", points: 0, earned: 0, joinedAt: now, referredBy: null, referralPaid: true, hiredBy: null,
 });
 
 const emptyState = (): PointsState => ({ members: [freshSelf()], ask: DEFAULT_ASK, bid: DEFAULT_BID, entries: [] });
@@ -134,6 +141,7 @@ function cleanMember(raw: unknown): Member | null {
     joinedAt: typeof m.joinedAt === "number" ? m.joinedAt : 0,
     referredBy: typeof m.referredBy === "string" ? m.referredBy : null,
     referralPaid: m.referralPaid === true,
+    hiredBy: typeof m.hiredBy === "string" ? m.hiredBy : null,
   };
 }
 
@@ -163,6 +171,28 @@ function savePoints(state: PointsState, file: string): void {
   } catch {
     // Not every filesystem has modes.
   }
+}
+
+let nameGuard: (name: string) => boolean = () => false;
+
+/**
+ * The server says which names are taken by other people's accounts. A name on
+ * the board is just a label somebody typed, so without this a person could add
+ * "Sam" and pass for the real Sam. The guard is asked by addMember,
+ * setSelfName and when a computer on the network first appears.
+ */
+export function setNameGuard(fn: (name: string) => boolean): void {
+  nameGuard = fn;
+}
+
+function checkName(name: string): void {
+  let reserved = true;
+  try {
+    reserved = nameGuard(name);
+  } catch {
+    reserved = true;
+  }
+  if (reserved) throw new PointsError(`"${name}" is someone else's account. Ask them to join and add themselves, or use another name.`, 403);
 }
 
 const find = (state: PointsState, id: string): Member | undefined => state.members.find(m => m.id === id);
@@ -196,6 +226,7 @@ export function setRates(input: { ask?: number; bid?: number }, file = pointsFil
 
 export function setSelfName(name: string, file = pointsFile()): PointsState {
   if (typeof name !== "string" || !NAME_RE.test(name)) throw new PointsError("A name is letters, digits, spaces, '.', '-' and '_', up to 64 characters.");
+  checkName(name);
   const state = loadPoints(file);
   if (state.members.some(m => m.id !== SELF_ID && m.name.toLowerCase() === name.toLowerCase())) throw new PointsError(`"${name}" is already taken.`);
   need(state, SELF_ID).name = name;
@@ -221,6 +252,8 @@ export interface AddMemberOptions {
 
 export function addMember(name: string, opts: AddMemberOptions = {}, file = pointsFile(), now = Date.now()): Member {
   if (typeof name !== "string" || !NAME_RE.test(name)) throw new PointsError("A name is letters, digits, spaces, '.', '-' and '_', up to 64 characters.");
+  const kindOf = opts.kind ?? "person";
+  if (kindOf === "person") checkName(name);
   const state = loadPoints(file);
   if (state.members.length >= MAX_MEMBERS) throw new PointsError(`This device tracks at most ${MAX_MEMBERS} members.`);
   if (state.members.some(m => m.name.toLowerCase() === name.toLowerCase())) throw new PointsError(`"${name}" is already on the board.`);
@@ -232,10 +265,55 @@ export function addMember(name: string, opts: AddMemberOptions = {}, file = poin
     referredBy = opts.referredBy === undefined ? SELF_ID : opts.referredBy;
     if (referredBy !== null) need(state, referredBy);
   }
-  const member: Member = { id, name, kind, points: 0, earned: 0, joinedAt: now, referredBy, referralPaid: referredBy === null };
+  const member: Member = { id, name, kind, points: 0, earned: 0, joinedAt: now, referredBy, referralPaid: referredBy === null, hiredBy: null };
+  const referrer = referredBy === null ? undefined : find(state, referredBy);
+  const addedBefore = referrer ? state.members.filter(m => m.referredBy === referrer.id).length : 0;
   state.members.push(member);
+  if (referrer && addedBefore < REFERRAL_CAP) grabForJoin(state, referrer, member, now);
   savePoints(state, file);
   return member;
+}
+
+/**
+ * Adding a person takes JOIN_GRAB points from everyone else and gives them to
+ * the person who added them. Nothing is printed: the referrer gains exactly
+ * what the others lose. Everyone else means the other people on the board with
+ * something to give, each losing an equal share; someone with less than their
+ * share gives what they have and the rest is split among the others, so the
+ * total reaches JOIN_GRAB when the board holds that much and otherwise takes
+ * all of it. It happens at most REFERRAL_CAP times per person, so adding
+ * made-up names cannot drain the board. It is a transfer, not work, so it
+ * does not count toward the leaderboard's "earned".
+ */
+function grabForJoin(state: PointsState, referrer: Member, added: Member, now: number): void {
+  const donors = state.members.filter(m => m.kind === "person" && m.id !== referrer.id && m.id !== added.id && m.points > 0);
+  const taken = new Map<string, number>();
+  let left = JOIN_GRAB;
+  let active = donors.slice();
+  while (left > 1e-9 && active.length) {
+    const share = left / active.length;
+    const next: Member[] = [];
+    for (const d of active) {
+      const room = d.points - (taken.get(d.id) ?? 0);
+      const take = Math.min(share, room);
+      taken.set(d.id, (taken.get(d.id) ?? 0) + take);
+      left -= take;
+      if (room - take > 1e-9) next.push(d);
+    }
+    active = next;
+  }
+  let total = 0;
+  for (const d of donors) {
+    const amount = Math.floor((taken.get(d.id) ?? 0) * 1e6) / 1e6; // never take a hair more than was counted
+    if (amount <= 0) continue;
+    d.points = round(Math.max(0, d.points - amount));
+    total += amount;
+    log(state, d.id, -amount, "join", `${referrer.name} added ${added.name}`, now);
+  }
+  total = round(total);
+  if (total <= 0) return;
+  referrer.points = round(referrer.points + total);
+  log(state, referrer.id, total, "join", `added ${added.name}`, now);
 }
 
 /** The member with this id, creating it if it is new. For AIs and peers whose identity is not typed in by a person. */
@@ -330,10 +408,16 @@ export function recordBorrow(peerName: string, points: number, file = pointsFile
   let peer = state.members.find(m => m.kind === "peer" && m.name === peerName);
   if (!peer) {
     const name = peerName.slice(0, 64);
+    let reserved = true;
+    try {
+      reserved = nameGuard(name);
+    } catch {
+      reserved = true;
+    }
     peer = {
       id: `peer-${randomBytes(5).toString("hex")}`,
-      name: state.members.some(m => m.name.toLowerCase() === name.toLowerCase()) ? `${name.slice(0, 58)} (peer)` : name,
-      kind: "peer", points: 0, earned: 0, joinedAt: now, referredBy: null, referralPaid: true,
+      name: reserved || state.members.some(m => m.name.toLowerCase() === name.toLowerCase()) ? `${name.slice(0, 58)} (peer)` : name,
+      kind: "peer", points: 0, earned: 0, joinedAt: now, referredBy: null, referralPaid: true, hiredBy: null,
     };
     state.members.push(peer);
   }
@@ -342,6 +426,72 @@ export function recordBorrow(peerName: string, points: number, file = pointsFile
   log(state, peer.id, pts, "lend", `lent compute to you`, now);
   savePoints(state, file);
   return { paid: pts };
+}
+
+// ── Hiring ─────────────────────────────────────────────────────────────
+
+/** Whether `ancestor` is somewhere above `id` in the chain of who hired whom. */
+function isAbove(state: PointsState, ancestor: string, id: string): boolean {
+  const seen = new Set<string>();
+  for (let cur = find(state, id)?.hiredBy ?? null; cur && !seen.has(cur); cur = find(state, cur)?.hiredBy ?? null) {
+    if (cur === ancestor) return true;
+    seen.add(cur);
+  }
+  return false;
+}
+
+function transfer(state: PointsState, from: Member, to: Member, pts: number, note: string, now: number): void {
+  if (from.points + 1e-9 < pts) throw new PointsError(`Not enough points: ${round(from.points)} available, ${pts} needed.`, 402);
+  from.points = round(Math.max(0, from.points - pts));
+  to.points = round(to.points + pts);
+  log(state, from.id, -pts, "wage", note, now);
+  log(state, to.id, pts, "wage", note, now);
+}
+
+/**
+ * Hire someone: they go under you, and you pay them `wage` points up front out
+ * of your own balance. Hiring for nothing is refused, so being "under" someone
+ * always has a price. A person or an AI can be hired, by one employer at a
+ * time, and nobody can be hired by someone beneath them. The wage is moved,
+ * not made, and it does not count as earned: only work moves the leaderboard.
+ */
+export function hire(employerId: string, workerId: string, wage: number, file = pointsFile(), now = Date.now()): Member {
+  const pts = positive(wage, "points of wage");
+  const state = loadPoints(file);
+  const boss = need(state, employerId);
+  const worker = need(state, workerId);
+  if (boss.id === worker.id) throw new PointsError("You cannot hire yourself.");
+  if (boss.kind === "peer") throw new PointsError("A computer on the network cannot hire.");
+  if (worker.kind === "peer") throw new PointsError("Only a person or an AI can be hired, not a computer.");
+  if (worker.hiredBy) throw new PointsError(`${worker.name} already works for someone. Let them go first.`);
+  if (isAbove(state, worker.id, boss.id)) throw new PointsError(`${worker.name} is above you, so you cannot hire them.`);
+  transfer(state, boss, worker, pts, `${boss.name} hired ${worker.name}`, now);
+  worker.hiredBy = boss.id;
+  savePoints(state, file);
+  return worker;
+}
+
+/** Pay someone you hired. Only their employer can, and only from the employer's own balance. */
+export function payWage(employerId: string, workerId: string, amount: number, file = pointsFile(), now = Date.now()): Member {
+  const pts = positive(amount);
+  const state = loadPoints(file);
+  const boss = need(state, employerId);
+  const worker = need(state, workerId);
+  if (worker.hiredBy !== boss.id) throw new PointsError(`${worker.name} does not work for ${boss.name}.`);
+  transfer(state, boss, worker, pts, `${boss.name} paid ${worker.name}`, now);
+  savePoints(state, file);
+  return worker;
+}
+
+/** End the arrangement. What was paid stays paid. */
+export function letGo(employerId: string, workerId: string, file = pointsFile()): Member {
+  const state = loadPoints(file);
+  const boss = need(state, employerId);
+  const worker = need(state, workerId);
+  if (worker.hiredBy !== boss.id) throw new PointsError(`${worker.name} does not work for ${boss.name}.`);
+  worker.hiredBy = null;
+  savePoints(state, file);
+  return worker;
 }
 
 // ── For the UI ─────────────────────────────────────────────────────────
@@ -368,7 +518,7 @@ export interface PointsSummary {
   you: Member;
   ask: number;
   bid: number;
-  referral: { bonus: number; cap: number; paid: number; waiting: number };
+  referral: { bonus: number; cap: number; paid: number; waiting: number; joinGrab: number };
   board: Standing[];
   entries: PointsEntry[];
 }
@@ -380,7 +530,7 @@ export function pointsSummary(file = pointsFile()): PointsSummary {
     you: need(state, SELF_ID),
     ask: state.ask,
     bid: state.bid,
-    referral: { bonus: REFERRAL_BONUS, cap: REFERRAL_CAP, paid: mine.filter(m => m.referralPaid).length, waiting: mine.filter(m => !m.referralPaid).length },
+    referral: { bonus: REFERRAL_BONUS, cap: REFERRAL_CAP, paid: mine.filter(m => m.referralPaid).length, waiting: mine.filter(m => !m.referralPaid).length, joinGrab: JOIN_GRAB },
     board: leaderboard(file),
     entries: state.entries.slice(-50).reverse(),
   };
