@@ -1,3 +1,9 @@
+> **Status:** the installers people download (Windows, Linux, macOS) are no longer built from this Electron project.
+> They are built by `scripts/release/package-*.mjs` from the shared payload and launcher (`scripts/desktop-launcher.mjs`),
+> which uses no third-party runtime; see `docs/PLATFORMS.md`. This folder is kept as it was (its Windows capability tools and
+> macOS permission notes are still the reference for those features) and is not part of the automated builds.
+> Electron is not on the project's allow-list (`AGENTS.md`).
+
 # Cross-Platform Desktop Application
 
 A native desktop application template built with Electron that runs seamlessly on macOS, Windows, and Debian Linux (Debian 12/bookworm or newer — see System Requirements below) without virtualization or subsystems.
