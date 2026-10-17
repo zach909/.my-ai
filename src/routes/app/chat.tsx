@@ -23,6 +23,7 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus, MessageSquare, X, Download } from '@/components/icons'
 import { RingCrownBackground } from '@/components/RingCrownBackground'
+import { pulseRing, settleRing } from '@/lib/ring-pulse'
 import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from '@/lib/toast'
 import { VoiceRecorder } from '@/components/VoiceRecorder'
@@ -605,6 +606,9 @@ function ChatConversation({
     setMessages((prev) => [...prev, userMsg])
     setInput('')
     setLoading(true)
+    // The backdrop ring reacts to the send: it surges into a fast spin while
+    // the reply is in flight and coasts back down in the finally block below.
+    pulseRing()
 
     // Reassigned below only when there is text to save a history turn for;
     // a file-only send still needs SOME thread id for the archive outcome
@@ -688,6 +692,10 @@ function ChatConversation({
       ])
     } finally {
       setLoading(false)
+      // Reply landed (or failed): let the ring wind back down to idle. If a
+      // queued message takes over immediately, its own send pulses again and
+      // the ramp simply turns back up mid-coast.
+      settleRing()
       // Whatever was typed while this one was running goes now, in the order
       // it was typed.
       const next = takeNext()
