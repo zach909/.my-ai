@@ -2,3 +2,5 @@
 .tanstack/start/build/
 .nitro/
 node_modules/
+release-artifacts/
+.neuroclaw/
