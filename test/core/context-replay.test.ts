@@ -231,3 +231,116 @@ describe('on the real mesh', () => {
     }
   })
 })
+
+describe('a mesh that keeps no trace of earlier input', () => {
+  it('gets no replay, and says why, instead of a one-byte "match" for any history', async () => {
+    // keep = 0: each bit overwrites the last, so only the final bit shows. Whatever came
+    // before, the neurons end up in the same place, and any short prompt "reproduces" it.
+    const mesh = toyMesh(0)
+    const diagnostics: { reason?: 'blind' } = {}
+    const result = await compressContext(mesh.probe, history(80), { yieldTo: noYield, diagnostics })
+    expect(result).toBeNull()
+    expect(diagnostics.reason).toBe('blind')
+    expect(mesh.state()).toEqual(mesh.start)
+  })
+
+  it('still finds a replay on a mesh that does remember', async () => {
+    const diagnostics: { reason?: 'blind' } = {}
+    const result = await compressContext(toyMesh(0.9).probe, history(200), { yieldTo: noYield, diagnostics })
+    expect(result).not.toBeNull()
+    expect(diagnostics.reason).toBeUndefined()
+  })
+
+  // Measured on the real mesh, in both a sparse and a live-sized configuration: the state after
+  // a 58-byte history matches the state after only its final byte to eight decimals. Nothing
+  // before the last byte of a message changes where the neurons end up (only its length does).
+  // So a chat history cannot be carried by replay until input leaves a content-dependent trace.
+  it('real mesh: no replay is offered, because the history cannot be told from its last byte', async () => {
+    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8 })
+    const zip = new ZipLoopInterface(engine, zipLoopIdsFor(engine))
+    const diagnostics: { reason?: 'blind' } = {}
+    const text = 'we were planning the trip to the lake and the packing list'
+    const result = await compressContext(zipLoopProbe(engine, zip), new Uint8Array(Buffer.from(text, 'utf8')), { yieldTo: noYield, diagnostics })
+    expect(result).toBeNull()
+    expect(diagnostics.reason).toBe('blind')
+  })
+
+  // The property the idea needs, with the memory switched on (ZipLoopInterface's `memory`, or
+  // NEUROCLAW_ZIP_MEMORY for the whole process): a long history leaves a different trace than
+  // its last byte alone. It does not with the memory off (the test above).
+  it('real mesh with memory on: a long history leaves a different trace than its last byte alone', () => {
+    const cfg = { neuronCount: 24, dimensions: 8 }
+    const snap = new HyperDimensionalEngine(cfg).captureNetworkState()
+    const trace = (bytes: Uint8Array) => {
+      const e = new HyperDimensionalEngine(cfg)
+      e.restoreNetworkState(snap)
+      const zip = new ZipLoopInterface(e, zipLoopIdsFor(e), { memory: { vale: 0.97 } })
+      const p = zipLoopProbe(e, zip)
+      const before = Array.from(p.signature())
+      for (const byte of bytes) for (let k = 7; k >= 0; k--) p.feedBit(((byte >> k) & 1) as 0 | 1)
+      return Array.from(p.signature()).map((v, i) => v - before[i])
+    }
+    const text = Buffer.from('we were planning the trip to the lake and the packing list', 'utf8')
+    const full = trace(new Uint8Array(text))
+    const last = trace(new Uint8Array([text[text.length - 1]]))
+    let dot = 0, nf = 0, nl = 0
+    for (let i = 0; i < full.length; i++) { dot += full[i] * last[i]; nf += full[i] ** 2; nl += last[i] ** 2 }
+    expect(dot / Math.sqrt(nf * nl)).toBeLessThan(0.95)
+  })
+
+  it('real mesh with memory on: a replay is found, and it is closest to the history it came from', async () => {
+    const cfg = { neuronCount: 24, dimensions: 8 }
+    const snap = new HyperDimensionalEngine(cfg).captureNetworkState()
+    const make = () => {
+      const e = new HyperDimensionalEngine(cfg)
+      e.restoreNetworkState(snap)
+      const zip = new ZipLoopInterface(e, zipLoopIdsFor(e), { memory: { vale: 0.97 } })
+      return zipLoopProbe(e, zip)
+    }
+    const effect = (bytes: Uint8Array) => {
+      const p = make()
+      const before = Array.from(p.signature())
+      for (const byte of bytes) for (let k = 7; k >= 0; k--) p.feedBit(((byte >> k) & 1) as 0 | 1)
+      return Array.from(p.signature()).map((v, i) => v - before[i])
+    }
+    const cosine = (a: number[], b: number[]) => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] ** 2; y += b[i] ** 2 } return d / Math.sqrt(x * y) }
+    const histories = [
+      'we were planning the trip to the lake and the packing list',
+      'please remember my sister is called Ana and she lives in Lisbon',
+      'the build failed because the config file was missing a key',
+      'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz',
+      'we agreed the deadline moves to friday and Sam owns the report',
+    ].map(t => new Uint8Array(Buffer.from(t, 'utf8')))
+    const fulls = histories.map(effect)
+    let right = 0
+    for (let i = 0; i < histories.length; i++) {
+      const result = await compressContext(make(), histories[i], { yieldTo: noYield })
+      expect(result).not.toBeNull()                            // no longer "blind"
+      expect(result!.bytes.length).toBeLessThan(histories[i].length)
+      const sims = fulls.map(f => cosine(effect(result!.bytes), f))
+      if (sims.indexOf(Math.max(...sims)) === i) right++
+    }
+    expect(right).toBeGreaterThanOrEqual(3)                    // it carries what the mesh remembers: the recent stretch
+  })
+
+  it('NEUROCLAW_ZIP_MEMORY switches the memory on for every interface in the process', () => {
+    const cfg = { neuronCount: 24, dimensions: 8 }
+    // Compare effects on one shared snapshot, so the only difference is the switch.
+    const snap = new HyperDimensionalEngine(cfg).captureNetworkState()
+    const run = (envValue: string | undefined) => {
+      const old = process.env.NEUROCLAW_ZIP_MEMORY
+      if (envValue === undefined) delete process.env.NEUROCLAW_ZIP_MEMORY; else process.env.NEUROCLAW_ZIP_MEMORY = envValue
+      try {
+        const e = new HyperDimensionalEngine(cfg)
+        e.restoreNetworkState(snap)
+        const zip = new ZipLoopInterface(e, zipLoopIdsFor(e))
+        for (const byte of Buffer.from('a question that ends the same', 'utf8')) zip.sendByte(byte)
+        return e.captureNetworkState().states
+      } finally {
+        if (old === undefined) delete process.env.NEUROCLAW_ZIP_MEMORY; else process.env.NEUROCLAW_ZIP_MEMORY = old
+      }
+    }
+    expect(run(undefined)).toBe(run('0'))            // off by default, and 0 is off
+    expect(run('0.97')).not.toBe(run(undefined))     // on changes the mesh
+  })
+})

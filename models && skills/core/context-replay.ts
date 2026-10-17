@@ -62,6 +62,12 @@ export interface ReplayOptions {
   maxMs?: number;
   /** Test hook: the clock. */
   now?: () => number;
+  /**
+   * Filled in when there is no replay, with why. "blind": the mesh reacted the
+   * same to the history as to a different one that ended the same way, so
+   * nothing it holds could tell a replay from any other short prompt.
+   */
+  diagnostics?: { reason?: "blind" };
   /** Gives the event loop a turn between trials, so the server stays responsive while this runs. */
   yieldTo?: () => Promise<void>;
 }
@@ -75,6 +81,14 @@ export interface ReplayResult {
   /** How many trial runs it took. */
   trials: number;
 }
+
+/**
+ * Two reactions this alike (direction and size) are the same reaction.
+ * Measured: the live mesh gives 1.00000000 for a history against a stand-in
+ * that only shares its last byte, while a toy mesh that remembers a little
+ * gives at most 0.9993. Six nines sits between them.
+ */
+const BLIND_SIMILARITY = 0.999999;
 
 function bitsOf(bytes: Uint8Array): Array<0 | 1> {
   const bits: Array<0 | 1> = [];
@@ -143,6 +157,31 @@ export async function compressContext(probe: ContextProbe, history: Uint8Array, 
 
     if (norm(full) < 1e-12) {
       return { bytes: new Uint8Array(0), similarity: 1, originalBytes: history.length, method: "nothing-to-replay", trials };
+    }
+
+    // 1b. Can this mesh tell the history from anything else that ends the same
+    // way? Feed a stand-in with the same last byte and every earlier byte
+    // inverted. If the neurons end up in the same place, nothing before the
+    // last byte left a trace, so a short replay "matches" the history only
+    // because every history looks alike to this mesh. Measured on the live
+    // mesh: a 58-byte history and its final byte alone scored 1.000, as did
+    // random bytes. A match like that says nothing, so it is not used.
+    if (history.length > 1) {
+      const stand = new Uint8Array(history.length);
+      for (let i = 0; i < history.length - 1; i++) stand[i] = history[i] ^ 0xff;
+      stand[history.length - 1] = history[history.length - 1];
+      let fedStand = 0;
+      for (const bit of bitsOf(stand)) {
+        probe.feedBit(bit);
+        if (++fedStand % 64 === 0) await yieldTo();
+      }
+      const standIn = delta(probe.signature(), base);
+      trials++;
+      probe.rewind(start);
+      if (cosine(standIn, full) >= BLIND_SIMILARITY) {
+        if (opts.diagnostics) opts.diagnostics.reason = "blind";
+        return null;
+      }
     }
 
     const score = async (bytes: Uint8Array): Promise<number> => {
