@@ -7,6 +7,7 @@ The owner has said this many times and it must never need saying again.
 - **The only exceptions are ones the owner named:** web search through an open-source SearXNG instance, and an Ollama model reached over HTTP. Both are services the owner runs; nothing from them is vendored or imported. Everything else needs a fresh yes.
 - **No tokenizer.** Text enters the mesh as its UTF-8 bytes through the Zip Loop, and audio and images enter as the bits they already are. Do not add word or subword tokenizers, outside embeddings, or speech-to-text (no Whisper, Vosk, Wispr Flow or similar).
 - **Check before claiming.** Before saying something is or is not third-party, or is or is not in the repo, look at the files. Do not describe code from memory.
+- **This rule is enforced, not just written down.** `node scripts/check-no-third-party.mjs` fails on third-party packages, lockfiles, vendored folders, bundled code, other people's licence banners and package-install commands. It runs in the git hooks, CI, the test suite and the Claude Code hooks. Only the owner may edit the guard or `.third-party-allowlist.json`. If it fails, remove the third-party code; do not widen the allow-list or use `--no-verify`. Full list of what it checks: AGENTS.md.
 - Already present and not to be added to: `typescript`, `@types/node` and `vitest` as build and test tools. Known leftovers still to be removed: `torch` imports in `model && skills manager/neurolang.py` and the `torch`, `numpy`, `sentencepiece` lines in that folder's `requirements.txt`.
 
 # Git Workflow Policy

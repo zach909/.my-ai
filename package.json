@@ -8,16 +8,14 @@
     "dev": "node scripts/dev.mjs",
     "server": "node scripts/server.mjs",
     "launch": "node scripts/launcher.mjs",
+    "check:third-party": "node scripts/check-no-third-party.mjs",
+    "prepare": "node scripts/install-hooks.mjs",
     "lint:types": "tsc -p tsconfig.backend.json --noEmit",
-    "lint": "npm run lint:types",
+    "lint": "npm run check:third-party && npm run lint:types",
     "test:smoke": "node scripts/build-backend.mjs && node test/smoke.mjs",
     "test:integration": "vitest run",
     "test:install": "bash test/install-sh.test.sh",
-    "test": "npm run test:smoke && npm run test:integration && npm run test:install",
-    "bench:hyper": "bun benchmarks/hyper_benchmark.ts",
-    "bench:mesh": "bun benchmarks/mesh_benchmark.ts",
-    "bench:mesh-parallel": "bun benchmarks/mesh_parallel_benchmark.ts",
-    "bench": "bun run bench:hyper && bun run bench:mesh && bun run bench:mesh-parallel"
+    "test": "npm run check:third-party && npm run test:smoke && npm run test:integration && npm run test:install"
   },
   "devDependencies": {
     "typescript": "~6.0.2",

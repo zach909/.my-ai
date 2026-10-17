@@ -1,6 +1,5 @@
 import os
 import unittest
-import pytest
 from plugins.plugin_microphone import MicrophonePlugin
 
 class TestMicrophoneSecurity(unittest.TestCase):

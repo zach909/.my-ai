@@ -1,0 +1,11 @@
+# The lock on third-party code can only be loosened by the owner.
+/scripts/check-no-third-party.mjs        @zach909
+/.third-party-allowlist.json             @zach909
+/.githooks/                              @zach909
+/.claude/hooks/                          @zach909
+/.claude/settings.json                   @zach909
+/.github/workflows/no-third-party.yml    @zach909
+/.github/CODEOWNERS                      @zach909
+/scripts/install-hooks.mjs               @zach909
+/test/core/no-third-party.test.ts        @zach909
+/AGENTS.md                               @zach909
