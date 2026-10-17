@@ -14,6 +14,10 @@ import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
 import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
 import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/core/shared-mesh-sync.js";
+import { sharedToolGate } from "../models && skills/core/tool-safety.js";
+import { sharedBrainOpen } from "../models && skills/core/user-context.js";
+import { MeshAgentLearner, type AgentLearner } from "../models && skills/core/hive-learning.js";
+import { DoorwayLock } from "../models && skills/core/doorway-lock.js";
 
 /** Where something the mesh learns from came from. "web" is always refused -- see learnFrom(). */
 export type LearnSource = "user" | "response" | "correction" | "skill" | "file" | "tool" | "web";
@@ -367,6 +371,8 @@ export class NeuroclawSystem {
     // neurons in the same all-to-all mesh as everything else, so a plugin
     // firing genuinely propagates into the rest of the network.
     this.pluginRegistry = new PluginRegistry(new NetSkillMesh(2, this.llm.mesh));
+    // Risky tools (terminal, email, files, camera, ...) ask first instead of just going.
+    this.pluginRegistry.setGate(sharedToolGate());
     // One ledger for all three routers (the language brain's, the pipeline's
     // and the plugin registry's), so a skill switched off for predicting badly
     // is off everywhere, and what was learned survives a restart.
@@ -383,11 +389,7 @@ export class NeuroclawSystem {
     // engine lazily, and addNeurons() can grow the mesh underneath us, so a
     // doorway cached at construction would point at an engine that no longer
     // exists.
-    this.promptFeed = new PromptMeshFeed(() => {
-      const engine = this.pipeline.getHyperEngine();
-      if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
-      return new ZipLoopInterface(engine, zipLoopIdsFor(engine));
-    });
+    this.promptFeed = new PromptMeshFeed(() => this.zipDoorway());
     // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
     // promptFeed are the two callers that drive the SAME engine's doorway,
     // and a lock only each one holds separately would not stop them from
@@ -948,6 +950,8 @@ export class NeuroclawSystem {
    */
   learnFrom(text: string, source: LearnSource): boolean {
     if (source === "web") return false;
+    // The brain is shared. It does not learn from someone the admin has not let it learn from.
+    if (!sharedBrainOpen()) return false;
     const trimmed = typeof text === "string" ? text.trim() : "";
     if (!trimmed) return false;
     const key = `${source}\u0000${trimmed}`;
@@ -1879,6 +1883,40 @@ export class NeuroclawSystem {
    */
   collaborationHistory(): string[] {
     return this.chatGroup?.getHistory().map(m => `${m.from}: ${m.content}`) ?? [];
+  }
+
+  /** A doorway into the current mesh, or null while there is no engine (or it is too small to carry a Zip Loop). */
+  private zipDoorway(): ZipLoopInterface | null {
+    const engine = this.pipeline.getHyperEngine();
+    if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
+    return new ZipLoopInterface(engine, zipLoopIdsFor(engine));
+  }
+
+  private hiveLearnerInstance: AgentLearner | null = null;
+
+  /**
+   * How a project's hive agents learn differently (hive-learning.ts): each is
+   * taught on its own copy of the shared base, on this same engine, under the
+   * same doorway lock chat uses, and the live brain is put back afterwards.
+   * Its own private feed (not promptFeed) so the lock is held once, by the
+   * learner, around the whole swap.
+   */
+  hiveLearner(): AgentLearner {
+    if (!this.hiveLearnerInstance) {
+      const feed = new PromptMeshFeed(() => this.zipDoorway(), undefined, new DoorwayLock());
+      const root = process.cwd();
+      this.hiveLearnerInstance = new MeshAgentLearner({
+        engine: () => this.pipeline.getHyperEngine(),
+        lock: this.promptFeed.lock(),
+        feed: async text => {
+          const report = await feed.feedNow(text, "hive-lesson.txt");
+          if (report.bytes === 0) throw new Error("the brain has no Zip Loop to learn through yet");
+        },
+        baseFile: join(root, "extension-builder", "shared-mesh", "base.json"),
+        dir: join(root, "extension-builder", "shared-mesh-local", "hive-agents"),
+      });
+    }
+    return this.hiveLearnerInstance;
   }
 
   /**

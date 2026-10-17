@@ -353,6 +353,32 @@ export class PluginRegistry {
     return intentToPlugins[intent] ?? [];
   }
 
+  /**
+   * Risky tools ask first (models && skills/core/tool-safety.ts). When a gate is
+   * set, it is consulted BEFORE a plugin's onMessage() runs: a tool that needs
+   * approval is not called at all, and dispatch returns the gate's message
+   * ("waiting for your permission") in place of a result.
+   */
+  private gate: { check(pluginId: string, input: string, score: number): { allow: true } | { allow: false; message: string } } | null = null;
+
+  setGate(gate: PluginRegistry["gate"]): void {
+    this.gate = gate;
+  }
+
+  /**
+   * Runs one tool once, with no gate, for a call its owner just approved. Null
+   * if the tool is not active or had nothing to do for that message.
+   */
+  async runApproved(pluginId: string, input: string): Promise<string | null> {
+    const plugin = this.activePlugins.has(pluginId) ? this.plugins.get(pluginId) : undefined;
+    if (!plugin) return null;
+    const result = await plugin.onMessage?.(input);
+    if (result == null) return null;
+    this.firePluginNeurons(pluginId);
+    this.lastHandledBy = pluginId;
+    return typeof result === "string" ? result : JSON.stringify(result);
+  }
+
   // Route an input to the most relevant active plugin, scoring every plugin's
   // declared capabilities rather than walking a hardcoded list.
   async dispatch(input: string, intent: string): Promise<string | null> {
@@ -409,9 +435,16 @@ export class PluginRegistry {
     // code, so the expensive part is now bounded: previously every candidate
     // that could not handle a message still paid a full onMessage() to find
     // that out, including whatever disk or network work it did first.
+    const scoreOf = new Map(ranked.map(r => [r.id, r.score]));
     for (const pluginId of ordered.slice(0, MAX_PLUGINS_TRIED)) {
       const plugin = this.plugins.get(pluginId);
       if (!plugin) continue;
+      const verdict = this.gate?.check(pluginId, input, scoreOf.get(pluginId) ?? 0);
+      if (verdict && verdict.allow === false) {
+        // Held, not run. The tool never saw this message.
+        this.lastHandledBy = null;
+        return (verdict as { message: string }).message;
+      }
       try {
         const result = await plugin.onMessage?.(input);
         if (result != null) {

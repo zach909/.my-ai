@@ -98,6 +98,8 @@ export interface LedgerEntry {
   cu: number;
   who: string;
   note: string;
+  /** Set when this job was settled in points (compute-market.ts) rather than compute credit; the CU balance did not move. */
+  paid?: "points";
 }
 
 export interface ComputeState {
@@ -294,6 +296,8 @@ export interface JobRequest {
   prompt: string;
   /** The guest's own limit, so a guest can say "no more than my balance". */
   maxCu?: number;
+  /** The most points per CU the guest will pay. Read by compute-market.ts, not here. */
+  maxPointsPerCu?: number;
 }
 
 export interface JobResult {
@@ -301,6 +305,9 @@ export interface JobResult {
   cu: number;
   remainingCu: number;
   mops: number;
+  /** Set by compute-market.ts when the job was priced in points. */
+  points?: number;
+  pointsPerCu?: number;
 }
 
 let hostBusy = false;
@@ -317,7 +324,7 @@ export async function runLeasedJob(
   token: string | null,
   req: JobRequest,
   runner: JobRunner,
-  opts: { file?: string; now?: () => number; mops?: number } = {},
+  opts: { file?: string; now?: () => number; mops?: number; settle?: "credit" | "points" } = {},
 ): Promise<JobResult> {
   const file = opts.file ?? computeFile();
   const now = opts.now ?? Date.now;
@@ -374,8 +381,15 @@ export async function runLeasedJob(
     charge = Math.min(computeUnits(busyMs, mops), Math.max(0, live.capCu - live.usedCu));
     if (charge > 0) {
       live.usedCu = round(live.usedCu + charge);
-      fresh.balance = round(fresh.balance + charge);
-      fresh.entries.push({ at: now(), kind: "earned", cu: charge, who: live.label, note: `lent ${(busyMs / 1000).toFixed(1)}s of compute` });
+      // Paid in points: the lease still counts the work (usedCu), but the CU
+      // balance stays put, or the lender would be paid twice for one job.
+      const inPoints = opts.settle === "points";
+      if (!inPoints) fresh.balance = round(fresh.balance + charge);
+      fresh.entries.push({
+        at: now(), kind: "earned", cu: charge, who: live.label,
+        note: `lent ${(busyMs / 1000).toFixed(1)}s of compute`,
+        ...(inPoints ? { paid: "points" as const } : {}),
+      });
       saveCompute(fresh, file);
     }
   }
@@ -439,23 +453,36 @@ export type FetchLike = (url: string, init: { method: string; headers: Record<st
 export async function borrow(
   peerId: string,
   prompt: string,
-  opts: { file?: string; fetchImpl?: FetchLike; now?: () => number } = {},
+  opts: {
+    file?: string;
+    fetchImpl?: FetchLike;
+    now?: () => number;
+    /**
+     * "points" leaves the CU balance alone: compute-market.ts pays for the job
+     * in points instead, and bounds it with `maxCu` (what the points can buy).
+     * `send` adds fields to the request, for the price the guest will pay.
+     */
+    settle?: "credit" | "points";
+    maxCu?: number;
+    send?: Record<string, unknown>;
+  } = {},
 ): Promise<JobResult & { peer: string }> {
   const file = opts.file ?? computeFile();
   const doFetch: FetchLike = opts.fetchImpl ?? ((url, init) => fetch(url, init) as ReturnType<FetchLike>);
   const state = loadCompute(file);
   const peer = state.peers.find(p => p.id === peerId);
   if (!peer) throw new ComputeError("No such peer.", 404);
-  const spendable = round(state.balance + state.creditLimit);
+  const inPoints = opts.settle === "points";
+  const spendable = inPoints ? round(opts.maxCu ?? 0) : round(state.balance + state.creditLimit);
   if (spendable <= 0) {
-    throw new ComputeError("No compute credit to spend. Lend this computer to earn some first.", 402);
+    throw new ComputeError(inPoints ? "Nothing left to spend on compute." : "No compute credit to spend. Lend this computer to earn some first.", 402);
   }
   let res;
   try {
     res = await doFetch(`${peer.baseUrl}/api/corona/v1/compute/run`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${peer.leaseToken}` },
-      body: JSON.stringify({ job: "chat", prompt, maxCu: spendable }),
+      body: JSON.stringify({ ...opts.send, job: "chat", prompt, maxCu: spendable }),
       signal: AbortSignal.timeout(MAX_JOB_MS + 15_000),
     });
   } catch (err) {
@@ -465,6 +492,12 @@ export async function borrow(
   if (!res.ok || !body || typeof body.result !== "string") {
     // A peer that ran the job and then failed it still used its machine. Pay for that.
     const owed = round(Math.max(0, Number(body?.cu) || 0));
+    if (owed > 0 && inPoints) {
+      // The market pays this in points; it needs to know how much was used.
+      const e = new ComputeError(body?.error ?? `${peer.name} answered ${res.status}.`, 502);
+      e.cu = Math.min(owed, spendable);
+      throw e;
+    }
     if (owed > 0) {
       const after = loadCompute(file);
       const paid = round(Math.min(owed, Math.max(0, after.balance + after.creditLimit)));
@@ -475,13 +508,21 @@ export async function borrow(
     throw new ComputeError(body?.error ?? `${peer.name} answered ${res.status}.`, res.status === 401 || res.status === 403 || res.status === 429 ? res.status : 502);
   }
   const fresh = loadCompute(file);
-  const charged = round(Math.min(Math.max(0, Number(body.cu) || 0), Math.max(0, fresh.balance + fresh.creditLimit)));
-  fresh.balance = round(fresh.balance - charged);
+  const reported = Math.max(0, Number(body.cu) || 0);
+  const charged = inPoints ? round(Math.min(reported, spendable)) : round(Math.min(reported, Math.max(0, fresh.balance + fresh.creditLimit)));
+  if (!inPoints) fresh.balance = round(fresh.balance - charged);
   if (charged > 0) {
-    fresh.entries.push({ at: (opts.now ?? Date.now)(), kind: "spent", cu: charged, who: peer.name, note: "borrowed compute" });
+    fresh.entries.push({
+      at: (opts.now ?? Date.now)(), kind: "spent", cu: charged, who: peer.name,
+      note: inPoints ? "borrowed compute (paid in points)" : "borrowed compute",
+      ...(inPoints ? { paid: "points" as const } : {}),
+    });
   }
   saveCompute(fresh, file);
-  return { result: body.result, cu: charged, remainingCu: Number(body.remainingCu) || 0, mops: Number(body.mops) || 0, peer: peer.name };
+  return {
+    result: body.result, cu: charged, remainingCu: Number(body.remainingCu) || 0, mops: Number(body.mops) || 0, peer: peer.name,
+    ...(typeof body.pointsPerCu === "number" ? { pointsPerCu: body.pointsPerCu } : {}),
+  };
 }
 
 // ── For the UI ─────────────────────────────────────────────────────────

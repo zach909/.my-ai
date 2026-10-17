@@ -1,0 +1,15 @@
+{
+  "_readme": "The ONLY third-party things this repo may contain. Owner edits only: scripts/check-no-third-party.mjs, this file, .githooks/, .claude/hooks/ and the no-third-party workflow are protected by CODEOWNERS and by a Claude Code hook. Adding a line here is how the owner says a fresh yes. See AGENTS.md.",
+  "npmPackages": ["typescript", "@types/node", "vitest"],
+  "npmLockfiles": ["package-lock.json"],
+  "gradlePlugins": ["com.android.application", "org.jetbrains.kotlin.android"],
+  "gradleDependencies": ["androidx.core:core-ktx"],
+  "kotlinImportPrefixes": ["android.", "androidx.core.", "java.", "javax.", "kotlin.", "org.json.", "ai.neuroclaw."],
+  "swiftImports": [
+    "Foundation", "UIKit", "SwiftUI", "WebKit", "Speech", "AVFoundation", "UserNotifications", "Photos", "Network",
+    "MediaPlayer", "LocalAuthentication", "Intents", "HomeKit", "HealthKit", "EventKit", "CoreTelephony", "CoreMotion",
+    "CoreLocation", "CoreBluetooth", "Contacts", "AppTrackingTransparency"
+  ],
+  "githubActions": ["actions/checkout", "actions/upload-artifact"],
+  "ownCopyrightHolders": ["zach909", "Zachary Quinn", "NeuroClaw"]
+}

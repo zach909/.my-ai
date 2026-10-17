@@ -1,0 +1,3 @@
+#!/bin/sh
+# Same check as pre-commit, so a commit made with --no-verify still cannot be pushed.
+exec node "$(git rev-parse --show-toplevel)/scripts/check-no-third-party.mjs"

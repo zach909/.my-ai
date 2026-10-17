@@ -23,6 +23,8 @@
  * spec calls out. No external APIs; embeddings and storage are local.
  */
 
+import { sharedBrainOpen } from "./user-context.js";
+
 export interface MemoryItem {
   id: string;
   content: string;
@@ -131,14 +133,19 @@ export class LongTermMemory {
     return this.items.size;
   }
   get(id: string): MemoryItem | undefined {
-    return this.items.get(id);
+    return sharedBrainOpen() ? this.items.get(id) : undefined;
   }
   all(): MemoryItem[] {
-    return Array.from(this.items.values());
+    return sharedBrainOpen() ? Array.from(this.items.values()) : [];
   }
 
   /** Store a memory (encodes it, enforces capacity). Returns the stored item. */
   remember(content: string, opts: RememberOptions = {}): MemoryItem {
+    // Someone the brain may not learn from (user-context.ts sharedBrainOpen): not
+    // stored. The caller still gets an item back, so nothing has to special-case it.
+    if (!sharedBrainOpen()) {
+      return { id: opts.id ?? "not-stored", content: "", sparse: { indices: [], values: [], norm: 0 }, timestamp: Date.now(), importance: 0, tags: [], accessCount: 0, lastAccess: 0 };
+    }
     const id = opts.id ?? `mem-${Date.now()}-${++this.seq}`;
     const now = Date.now();
     // Built, used, and dropped: the dense vector is a step on the way to the
@@ -174,6 +181,7 @@ export class LongTermMemory {
    * usefully recalled, the more it is protected.
    */
   retrieve(query: string, opts: RetrieveOptions = {}): MemoryHit[] {
+    if (!sharedBrainOpen()) return []; // nothing of the owner's, or of anyone else's, for someone who may not see it
     const topK = opts.topK ?? 5;
     const iw = opts.importanceWeight ?? 0.3;
     const rw = opts.recencyWeight ?? 0.15;
@@ -224,6 +232,7 @@ export class LongTermMemory {
    * exact search is about precision, not fuzzy relevance.
    */
   findExact(query: string): MemoryItem[] {
+    if (!sharedBrainOpen()) return [];
     const q = (query || "").toLowerCase().trim();
     if (!q) return [];
     return this.all()
