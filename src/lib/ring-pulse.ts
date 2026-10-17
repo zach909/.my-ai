@@ -12,19 +12,33 @@
  * mounted ring "a message just went out", and `settleRing()` says "the reply
  * landed, wind back down". A ring mounted *after* a pulse simply misses it —
  * correct behaviour for a live reaction effect, and the reason nothing here
- * needs to cache the last event.
+ * needs to cache the last event. The one exception is `THINKING`: whether the
+ * assistant is mid-reply is sustained state rather than a moment, so the bus
+ * caches it (and replays it on subscribe) for rings mounted after the send.
  */
 
-export type RingPulseEvent = 'pulse' | 'settle'
+export type RingPulseEvent = 'pulse' | 'settle' | 'thinking' | 'idle'
 
 type Listener = (event: RingPulseEvent) => void
 
 const listeners = new Set<Listener>()
 
-/** Subscribe to ring energy events; returns the unsubscribe function. */
+/** Whether the assistant is currently composing a reply (drives the fast spin). */
+let thinkingActive = false
+
+/** Subscribe to ring energy events; returns the unsubscribe function.
+ *  On subscribe, a currently-active `thinking` state is replayed so a ring
+ *  mounted mid-conversation still knows it should be spinning flat-out. */
 export function onRingEvent(listener: Listener): () => void {
   listeners.add(listener)
+  if (thinkingActive) listener('thinking')
   return () => { listeners.delete(listener) }
+}
+
+/** The assistant started composing: hold the ring at infinite speed. */
+export function setRingThinking(active: boolean): void {
+  thinkingActive = active
+  for (const listener of listeners) listener(active ? 'thinking' : 'idle')
 }
 
 /** A message was sent: the ring should surge into a faster spin. */
