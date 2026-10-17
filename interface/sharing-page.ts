@@ -38,6 +38,7 @@ export const SHARING_PAGE = `<!DOCTYPE html>
 <body class="nc-soft">
 <main>
   <h1>Sharing</h1>
+  <div class="nc-dim" style="margin:0 8px;font-size:14px">Earn points for working together, set what your compute is worth, and run projects: <a href="/commons" style="color:#ffc4b4">Commons</a></div>
   <div id="msg" class="nc-dim"></div>
 
   <section class="nc-glass">

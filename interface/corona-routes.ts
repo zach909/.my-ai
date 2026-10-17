@@ -35,19 +35,17 @@ import {
   ComputeError,
   addPeer,
   benchmarkMops,
-  borrow,
   computeSummary,
   grantLease,
-  leaseStatus,
   machineMops,
   removePeer,
   revokeLease,
-  runLeasedJob,
   setCreditLimit,
   setLending,
   JOB_KINDS,
   type JobRunner,
 } from "../models && skills/core/compute-share.js";
+import { borrowPriced, leaseOffer, runPricedJob } from "../models && skills/core/compute-market.js";
 import {
   DONOR_SOURCES,
   DonorError,
@@ -210,7 +208,7 @@ async function handleCompute(ctx: RouteContext): Promise<boolean> {
   if (pathname === "/api/compute/borrow" && method === "POST") {
     const body = await ctx.parseBody(req, 32 * 1024);
     if (!isObj(body)) throw new ComputeError("Expected a JSON object.");
-    ctx.sendJson(res, await borrow(String(body.peerId ?? ""), String(body.prompt ?? "")));
+    ctx.sendJson(res, await borrowPriced(String(body.peerId ?? ""), String(body.prompt ?? "")));
     return true;
   }
   return false;
@@ -273,7 +271,7 @@ async function handleApi(ctx: RouteContext): Promise<boolean> {
 
   // A borrower's lease token reaches the compute routes and nothing else.
   if (sub === "/compute/lease" && method === "GET") {
-    const st = leaseStatus(token);
+    const st = leaseOffer(token);
     if (!st) return unauthorized(ctx);
     ctx.sendJson(res, st);
     return true;
@@ -285,7 +283,12 @@ async function handleApi(ctx: RouteContext): Promise<boolean> {
     if (!(JOB_KINDS as readonly string[]).includes(String(body.job))) {
       throw new ComputeError(`Unknown job. This computer runs: ${JOB_KINDS.join(", ")}.`);
     }
-    const result = await runLeasedJob(token, { job: "chat", prompt: String(body.prompt ?? ""), maxCu: typeof body.maxCu === "number" ? body.maxCu : undefined }, runner);
+    const result = await runPricedJob(token, {
+      job: "chat",
+      prompt: String(body.prompt ?? ""),
+      maxCu: typeof body.maxCu === "number" ? body.maxCu : undefined,
+      maxPointsPerCu: typeof body.maxPointsPerCu === "number" ? body.maxPointsPerCu : undefined,
+    }, runner);
     ctx.sendJson(res, result);
     return true;
   }
@@ -341,7 +344,7 @@ async function handleApi(ctx: RouteContext): Promise<boolean> {
     if (!need("compute.borrow")) return true;
     const body = await ctx.parseBody(req, 32 * 1024);
     if (!isObj(body)) throw new ComputeError("Expected a JSON object.");
-    ctx.sendJson(res, await borrow(String(body.peerId ?? ""), String(body.prompt ?? "")));
+    ctx.sendJson(res, await borrowPriced(String(body.peerId ?? ""), String(body.prompt ?? "")));
     return true;
   }
   if (sub === "/donor" && method === "GET") {

@@ -38,6 +38,7 @@
 ## Self-Improvement & Legal
 - [[Self-Improvement|Self-Improvement]] - Autonomous training loop, peer sync, diagnostics
 - [[Privacy-Policy|Privacy-Policy]] - What data leaves your machine
+- [[Commons|Commons]] - Points, projects, the hive, trading compute
 - [[Terms|Terms]] - Terms of use
 - [[Privacy|Privacy]] - Technical encryption/security details
 
