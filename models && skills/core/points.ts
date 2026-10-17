@@ -43,9 +43,10 @@
 
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./user-context.js";
+
 
 export class PointsError extends Error {
   constructor(
@@ -106,7 +107,7 @@ export interface PointsState {
 export function pointsFile(): string {
   return process.env.CORONA_POINTS_FILE
     ? path.resolve(process.env.CORONA_POINTS_FILE)
-    : path.join(homedir(), ".neuroclaw", "points.json");
+    : dataFile("points.json");
 }
 
 const round = (n: number): number => Math.round(n * 1e6) / 1e6;

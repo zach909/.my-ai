@@ -321,6 +321,10 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     bg.checked = p.background === true;
     bg.addEventListener('change', function () { act(api('POST', base() + '/background', { on: bg.checked })).then(loadDetail); });
     D.appendChild(el('label', { class: 'chk' }, [bg, el('span', { text: 'The AI works on this in the background' })]));
+    var sh = el('input', { type: 'checkbox' });
+    sh.checked = p.published === true;
+    sh.addEventListener('change', function () { act(api('POST', base() + '/share', { on: sh.checked })).then(loadDetail); });
+    D.appendChild(el('label', { class: 'chk' }, [sh, el('span', { text: 'Share in the league (everyone on this server can read and join it)' })]));
     D.appendChild(el('p', { class: 'nc-dim', text: done + ' of ' + p.tasks.length + ' tasks done · ' + fix(p.paidOut) + ' of ' + fix(p.pot) + ' points paid out · the pot is final' }));
 
     p.folders.forEach(function (f) {
@@ -348,7 +352,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       say('Asking the agent...');
       act(api('POST', base() + '/organize', {})).then(function (r) { say('Filed ' + r.moved + ' of ' + r.asked + '.'); loadDetail(); });
     }));
-    tools.push(btn('Publish to the wiki', function () {
+    tools.push(btn('Share and push to GitHub', function () {
       act(api('POST', base() + '/publish', {})).then(function (r) { say(r.sync && r.sync.pushed ? 'Pushed ' + r.name + '. Everyone who pulls gets it.' : 'Saved on this device only: ' + ((r.sync && r.sync.reason) || 'not pushed') + '.'); });
     }));
     D.appendChild(el('div', { class: 'row' }, tools));

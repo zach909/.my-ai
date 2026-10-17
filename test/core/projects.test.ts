@@ -10,7 +10,7 @@ import {
   createProject, addTask, claimTask, releaseTask, submitTask, reviewTask, getProject, loadProjects, summarize, rewardOf,
   planFromGoal, parsePlan, fallbackPlan, createProjectFromGoal, organizeTasks, parseFolderReply,
   renderProjectPage, parseProjectPage, importProject, cleanProject, selfWorker, resolveWorker,
-  ProjectError, MAX_ATTEMPTS, MAX_CLAIMS, MAX_POT, UNSORTED, taskPoolOf, bonusPoolOf, projectWikiName,
+  setPublished, ProjectError, MAX_ATTEMPTS, MAX_CLAIMS, MAX_POT, UNSORTED, taskPoolOf, bonusPoolOf, projectWikiName,
   type ProjectCtx, type Worker, type Think,
 } from '../../models && skills/core/projects.js'
 import { addMember, loadPoints, SELF_ID, REFERRAL_BONUS } from '../../models && skills/core/points.js'
@@ -194,9 +194,18 @@ describe('doing the work', () => {
 })
 
 describe('the wiki', () => {
-  it('mirrors every change to a page under projects/<id>', () => {
+  it('a project is PRIVATE until it is shared: no wiki page exists for it, because the wiki is public', () => {
+    const p = createProject({ title: 'Secret', pot: 10, tasks: [{ title: 'a' }] }, ctx)
+    expect(existsSync(path.join(dir, 'store', 'wiki', 'projects', `${p.id}.md`))).toBe(false)
+    finish(p.id, 't1', agent('a1'), agent('a2'))
+    expect(existsSync(path.join(dir, 'store', 'wiki', 'projects', `${p.id}.md`))).toBe(false)
+    expect(getProject(p.id, ctx)!.published).toBe(false)
+  })
+
+  it('sharing writes the page, keeps it current, and making it private takes it down again', () => {
     const p = createProject({ title: 'Map the Moon', pot: 100, tasks: [{ title: 'Survey', folder: 'Field' }] }, ctx)
     const file = path.join(dir, 'store', 'wiki', 'projects', `${p.id}.md`)
+    setPublished(p.id, true, ctx)
     expect(existsSync(file)).toBe(true)
     const text = readFileSync(file, 'utf8')
     expect(text).toContain('# Map the Moon')
@@ -205,10 +214,13 @@ describe('the wiki', () => {
     finish(p.id, 't1', agent('a1'), agent('a2'))
     expect(readFileSync(file, 'utf8')).toContain('- [x] **t1** Survey')
     expect(projectWikiName(p.id)).toBe(`projects/${p.id}`)
+    setPublished(p.id, false, ctx)
+    expect(existsSync(file)).toBe(false)
   })
 
   it('round-trips through the page, so another install can import it', () => {
     const p = createProject({ title: 'Round Trip', goal: 'Do it', pot: 100, tasks: [{ title: 'a', folder: 'F', detail: 'with -- dashes --> and <b>tags</b>' }] }, ctx)
+    setPublished(p.id, true, ctx)
     finish(p.id, 't1', selfWorker(ctx.pointsFile), agent('a2'))
     const page = renderProjectPage(getProject(p.id, ctx)!)
     expect(page.match(/-->/g)).toHaveLength(1) // only the real end of the data comment
@@ -220,6 +232,7 @@ describe('the wiki', () => {
 
   it('imports another install\'s project, pays nobody, and keeps the newer copy', () => {
     const p = createProject({ title: 'Shared', pot: 100, tasks: [{ title: 'a' }, { title: 'b' }] }, { ...ctx, now: () => 1000 })
+    setPublished(p.id, true, { ...ctx, now: () => 1000 })
     finish(p.id, 't1', agent('a1'), agent('a2'))
     const other: ProjectCtx = { file: path.join(dir, 'other-projects.json'), pointsFile: path.join(dir, 'other-points.json') }
     const imported = importProject(projectWikiName(p.id), other)
@@ -246,6 +259,7 @@ describe('the wiki', () => {
 
   it('imports a project with workers this device has never met, and pays them from the pot when their work is accepted here', () => {
     const p = createProject({ title: 'Foreign', pot: 100, tasks: [{ title: 'a' }] }, ctx)
+    setPublished(p.id, true, ctx)
     claimTask(p.id, 't1', agent('far-away'), ctx)
     submitTask(p.id, 't1', agent('far-away'), 'done', ctx)
     const other: ProjectCtx = { file: path.join(dir, 'o.json'), pointsFile: path.join(dir, 'o-points.json') }

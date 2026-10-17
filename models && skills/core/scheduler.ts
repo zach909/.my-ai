@@ -35,9 +35,10 @@
 
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./user-context.js";
+
 
 export class ScheduleError extends Error {
   constructor(
@@ -94,7 +95,7 @@ export interface ScheduleCtx {
 }
 
 export function schedulesFile(): string {
-  return process.env.CORONA_SCHEDULE_FILE ? path.resolve(process.env.CORONA_SCHEDULE_FILE) : path.join(homedir(), ".neuroclaw", "schedules.json");
+  return process.env.CORONA_SCHEDULE_FILE ? path.resolve(process.env.CORONA_SCHEDULE_FILE) : dataFile("schedules.json");
 }
 const fileOf = (c: ScheduleCtx): string => c.file ?? schedulesFile();
 const nowOf = (c: ScheduleCtx): number => (c.now ?? Date.now)();
@@ -398,12 +399,13 @@ export async function schedulerTick(deps: SchedulerDeps, ctx: ScheduleCtx = {}):
 export const DEFAULT_SCHEDULER_TICK_MS = 30_000;
 
 /** Starts the clock. Returns a function that stops it. */
-export function startScheduler(opts: { deps: () => Promise<SchedulerDeps>; tickMs?: number; ctx?: ScheduleCtx }): () => void {
+export function startScheduler(opts: { deps: () => Promise<SchedulerDeps>; tickMs?: number; ctx?: ScheduleCtx; each?: (run: () => Promise<void>) => Promise<void> }): () => void {
   let busy = false;
   const timer = setInterval(() => {
     if (busy) return;
     busy = true;
-    void opts.deps().then(d => schedulerTick(d, opts.ctx)).catch(() => undefined).finally(() => { busy = false; });
+    const each = opts.each ?? (run => run());
+    void each(async () => { await opts.deps().then(d => schedulerTick(d, opts.ctx)).catch(() => undefined); }).catch(() => undefined).finally(() => { busy = false; });
   }, opts.tickMs ?? DEFAULT_SCHEDULER_TICK_MS);
   timer.unref?.();
   return () => clearInterval(timer);

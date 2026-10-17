@@ -49,9 +49,10 @@
 
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./user-context.js";
+
 import { chainSteps, type ChainOptions, type ChainReport } from "./auto-continue.js";
 import { loadSafety } from "./tool-safety.js";
 
@@ -122,7 +123,7 @@ export interface Expert {
 }
 
 export function expertsFile(): string {
-  return process.env.CORONA_EXPERTS_FILE ? path.resolve(process.env.CORONA_EXPERTS_FILE) : path.join(homedir(), ".neuroclaw", "experts.json");
+  return process.env.CORONA_EXPERTS_FILE ? path.resolve(process.env.CORONA_EXPERTS_FILE) : dataFile("experts.json");
 }
 
 export interface ExpertCtx {
@@ -425,12 +426,14 @@ export async function expertsTick(deps: ExpertDeps, ctx: ExpertCtx = {}): Promis
 export const DEFAULT_TICK_MS = 60_000;
 
 /** Starts the loop that keeps every enabled expert running, by itself. Returns a function that stops it. */
-export function startExperts(opts: { deps: () => Promise<ExpertDeps>; tickMs?: number; ctx?: ExpertCtx }): () => void {
+export function startExperts(opts: { deps: () => Promise<ExpertDeps>; tickMs?: number; ctx?: ExpertCtx; each?: (run: () => Promise<void>) => Promise<void> }): () => void {
   let busy = false;
   const pass = (): void => {
     if (busy) return;
     busy = true;
-    void opts.deps().then(d => expertsTick(d, opts.ctx)).catch(() => undefined).finally(() => { busy = false; });
+    // `each` runs the pass once per person, so each person's experts stay in their own folder.
+    const each = opts.each ?? (run => run());
+    void each(async () => { await opts.deps().then(d => expertsTick(d, opts.ctx)).catch(() => undefined); }).catch(() => undefined).finally(() => { busy = false; });
   };
   const timer = setInterval(pass, opts.tickMs ?? DEFAULT_TICK_MS);
   timer.unref?.();

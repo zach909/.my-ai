@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { createProject, setBackground, claimTask, selfWorker, importProject, getProject, loadProjects, listWikiProjects, renderProjectPage, type ProjectCtx } from '../../models && skills/core/projects.js'
+import { createProject, setPublished, setBackground, claimTask, selfWorker, importProject, getProject, loadProjects, listWikiProjects, renderProjectPage, type ProjectCtx } from '../../models && skills/core/projects.js'
 import { backgroundTick, nextBackgroundProject, startBackgroundHives } from '../../models && skills/core/hive-background.js'
 import { getHive, type HiveDeps } from '../../models && skills/core/project-hive.js'
 import { publishWikiPage } from '../../models && skills/core/wiki-store.js'
@@ -108,6 +108,7 @@ describe('a pass', () => {
 describe('the league', () => {
   it('lists every project published to the wiki, and whether this device already has it', () => {
     const mine = quick('Mine')
+    setPublished(mine.id, true, pctx)
     // Another install's project arrives as a wiki page.
     const theirs = { ...getProject(mine.id, pctx)!, id: 'theirs', title: 'Theirs', background: true }
     publishWikiPage('projects/theirs', 'Theirs', renderProjectPage(theirs))
@@ -123,6 +124,7 @@ describe('the league', () => {
 
   it('a project joined from the league starts with the AI OFF, so nobody else\'s project uses this brain unasked', () => {
     const mine = quick('Shared')
+    setPublished(mine.id, true, pctx)
     const page = renderProjectPage(getProject(mine.id, pctx)!)
     expect(page).toContain('"background":true')
     const other: ProjectCtx = { file: path.join(dir, 'other.json'), pointsFile: path.join(dir, 'other-points.json') }

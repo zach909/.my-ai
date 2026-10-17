@@ -24,6 +24,7 @@
  *   POST /api/commons/projects/:id/tasks       {title, detail?, weight?, folder?}
  *   POST /api/commons/projects/:id/organize    the agent files unsorted tasks
  *   POST /api/commons/projects/:id/publish     push the wiki page
+ *   POST /api/commons/projects/:id/share       {on}              share it in the league (wiki), or make it private again
  *   POST /api/commons/projects/:id/background  {on}              the AI works on it by itself
  *   GET  /api/commons/league                   the board, and every project in the wiki
  *   GET  /api/commons/market                   standing orders
@@ -67,6 +68,7 @@ import {
   rewardOf,
   selfWorker,
   setBackground,
+  setPublished,
   submitTask,
   summarize,
   type Think,
@@ -356,6 +358,10 @@ async function route(ctx: CommonsContext): Promise<boolean> {
       weight: b.weight === undefined ? undefined : Number(b.weight),
       folder: typeof b.folder === "string" ? b.folder : undefined,
     }), 201);
+  }
+  if (rest === "share" && method === "POST") {
+    const b = await bodyOf(1024);
+    return json(summarize(setPublished(id, b.on === true)));
   }
   if (rest === "background" && method === "POST") {
     const b = await bodyOf(1024);

@@ -36,9 +36,10 @@
 
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./user-context.js";
+
 import { MAX_RATE } from "./points.js";
 
 export class MarketError extends Error {
@@ -75,7 +76,7 @@ export interface MarketCtx {
 }
 
 export function marketFile(): string {
-  return process.env.CORONA_MARKET_FILE ? path.resolve(process.env.CORONA_MARKET_FILE) : path.join(homedir(), ".neuroclaw", "market.json");
+  return process.env.CORONA_MARKET_FILE ? path.resolve(process.env.CORONA_MARKET_FILE) : dataFile("market.json");
 }
 
 const round = (n: number): number => Math.round(n * 1e6) / 1e6;

@@ -1,6 +1,6 @@
 # Commons
 
-Share computing, earn points for working together, and finish big projects as a team of people and AIs. Open it at `/commons` (linked from `/sharing`).
+Share computing, earn points for working together, and finish big projects as a team of people and AIs. Open it at `/commons` (linked from `/sharing`). Accounts, safety, schedules and experts are at the end.
 
 ## Points
 
@@ -75,3 +75,39 @@ The agent files your chats, wiki pages and projects into **folders inside folder
 ## Chats
 
 Chats are still grouped instantly by the words in them, as a fallback that needs no agent. The agent then names each group, and files chats into the folders above.
+
+## Experts
+
+An expert is its own standing AI for **one job** (email, computer maintenance). It starts by itself when you make it, runs on a timer, keeps its own notes, and resumes after a restart. It is **not part of the hive and does not talk to other experts**: email has no reason to know what maintenance is doing, so there is no channel between them (a test checks that the module imports nothing from the hive).
+
+A small team works together inside one expert: a **Lead** decides the one most useful thing to do now, **Specialists** add what is missing, and a **Checker** must clearly say APPROVE before anything is done. Hold, silence or a muddled reply means nothing happens. An approved plan is carried out through the agent's normal path, with the same permission gates as typing it yourself. Set an expert to "only record" and it writes plans but never acts.
+
+Limits: an expert is kept to its job by its instructions and the normal Access switches, not by a separate list of tools only it may touch. `NEUROCLAW_EXPERTS=0` turns them off.
+
+## Safety: risky tools ask first
+
+Tools that run commands, change files, send messages, or look at you (terminal, file system, email, messaging, calls, camera, microphone, screen, passkeys and more) are **held for approval**. The call is not run; the agent says it is waiting, and the request appears under **Safety** on `/commons`. **Approve** runs that one call once. **Deny** throws it away. Each tool has an "Ask first" switch; the list says why each one asks.
+
+**Complete access** turns the asking off and grants every capability. It takes a typed phrase to switch on and one click to switch off again, which puts the questions and the default access back. It still never lets the agent control the window you are using.
+
+**Deciding whether to keep going:** after a step, an expert or the background hive is asked CONTINUE or STOP. Only a clear CONTINUE continues; there is a hard cap on steps in a row (up to 10) and a switch to turn it off. Every continued step still has its normal checks and approvals.
+
+Held calls are decided before the tool runs, from how strongly the message points at it, so an occasional question about a tool the agent would not have used still comes up. That errs on the safe side. Everything the agent only *thinks* (hive work and review, folder filing, planning) uses a text-only path that cannot reach a tool, so text from a project joined from the league cannot trigger one.
+
+## Schedule
+
+Have the agent do something later or on repeat: "in 30 minutes", "every 2 hours", "daily at 9am", "tomorrow at 14:30", "at 2026-10-17 09:00". The action is a message to the agent, `hive <project>`, `organize`, or `expert <id>`. From any chat: `schedule daily at 9am: check my email`, `schedule list`, `schedule cancel <id>`.
+
+A scheduled message goes to the agent like a typed one, so a risky tool still waits for your approval. Nothing runs more often than every 5 minutes; due items run one at a time; a run missed while the server was off happens once; after 5 failures in a row a schedule pauses itself; and a scheduled action cannot itself schedule things.
+
+## Accounts
+
+**One admin sets the server up and anyone can use it, but nobody sees anyone else's stuff.** The first account (made at `/accounts`, from the machine itself or with the setup code printed on the console) is the admin. After that, anyone can sign up (the admin can close signup). Passwords are PBKDF2 hashes; repeated wrong passwords lock a name for a minute; a wrong name and a wrong password get the same answer; turning an account off ends its sessions at once.
+
+**What is separate per person:** chats, folders, projects (private until you share them), points, hives, experts, schedules, market orders and tasks, each in their own folder. The admin uses the original data, so nothing that already existed moves.
+
+**What a regular user may do** is an explicit allowlist, closed by default: chat, their own chat history, the Commons, and their own account. The terminal, files, app launching, compute, tools, settings, the store and everyone else's account are the admin's. In chat they may use only plugins that touch neither the owner's computer nor the owner's data (research, tools, coding, tasks, schedule and similar).
+
+**The brain is shared.** By default it does **not** learn from or remember what other people say, and they cannot read what the owner put in, so one person's chat cannot surface in another's answer. The admin can turn learning on. What the brain has already learned stays shared either way.
+
+Projects were being written to the public wiki folder on every change; they are now private until you tick **Share in the league**.

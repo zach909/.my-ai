@@ -49,6 +49,8 @@ import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { ACCESS_SWITCHES, CAPABILITIES, type AccessManager } from "./access-manager.js";
 import { defaultSettings, saveSettings } from "./access-settings.js";
+import { USER_PLUGINS } from "./accounts.js";
+import { isOwnerOrAdmin } from "./user-context.js";
 
 export interface RiskyTool {
   /** The plugin id the registry uses. */
@@ -227,6 +229,14 @@ export class ToolGate implements ToolGateLike {
    * tool (low score) is not held: it would not have been this tool's to do.
    */
   check(pluginId: string, input: string, score: number): GateDecision {
+    // Plugins act as the machine's owner. Anyone who is not the admin may use only
+    // the ones that touch neither the owner's computer nor the owner's data
+    // (accounts.ts USER_PLUGINS); the rest are not even offered an approval.
+    // Weak matches are let through only so ordinary chat is not refused for
+    // sounding a little like a tool.
+    if (!isOwnerOrAdmin() && score >= HOLD_SCORE && !USER_PLUGINS.includes(normalizeToolId(pluginId))) {
+      return { allow: false, approvalId: "", message: `[Not allowed] ${RISK_BY_ID.get(normalizeToolId(pluginId))?.label ?? pluginId} is for the admin only.` };
+    }
     const s = this.settings();
     if (!needsApproval(pluginId, s) || score < HOLD_SCORE) return { allow: true };
     this.sweep();

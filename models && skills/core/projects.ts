@@ -46,11 +46,12 @@
  */
 
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./user-context.js";
+
 import { SELF_ID, award, ensureMember, loadPoints, pointsFile } from "./points.js";
-import { listWikiPages, publishWikiPage, publishWikiPageAndSync, readWikiPage, WikiNameError } from "./wiki-store.js";
+import { deleteWikiPage, listWikiPages, publishWikiPage, publishWikiPageAndSync, readWikiPage, WikiNameError } from "./wiki-store.js";
 import type { StoreSyncResult } from "./store-sync.js";
 
 export class ProjectError extends Error {
@@ -126,6 +127,12 @@ export interface Project {
    * another install's project never starts using this device's brain unasked.
    */
   background: boolean;
+  /**
+   * Whether the project is shared: written to the wiki page everyone on this
+   * server can read, and so listed in the league. A project is PRIVATE until its
+   * owner shares it, because the wiki is public by design.
+   */
+  published: boolean;
 }
 
 export interface ProjectCtx {
@@ -137,7 +144,7 @@ export interface ProjectCtx {
 export function projectsFile(): string {
   return process.env.CORONA_PROJECTS_FILE
     ? path.resolve(process.env.CORONA_PROJECTS_FILE)
-    : path.join(homedir(), ".neuroclaw", "projects.json");
+    : dataFile("projects.json");
 }
 
 const round = (n: number): number => Math.round(n * 1e6) / 1e6;
@@ -228,6 +235,7 @@ export function cleanProject(raw: unknown): Project | null {
     bonusPaid,
     nextTask,
     background: p.background === true,
+    published: p.published === true,
   };
 }
 
@@ -347,6 +355,7 @@ export function createProject(input: CreateProjectInput, ctx: ProjectCtx = {}): 
     id, title: input.title.trim(), goal: (input.goal ?? "").trim(), pot: round(input.pot), status: "open",
     createdAt: now, updatedAt: now, folders: [], tasks: [], paidOut: 0, bonusPaid: false, nextTask: 1,
     background: input.background !== false,
+    published: false,
   };
   for (const f of input.folders ?? []) useFolder(p, f);
   for (const spec of input.tasks ?? []) newTask(p, spec);
@@ -551,6 +560,7 @@ export interface ProjectSummary {
   done: number;
   folders: string[];
   background: boolean;
+  published: boolean;
 }
 
 export function summarize(p: Project): ProjectSummary {
@@ -558,6 +568,7 @@ export function summarize(p: Project): ProjectSummary {
     id: p.id, title: p.title, goal: p.goal, pot: p.pot, paidOut: p.paidOut, remaining: round(Math.max(0, p.pot - p.paidOut)),
     status: p.status, tasks: p.tasks.length, done: p.tasks.filter(t => t.status === "done").length, folders: p.folders,
     background: p.background,
+    published: p.published,
   };
 }
 
@@ -763,8 +774,13 @@ export function parseProjectPage(markdown: string): Project | null {
   }
 }
 
-/** Keep the local copy of the wiki page current. Local only: nothing is committed or pushed. */
+/**
+ * Keep the wiki page current, for a project that has been shared. A private
+ * project has no page at all: the wiki is public, so writing one would hand the
+ * project to everyone. Local only: nothing is committed or pushed.
+ */
 function writeProjectPage(p: Project): void {
+  if (!p.published) return;
   try {
     publishWikiPage(projectWikiName(p.id), p.title, renderProjectPage(p));
   } catch (err) {
@@ -773,8 +789,30 @@ function writeProjectPage(p: Project): void {
   }
 }
 
-/** Push the project's wiki page so everyone who pulls gets it. */
+/**
+ * Share a project (or stop sharing it): the wiki page appears for everyone on
+ * this server, and the league lists it. Not a push: that is publishProject().
+ */
+export function setPublished(projectId: string, on: boolean, ctx: ProjectCtx = {}): Project {
+  const file = fileOf(ctx);
+  const projects = loadProjects(file);
+  const p = must(projects, projectId);
+  p.published = on === true;
+  saveProjects(projects, file);
+  if (p.published) writeProjectPage(p);
+  else {
+    try {
+      deleteWikiPage(projectWikiName(p.id));
+    } catch {
+      // No page to take down, or it is a curated one that was never ours.
+    }
+  }
+  return p;
+}
+
+/** Push the project's wiki page so everyone who pulls gets it. This also shares it. */
 export async function publishProject(projectId: string, ctx: ProjectCtx = {}): Promise<{ name: string; sync: StoreSyncResult }> {
+  if (!must(loadProjects(fileOf(ctx)), projectId).published) setPublished(projectId, true, ctx);
   const p = must(loadProjects(fileOf(ctx)), projectId);
   const { sync } = await publishWikiPageAndSync(projectWikiName(p.id), p.title, renderProjectPage(p));
   return { name: projectWikiName(p.id), sync };
@@ -817,6 +855,7 @@ export function importProject(pageName: string, ctx: ProjectCtx = {}): { project
   if (!page) throw new ProjectError("No such wiki page.", 404);
   const incoming = parseProjectPage(page.content);
   if (!incoming) throw new ProjectError("That page is not a project, or its data is damaged.");
+  incoming.published = false; // joined, not yet shared by this person
   incoming.background = false; // somebody else's project does not start using this brain until its owner here says so
   const file = fileOf(ctx);
   const projects = loadProjects(file);

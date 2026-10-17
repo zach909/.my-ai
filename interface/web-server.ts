@@ -38,6 +38,10 @@ import { COMMONS_PAGE } from './commons-page.js';
 import { handleCommonsRoutes, withTimeout, runFolderSweep, expertDepsFor, schedulerDepsFor } from './commons-routes.js';
 import { startScheduler } from '../models && skills/core/scheduler.js';
 import { handleSafetyRoutes, isSafetyRoute } from './safety-routes.js';
+import { handleAccountsRoutes, isAccountsRoute, isAccountsPublicRoute } from './accounts-routes.js';
+import { ACCOUNTS_PAGE } from './accounts-page.js';
+import { getAccounts, resolveWho, userMayReach, USER_COOKIE } from '../models && skills/core/accounts.js';
+import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, setLearnPolicy, who } from '../models && skills/core/user-context.js';
 import { sharedToolGate } from '../models && skills/core/tool-safety.js';
 import { startExperts } from '../models && skills/core/experts.js';
 import { startBackgroundHives } from '../models && skills/core/hive-background.js';
@@ -1217,6 +1221,7 @@ async function serveDashboard(req: http.IncomingMessage, res: http.ServerRespons
  * allowed to change anything.
  */
 export function isAuthPublicRoute(pathname: string, method: string): boolean {
+  if (isAccountsPublicRoute(pathname, method)) return true;
   if (method === 'GET') return pathname === '/login' || pathname === '/api/auth/status';
   if (method === 'POST') {
     return pathname === '/api/auth/login' || pathname === '/api/auth/logout' || pathname === '/api/auth/password';
@@ -1355,7 +1360,27 @@ export class WebServer {
   // /app/chat-groups page's own login prompt), even over an already-trusted
   // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
   private readonly chatGroupsLock = new PasswordLock();
-  private readonly chatHistory = new ChatHistoryStore();
+  private readonly ownerChatHistory = new ChatHistoryStore();
+  private readonly userChatHistories = new Map<string, ChatHistoryStore>();
+
+  /**
+   * The chat history of whoever this request is for. The owner and the admin use
+   * the original store; everyone else has their own folder, so nobody can read
+   * anyone else's chats. Not logged in has none.
+   */
+  private get chatHistory(): ChatHistoryStore {
+    const w = who();
+    if (w.kind === 'anonymous') throw new Error('Not logged in.');
+    if (w.kind === 'user' && w.role !== 'admin') {
+      let store = this.userChatHistories.get(w.id);
+      if (!store) {
+        store = new ChatHistoryStore(path.join(dataDir(), 'chat-history'));
+        this.userChatHistories.set(w.id, store);
+      }
+      return store;
+    }
+    return this.ownerChatHistory;
+  }
 
   /**
    * Where a stopped run leaves what every neuron and every connection was.
@@ -1444,6 +1469,19 @@ export class WebServer {
         );
       }
     }
+    // The shared brain learns from, and remembers, other people only if the admin says so.
+    setLearnPolicy(() => getAccounts().learnFromUsers());
+    try {
+      if (!getAccounts().hasAdmin()) {
+        console.log(
+          `\nNo admin account yet. Make it at http://localhost:${port}/accounts (from this machine),\n` +
+          `or from another device with this setup code: ${this.remoteAccess.firstTimeSetupCode}\n` +
+          `After that, anyone can sign up and nobody can see anyone else's stuff.\n`
+        );
+      }
+    } catch {
+      // A damaged accounts file is reported when it is used; it must not stop the server starting.
+    }
     if (process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD) {
       await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
     }
@@ -1488,6 +1526,7 @@ export class WebServer {
     // in the background (hive-background.ts). NEUROCLAW_HIVE_BACKGROUND=0 turns it off.
     if (process.env.NEUROCLAW_HIVE_BACKGROUND !== '0' && !process.env.VITEST) {
       this.stopBackgroundHives = startBackgroundHives({
+        each: run => this.eachPerson(run),
         intervalMs: Number(process.env.NEUROCLAW_HIVE_INTERVAL_MS) || undefined,
         deps: async () => {
           let learner = null;
@@ -1506,6 +1545,7 @@ export class WebServer {
     // after a restart. NEUROCLAW_EXPERTS=0 turns them off.
     if (process.env.NEUROCLAW_EXPERTS !== '0' && !process.env.VITEST) {
       this.stopExperts = startExperts({
+        each: run => this.eachPerson(run),
         deps: async () => expertDepsFor(m => this.runner.generateText(m), m => this.runner.generate(m)),
       });
     }
@@ -1514,6 +1554,7 @@ export class WebServer {
     // NEUROCLAW_SCHEDULER=0 turns it off.
     if (process.env.NEUROCLAW_SCHEDULER !== '0' && !process.env.VITEST) {
       this.stopScheduler = startScheduler({
+        each: run => this.eachPerson(run),
         deps: async () => schedulerDepsFor({
           chat: m => this.runner.generateText(m),
           act: m => this.runner.generate(m),
@@ -1556,7 +1597,23 @@ export class WebServer {
    * With neither lock set -- a plain localhost run -- everything is allowed,
    * which is the behaviour this server has always had on loopback.
    */
-  private async isRemotelyAuthorized(req: http.IncomingMessage): Promise<boolean> {
+  /**
+   * Whether the request is logged in, by whoever it turned out to be (see
+   * identify()). Not logged in is the only way to fail.
+   */
+  private async isRemotelyAuthorized(_req: http.IncomingMessage): Promise<boolean> {
+    return who().kind !== 'anonymous';
+  }
+
+  /** Who this request is for: an account's login cookie, or else the older shared-password rules (accounts.ts resolveWho). */
+  private async identify(req: http.IncomingMessage) {
+    const legacyAllowed = await this.isLegacyAuthorized(req);
+    const legacyPasswordSet = this.remoteAccess.isSet() || this.remoteAccessLock.required;
+    return resolveWho(getAccounts(), readCookie(req.headers.cookie, USER_COOKIE), legacyAllowed, legacyPasswordSet);
+  }
+
+  /** The login that existed before accounts: the shared password, or an open server with none. */
+  private async isLegacyAuthorized(req: http.IncomingMessage): Promise<boolean> {
     if (this.remoteAccess.hasSession(readCookie(req.headers.cookie, SESSION_COOKIE))) return true;
     if (this.remoteAccessLock.required) {
       if (await this.isAuthorizedBasic(req, this.remoteAccessLock)) return true;
@@ -1841,6 +1898,23 @@ export class WebServer {
     const msg = err instanceof Error ? err.message : String(err);
     const status = statusForError(err);
     this.sendJson(res, { error: msg }, status);
+  }
+
+  /**
+   * Runs `run` once for the owner and once for each regular user, each as
+   * themselves (user-context.ts), so the experts, schedules and background hives
+   * of one person never touch another person's folder. The admin shares the
+   * owner's folder, so they are not run twice.
+   */
+  private async eachPerson(run: () => Promise<void>): Promise<void> {
+    await runAs(OWNER, run);
+    let users: Array<{ id: string; name: string }> = [];
+    try {
+      users = getAccounts().listUsers().filter(u => u.role === 'user' && u.disabledAt === null);
+    } catch {
+      users = [];
+    }
+    for (const u of users) await runAs({ kind: 'user', id: u.id, name: u.name, role: 'user' }, run);
   }
 
   private organizingFolders = false;
@@ -2321,7 +2395,23 @@ export class WebServer {
     }
   }
 
+  /**
+   * Works out who is asking, then handles the whole request AS them
+   * (user-context.ts), so every store the request touches picks that person's
+   * own data. Someone not logged in is handled as anonymous, which has no data
+   * folder at all.
+   */
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    let identity = null;
+    try {
+      identity = await this.identify(req);
+    } catch {
+      identity = null;
+    }
+    return runAs(identity ?? ANONYMOUS, () => this.handleRequestAs(req, res));
+  }
+
+  private async handleRequestAs(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     let parsedUrl: URL;
     try {
       // req.headers.host is a raw, attacker-controlled string with no
@@ -2391,6 +2481,37 @@ export class WebServer {
       return;
     }
 
+    // Default-deny for everyone who is not the admin: a regular user reaches only
+    // what accounts.ts lists. This server has a terminal, the file system and app
+    // launching behind it, and none of that is theirs.
+    {
+      const w = who();
+      if (!publicRoute && w.kind === 'user' && w.role === 'user' && !userMayReach(pathname, method)) {
+        this.setSecurityHeaders(res);
+        this.sendJson(res, { error: 'Only the admin can do that.' }, 403);
+        return;
+      }
+    }
+
+    // ── Accounts ────────────────────────────────────────────────────────
+    if (pathname === '/accounts' && method === 'GET') {
+      this.sendHtml(res, ACCOUNTS_PAGE);
+      return;
+    }
+    if (isAccountsRoute(pathname)) {
+      const handled = await handleAccountsRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        accounts: getAccounts(),
+        fromThisMachine: r => this.isFromThisMachine(r),
+        setupCodeOk: code => this.remoteAccess.checkSetupCode(code),
+        onSetup: () => { this.setupOnly = false; },
+        token: r => readCookie(r.headers.cookie, USER_COOKIE),
+      });
+      if (handled) return;
+    }
+
     // ── Logging in ──────────────────────────────────────────────────────
 
     // Data donor, lending and borrowing compute, and apps: one page, behind the normal gate.
@@ -2406,7 +2527,8 @@ export class WebServer {
     }
 
     if (pathname === '/login' && method === 'GET') {
-      this.sendHtml(res, this.loginPage());
+      // Once there is an admin, everyone logs in with an account.
+      this.sendHtml(res, getAccounts().hasAdmin() ? ACCOUNTS_PAGE : this.loginPage());
       return;
     }
 
@@ -3732,7 +3854,7 @@ export class WebServer {
           : undefined;
         // What the user told it about themselves and their goals, back in
         // memory after a restart before the first reply needs it.
-        await profileWithMemory().catch(() => undefined);
+        if (isOwnerOrAdmin()) await profileWithMemory().catch(() => undefined); // the owner's profile is the owner's
         const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
         let response: string;
         try {
@@ -3809,7 +3931,7 @@ export class WebServer {
         const bot = await getBot(await getNeuroclawSystem());
         // What the user told it about themselves and their goals, back in
         // memory after a restart before the first reply needs it.
-        await profileWithMemory().catch(() => undefined);
+        if (isOwnerOrAdmin()) await profileWithMemory().catch(() => undefined); // the owner's profile is the owner's
         const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
         let response: Awaited<ReturnType<typeof bot.processMessage>>;
         try {

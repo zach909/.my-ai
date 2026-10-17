@@ -117,7 +117,13 @@ describe('a project, end to end', () => {
     expect(d.json.project.folders).toEqual(['Backend', 'Frontend'])
     expect(d.json.project.tasks.map((t: any) => t.title)).toEqual(['Fetch data', 'Cache it', 'Draw the screen'])
     expect(d.json.rewards.t1).toBe(30)
+    // Private until shared: the wiki is public, so there is no page yet.
+    expect(existsSync(path.join(dir, 'store', 'wiki', 'projects', 'weather.md'))).toBe(false)
+    expect(d.json.project.published).toBe(false)
+    expect((await call('POST', '/api/commons/projects/weather/share', { on: true })).json.published).toBe(true)
     expect(existsSync(path.join(dir, 'store', 'wiki', 'projects', 'weather.md'))).toBe(true)
+    expect((await call('POST', '/api/commons/projects/weather/share', { on: false })).json.published).toBe(false)
+    expect(existsSync(path.join(dir, 'store', 'wiki', 'projects', 'weather.md'))).toBe(false)
   })
 
   it('without agentPlan it is just what you wrote', async () => {
@@ -263,6 +269,8 @@ describe('the market and the league', () => {
 
   it('the league lists wiki projects, and joining one imports it with the AI off', async () => {
     await call('POST', '/api/commons/projects', { title: 'Weather', goal: 'Build a weather app', pot: 10, agentPlan: true })
+    expect((await call('GET', '/api/commons/league')).json.projects.find((p: any) => p.id === 'weather')).toBeUndefined() // private: not in the league
+    await call('POST', '/api/commons/projects/weather/share', { on: true })
     const league = (await call('GET', '/api/commons/league')).json
     expect(league.board.length).toBeGreaterThanOrEqual(1)
     expect(league.projects.find((p: any) => p.id === 'weather')).toMatchObject({ page: 'projects/weather', local: true, background: true })

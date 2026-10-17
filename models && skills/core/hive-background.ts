@@ -31,12 +31,14 @@ export interface BackgroundOptions {
   hivesFile?: string;
   /** Whether the AI may choose to do more rounds straight away. Settings by default. */
   autoContinue?: ChainOptions;
+  /** Runs a pass once per person, so each person's projects stay in their own folder. */
+  each?: (run: () => Promise<void>) => Promise<void>;
 }
 
 /** Which project the AI should work on next, or null if there is nothing worth doing. */
 export function nextBackgroundProject(opts: Pick<BackgroundOptions, "project" | "hivesFile">): string | null {
   const candidates = loadProjects(opts.project?.file)
-    .filter(p => p.background && p.status === "open" && p.tasks.length > 0 && !isHiveRunning(p.id))
+    .filter(p => p.background && p.status === "open" && p.tasks.length > 0 && !isHiveRunning(p.id, opts.hivesFile))
     .map(p => ({ p, hive: getHive(p.id, opts.hivesFile) }))
     // Nothing has changed since it last gave up, so there is no point trying again.
     .filter(({ p, hive }) => !(hive && hive.state === "stalled" && p.updatedAt <= hive.updatedAt));
@@ -78,7 +80,8 @@ export function startBackgroundHives(opts: BackgroundOptions): () => void {
   const timer = setInterval(() => {
     if (busy) return;
     busy = true;
-    void backgroundTick(opts).finally(() => { busy = false; });
+    const each = opts.each ?? (run => run());
+    void each(async () => { await backgroundTick(opts); }).catch(() => undefined).finally(() => { busy = false; });
   }, opts.intervalMs ?? DEFAULT_BACKGROUND_INTERVAL_MS);
   timer.unref?.();
   return () => clearInterval(timer);

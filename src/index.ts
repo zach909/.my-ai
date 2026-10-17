@@ -15,6 +15,7 @@ import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js"
 import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
 import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/core/shared-mesh-sync.js";
 import { sharedToolGate } from "../models && skills/core/tool-safety.js";
+import { sharedBrainOpen } from "../models && skills/core/user-context.js";
 import { MeshAgentLearner, type AgentLearner } from "../models && skills/core/hive-learning.js";
 import { DoorwayLock } from "../models && skills/core/doorway-lock.js";
 
@@ -940,6 +941,8 @@ export class NeuroclawSystem {
    */
   learnFrom(text: string, source: LearnSource): boolean {
     if (source === "web") return false;
+    // The brain is shared. It does not learn from someone the admin has not let it learn from.
+    if (!sharedBrainOpen()) return false;
     const trimmed = typeof text === "string" ? text.trim() : "";
     if (!trimmed) return false;
     const key = `${source}\u0000${trimmed}`;

@@ -29,9 +29,10 @@
 
 import { randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./user-context.js";
+
 
 export const ROOT = "root";
 export const MAX_PLACEMENTS = 3;
@@ -72,7 +73,7 @@ export interface TreeCtx {
 export function foldersFile(): string {
   return process.env.CORONA_FOLDERS_FILE
     ? path.resolve(process.env.CORONA_FOLDERS_FILE)
-    : path.join(homedir(), ".neuroclaw", "folders.json");
+    : dataFile("folders.json");
 }
 
 const fileOf = (c: TreeCtx): string => c.file ?? foldersFile();

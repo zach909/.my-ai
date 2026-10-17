@@ -58,9 +58,10 @@
  */
 
 import { chmodSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { dataFile } from "./user-context.js";
+
 import { HiveMind } from "./hive-mind.js";
 import { mergeDeltas, publishMergedDelta, type AgentLearner, type PublishPaths, type PublishResult } from "./hive-learning.js";
 import { rms } from "./shared-mesh.js";
@@ -157,7 +158,7 @@ export interface HiveRecord {
 export function hivesFile(): string {
   return process.env.CORONA_HIVES_FILE
     ? path.resolve(process.env.CORONA_HIVES_FILE)
-    : path.join(homedir(), ".neuroclaw", "project-hives.json");
+    : dataFile("project-hives.json");
 }
 
 /** Everything the hive needs from outside. Injected so tests can run it with no brain at all. */
@@ -471,13 +472,15 @@ function pickReviewers(h: HiveRecord, author: string): HiveAgentRecord[] {
   return active(h).filter(a => a.id !== author).sort((a, b) => a.reviewed - b.reviewed || a.id.localeCompare(b.id)).slice(0, REVIEWERS);
 }
 
+/** Keyed by the hives file as well as the project: two people's projects can both be called "weather". */
 const running = new Set<string>();
-export const isHiveRunning = (projectId: string): boolean => running.has(projectId);
+const runKey = (projectId: string, file: string): string => `${file}|${projectId}`;
+export const isHiveRunning = (projectId: string, file = hivesFile()): boolean => running.has(runKey(projectId, file));
 
 /** The hive as the UI should see it: a run in progress reads "running" even though that is never saved. */
 export function hiveView(projectId: string, file = hivesFile()): HiveRecord | null {
   const h = getHive(projectId, file);
-  return h && running.has(projectId) ? { ...h, state: "running" } : h;
+  return h && running.has(runKey(projectId, file)) ? { ...h, state: "running" } : h;
 }
 
 async function safeThink(deps: HiveDeps, agent: HiveAgentRecord, prompt: string): Promise<string> {
@@ -738,9 +741,9 @@ export function mergeHive(projectId: string, deps: HiveDeps): HiveRecord {
 
 /** Work the project until it is done, no one can make progress, or the rounds run out. */
 export async function runHive(projectId: string, deps: HiveDeps): Promise<HiveRecord> {
-  if (running.has(projectId)) throw new ProjectError("This hive is already working.", 409);
-  running.add(projectId);
   const file = fileOf(deps);
+  if (running.has(runKey(projectId, file))) throw new ProjectError("This hive is already working.", 409);
+  running.add(runKey(projectId, file));
   try {
     const hive = await growHive(projectId, deps);
     hive.state = "running";
@@ -787,13 +790,13 @@ export async function runHive(projectId: string, deps: HiveDeps): Promise<HiveRe
     }
     throw err;
   } finally {
-    running.delete(projectId);
+    running.delete(runKey(projectId, file));
   }
 }
 
 /** Start a run in the background and return at once. Progress is read with getHive(). */
 export function startHiveRun(projectId: string, deps: HiveDeps): HiveRecord {
-  if (running.has(projectId)) throw new ProjectError("This hive is already working.", 409);
+  if (running.has(runKey(projectId, fileOf(deps)))) throw new ProjectError("This hive is already working.", 409);
   const hive = staffHive(projectId, deps);
   void runHive(projectId, deps).catch(() => undefined);
   return hive;
