@@ -706,6 +706,8 @@ export class NeuroclawSystem {
       const layer = new ToolNeuronLayer(this.pipeline.ensureBrain(), {
         lock: this.promptFeed.lock(),
         access: sharedAccessManager(),
+        // Terminal and desktop are risky tools: a neuron firing must not run them without the owner's approval.
+        gate: sharedToolGate(),
       });
       for (const id of NeuroclawSystem.TOOL_NEURON_PLUGINS) {
         const plugin = this.pluginRegistry.getPluginInstance(id);

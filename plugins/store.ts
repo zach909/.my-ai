@@ -214,6 +214,10 @@ export class StorePlugin extends BasePlugin {
     };
   }
 
+  override wouldAct(message: unknown): boolean {
+    return /^store\b/i.test((typeof message === "string" ? message : String(message ?? "")).trim());
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = (typeof message === "string" ? message : String(message ?? "")).trim();
     if (!input) return null;

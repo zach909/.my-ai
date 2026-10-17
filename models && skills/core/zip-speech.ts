@@ -54,6 +54,14 @@ export interface SpeechOptions {
    * the tail does. Both are read straight off the mesh; nothing else is added.
    */
   pooling?: "last" | "mean";
+  /**
+   * Scale every feature by its own spread across the taught questions instead
+   * of one number for all of them. The differences between questions live in a
+   * few directions that are tiny next to the state they share, so one global
+   * scale leaves the solve ill-conditioned (measured: only ~70% of 54 taught
+   * questions came back). Default off.
+   */
+  standardize?: boolean;
 }
 
 export interface SpeechPair {
@@ -114,6 +122,8 @@ export class ZipSpeaker {
   private readonly maxAnswerBytes: number;
   private readonly settleTicks: number;
   private readonly pooling: "last" | "mean";
+  private readonly standardize: boolean;
+  private featureStd: Float64Array | null = null;
   /** The mesh is deterministic from blank activity, so a question read once never needs reading again. Cleared by forget(). */
   private readonly featureCache = new Map<string, Float64Array>();
   private readonly blank: FrozenActivity;
@@ -134,6 +144,7 @@ export class ZipSpeaker {
     this.maxAnswerBytes = opts.maxAnswerBytes ?? 16;
     this.settleTicks = opts.settleTicks ?? 0;
     this.pooling = opts.pooling ?? "last";
+    this.standardize = opts.standardize ?? false;
     const ids = zipLoopIdsFor(engine);
     this.zip = new ZipLoopInterface(engine, ids, this.memoryVale > 0 ? { memory: { vale: this.memoryVale } } : {});
     this.doorway = new Set(Object.values(ids).filter((v): v is number => typeof v === "number"));
@@ -235,7 +246,14 @@ export class ZipSpeaker {
       let energy = 0;
       for (const x of X) for (let j = 0; j < F; j++) energy += (x[j] - mean[j]) ** 2;
       const scale = Math.sqrt(energy / (S * F)) || 1;
-      const Z = X.map(x => Float64Array.from(x, (v, j) => (v - mean[j]) / scale));
+      let std: Float64Array | null = null;
+      if (this.standardize) {
+        std = new Float64Array(F);
+        for (const x of X) for (let j = 0; j < F; j++) std[j] += (x[j] - mean[j]) ** 2 / S;
+        for (let j = 0; j < F; j++) std[j] = Math.sqrt(std[j]) + scale * 1e-3;   // floor: a feature that never moves must not blow up
+      }
+      this.featureStd = std;
+      const Z = X.map(x => Float64Array.from(x, (v, j) => (v - mean[j]) / (std ? std[j] : scale)));
 
       // Dual ridge: predictions are sum_i alpha_i * (z_i . z), with alpha = (Z Zt + lambda I)^-1 Y.
       // Only an S x S system, whatever the number of features.
@@ -321,7 +339,7 @@ export class ZipSpeaker {
     const found = freezeActivity(this.engine);
     try {
       const x = this.features(toBytes(question));
-      const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / this.featureScale);
+      const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
       const dist = (a: Float64Array, b: Float64Array) => { let d = 0; for (let k = 0; k < a.length; k++) d += (a[k] - b[k]) ** 2; return Math.sqrt(d); };
       let nearest = Infinity;
       for (const m of this.memory) nearest = Math.min(nearest, dist(z, m));
@@ -337,7 +355,7 @@ export class ZipSpeaker {
     const found = freezeActivity(this.engine);
     try {
       const x = this.features(toBytes(question));
-      const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / this.featureScale);
+      const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
       const scores = this.scores(z);
       const bytes: number[] = [];
       for (let i = 0; i < this.maxAnswerBytes; i++) {

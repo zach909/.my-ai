@@ -54,6 +54,7 @@ const dist = resolve(opt('dist', 'dist'));
 const MESH = opt('mesh', 'live64');
 const SEED = Number(opt('seed', 1));
 const POOLING = opt('pooling', 'last');
+const STANDARDIZE = opt('standardize', '0') === '1';
 const MEMORY = Number(opt('memory', 0.97));
 const OUT = opt('out', null);
 
@@ -191,12 +192,12 @@ function meshConfig(name) {
 
 function meshSystem(train) {
   const engine = new HyperDimensionalEngine(meshConfig(MESH));
-  const sp = new ZipSpeaker(engine, { maxAnswerBytes: 10, memoryVale: MEMORY, pooling: POOLING });
+  const sp = new ZipSpeaker(engine, { maxAnswerBytes: 10, memoryVale: MEMORY, pooling: POOLING, standardize: STANDARDIZE });
   const t0 = performance.now();
   const rep = sp.teach(train.map((t) => ({ question: t.q, answer: t.gold })));
   const teachMs = performance.now() - t0;
   const cache = new Map();
-  return { name: `mesh(${MESH},${POOLING},mem=${MEMORY})`, teach: { ...rep, ms: Math.round(teachMs) },
+  return { name: `mesh(${MESH},${POOLING}${STANDARDIZE ? ',std' : ''},mem=${MEMORY})`, teach: { ...rep, ms: Math.round(teachMs) },
     ask: (q) => { if (!cache.has(q)) { const d = q.trim() === '' ? Infinity : sp.strangeness(q); cache.set(q, { said: d === Infinity ? null : sp.speakText(q), distance: d }); } return cache.get(q); },
     thresholds: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4, 6, 10] };
 }
