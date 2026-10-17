@@ -7,7 +7,7 @@ Share computing, earn points for working together, and finish big projects as a 
 Points are only created in bounded ways, so the pile cannot grow forever:
 
 - **A project's pot.** Fixed when the project is made, never raised. Tasks are paid out of it; amounts round down, so paid-out is always at or under the pot.
-- **Adding people.** 25 points, once per person you add, paid only after that person does their first paid work (up to 20 people). Adding a name alone pays nothing.
+- **Adding people.** 100 points, once per person you add, paid only after that person does their first paid work (up to 20 people). Adding a name alone pays nothing.
 - **Trading compute moves points, it never makes them.**
 
 The leaderboard ranks lifetime points earned, so spending points does not cost you your place. It ranks the people and AIs *this device* has dealt with: a club scoreboard on one device, not a bank. Two devices each keep their own copy of a trade.

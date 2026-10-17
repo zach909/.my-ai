@@ -61,7 +61,7 @@ export class PointsError extends Error {
 export const DEFAULT_ASK = 0;
 export const DEFAULT_BID = 2;
 export const MAX_RATE = 1000;
-export const REFERRAL_BONUS = 25;
+export const REFERRAL_BONUS = 100;
 export const REFERRAL_CAP = 20;
 export const SELF_ID = "me";
 const MAX_MEMBERS = 500;
