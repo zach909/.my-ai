@@ -15,16 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: android-actions/setup-android@v3
+      # The runner image already carries JDK 17, the Android SDK and Gradle, so no
+      # third-party setup actions and no vendored Gradle wrapper are needed.
       - name: Build debug APK
         working-directory: mobile/android
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
           name: neuroclaw-android-debug-apk

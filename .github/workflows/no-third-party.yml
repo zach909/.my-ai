@@ -1,0 +1,18 @@
+name: No third-party code
+
+# Fails any push or pull request that adds a package, vendored folder, bundle,
+# licence banner or install command. Same check as the local pre-commit hook:
+# scripts/check-no-third-party.mjs. Allow-list: .third-party-allowlist.json.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Scan for third-party code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan
+        run: node scripts/check-no-third-party.mjs

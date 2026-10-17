@@ -1,0 +1,5 @@
+#!/bin/sh
+# Blocks any commit that adds third-party code. See AGENTS.md and
+# scripts/check-no-third-party.mjs. Installed by scripts/install-hooks.mjs
+# (runs on `npm install`); do not bypass with --no-verify, CI runs the same check.
+exec node "$(git rev-parse --show-toplevel)/scripts/check-no-third-party.mjs"
