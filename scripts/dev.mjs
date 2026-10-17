@@ -1,19 +1,23 @@
 // Development entry point: `npm run dev`.
 //
-// vite.config.ts proxies /api/* to http://127.0.0.1:7861 (see its `server.proxy`
-// comment), but nothing started that backend -- `dev` used to be a bare `vite`
-// invocation, so every API call in the dev server (chat, chat-groups, status,
-// extension builder, ...) failed with ECONNREFUSED. This builds the backend
-// once, runs it in the background on port 7861, then runs Vite in the
-// foreground, and tears the backend down when Vite exits (Ctrl+C or crash).
+// Builds the backend and runs it in the foreground. The backend serves
+// everything itself, with Node built-ins only: the terminal page at `/`, the
+// built dashboard at `/app`, and `/api/*`, all from one origin. There is no
+// separate frontend dev server and no proxy: a proxy in front of the backend
+// would make every remote client look like loopback to it and defeat its
+// remote-access password gate.
+//
+// NEUROCLAW_WEB_PORT picks the port (default 7861) and NEUROCLAW_WEB_HOST the
+// bind address (default 127.0.0.1; anything else needs a password, or the
+// backend serves only its setup page until one is set -- see
+// WebServer.start()). docker-compose.dev.yml uses both to serve on :3000.
 
 import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
-import { join } from 'node:path';
 import { spawnAwait } from './spawn-utils.mjs';
 
 const ROOT = process.cwd();
-const BACKEND_PORT = 7861;
+const BACKEND_PORT = Number(process.env.NEUROCLAW_WEB_PORT) || 7861;
 
 // Startup-time optimization: the update check (a network call, up to a
 // 15s git-fetch timeout -- see update-check.mjs) and the backend build
@@ -55,12 +59,8 @@ backend.on('exit', (code) => {
 
 /**
  * Poll until something accepts a TCP connection on `port`, or bail as soon
- * as the backend process itself exits. Vite starts proxying /api/* the
- * moment it comes up; spawning it in parallel with the backend (as before)
- * raced Node's module-load time against Vite's own startup, so cold starts
- * intermittently opened the browser onto a stream of ECONNREFUSED proxy
- * errors until the backend happened to catch up. Waiting here instead means
- * Vite never starts until the backend is actually reachable.
+ * as the backend process itself exits, so the ready message below is only
+ * printed once the page can actually be opened.
  */
 function waitForPort(port, timeoutMs = 20000) {
   return new Promise((resolve, reject) => {
@@ -93,22 +93,6 @@ try {
 } catch (err) {
   console.error(`[dev] ${err.message}`);
 }
-
-// The frontend (Vite, React) and its packages are gone from package.json, so
-// this now runs the backend alone and stays up until it exits or is stopped.
-// Run Vite's JS entry through the current Node binary rather than `npx`:
-// on Windows `npx` is `npx.cmd`, which spawn() can't launch without a shell
-// (fails with ENOENT).
-const viteBin = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
-// No --config-loader flag: Vite's default `bundle` loader is used. An earlier
-// revision forced `--config-loader=runner` to dodge rolldown's opaque
-// "Failed to resolve entry" error on torn installs, but the runner introduced
-// a worse failure ("Cannot find module '@tanstack/react-start/plugin/vite'"
-// for packages plain Node resolves fine). vite.config.ts now self-checks its
-// own bare imports and only falls back to the runner when the install is
-// genuinely incomplete — so the flag must NOT be passed here or that logic
-// would be bypassed/forced.
-const vite = spawn(process.execPath, [viteBin], { cwd: ROOT, stdio: 'inherit' });
 
 function shutdown() {
   backend.kill();

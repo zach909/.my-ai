@@ -18,7 +18,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` (`scripts/dev.mjs`) compiles the backend with `tsc`, starts it on `127.0.0.1:7861`, then starts Vite on `0.0.0.0:3000`. Vite proxies `/api/*` to the backend, so the browser talks to a single origin. Open http://localhost:3000, which redirects `/` to `/app`.
+`npm run dev` (`scripts/dev.mjs`) compiles the backend with `tsc` and runs it on `127.0.0.1:7861`. The backend serves the terminal page at `/`, the dashboard at `/app` and `/api/*` itself, so the browser talks to a single origin. Open http://localhost:7861. `NEUROCLAW_WEB_PORT` and `NEUROCLAW_WEB_HOST` change the port and bind address; the Docker setup below uses them to serve on port 3000.
 
 ### Docker
 
@@ -92,7 +92,7 @@ npm run bench            # OneBrain hyperdimensional and mesh benchmarks (needs 
 Health check for a running dev server (it must follow redirects):
 
 ```bash
-curl -sL http://localhost:3000/ -o /dev/null -w '%{http_code}\n'   # expect 200
+curl -sL http://localhost:7861/ -o /dev/null -w '%{http_code}\n'   # expect 200 (port 3000 under Docker, which asks for a password)
 ```
 
 ## Troubleshooting
