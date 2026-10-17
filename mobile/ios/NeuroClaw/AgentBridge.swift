@@ -170,6 +170,15 @@ final class AgentBridge: ObservableObject {
                     "iPhone: taps cannot be sent, and the bridge only answers while NeuroClaw is on screen.",
                 ],
             ])
+        case "GET /v1/tools":
+            return json(200, ["tools": NativeToolRegistry.definitions])
+        case "POST /v1/tools":
+            guard let name = body["name"] as? String, !name.isEmpty else {
+                return fail(400, "name is required; send {name, arguments}.")
+            }
+            let arguments = body["arguments"] as? [String: Any] ?? [:]
+            let (status, result) = await NativeToolRegistry.invoke(name: name, arguments: arguments)
+            return json(status, result)
         case "GET /v1/windows":
             let rows: [[String: Any]] = await MainActor.run {
                 Self.ownWindows().enumerated().map { index, window in

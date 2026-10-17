@@ -94,7 +94,9 @@ function startAppServer({ distDir, backendPort, port, authToken, tls }) {
         return;
       }
 
-      if (url.pathname.startsWith('/api/')) {
+      // The avatar overlay page and the shared look's two files come from the
+      // backend too; everything else static is the built dashboard.
+      if (url.pathname.startsWith('/api/') || url.pathname === '/avatar' || url.pathname === '/ambient.css' || url.pathname === '/ambient.js') {
         const proxyReq = http.request(
           {
             host: '127.0.0.1',

@@ -65,6 +65,7 @@
   window.addEventListener('pointermove', function (e) { ptr.x = (e.clientX / W) * 2 - 1; ptr.y = (e.clientY / H) * 2 - 1; });
   var energy = 0, energyTarget = 0;
   function excite(a) { energyTarget = Math.min(1, energyTarget + a); }
+  window.ncAmbient = { excite: excite };
   document.addEventListener('input', function () { excite(0.12); }, true);
   document.addEventListener('submit', function () { excite(1); }, true);
   document.addEventListener('click', function () { excite(0.25); }, true);

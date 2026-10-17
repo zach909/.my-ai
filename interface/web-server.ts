@@ -28,10 +28,24 @@ import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/c
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
+import { AVATAR_HTML } from './avatar.js';
+import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
+import { COMMONS_PAGE } from './commons-page.js';
+import { handleCommonsRoutes, withTimeout, runFolderSweep, expertDepsFor, schedulerDepsFor } from './commons-routes.js';
+import { startScheduler } from '../models && skills/core/scheduler.js';
+import { handleSafetyRoutes, isSafetyRoute } from './safety-routes.js';
+import { handleAccountsRoutes, isAccountsRoute, isAccountsPublicRoute } from './accounts-routes.js';
+import { ACCOUNTS_PAGE } from './accounts-page.js';
+import { getAccounts, resolveWho, userMayReach, USER_COOKIE } from '../models && skills/core/accounts.js';
+import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, setLearnPolicy, who } from '../models && skills/core/user-context.js';
+import { sharedToolGate } from '../models && skills/core/tool-safety.js';
+import { startExperts } from '../models && skills/core/experts.js';
+import { startBackgroundHives } from '../models && skills/core/hive-background.js';
+import { titleGroupsWithAgent } from '../models && skills/core/agent-organizer.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
 import {
@@ -1207,6 +1221,7 @@ async function serveDashboard(req: http.IncomingMessage, res: http.ServerRespons
  * allowed to change anything.
  */
 export function isAuthPublicRoute(pathname: string, method: string): boolean {
+  if (isAccountsPublicRoute(pathname, method)) return true;
   if (method === 'GET') return pathname === '/login' || pathname === '/api/auth/status';
   if (method === 'POST') {
     return pathname === '/api/auth/login' || pathname === '/api/auth/logout' || pathname === '/api/auth/password';
@@ -1320,6 +1335,9 @@ export class WebServer {
   private launcher: AppLauncher;
   private server: http.Server | null = null;
   private stopScreenDonor: (() => void) | null = null;
+  private stopBackgroundHives: (() => void) | null = null;
+  private stopExperts: (() => void) | null = null;
+  private stopScheduler: (() => void) | null = null;
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
@@ -1342,7 +1360,27 @@ export class WebServer {
   // /app/chat-groups page's own login prompt), even over an already-trusted
   // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
   private readonly chatGroupsLock = new PasswordLock();
-  private readonly chatHistory = new ChatHistoryStore();
+  private readonly ownerChatHistory = new ChatHistoryStore();
+  private readonly userChatHistories = new Map<string, ChatHistoryStore>();
+
+  /**
+   * The chat history of whoever this request is for. The owner and the admin use
+   * the original store; everyone else has their own folder, so nobody can read
+   * anyone else's chats. Not logged in has none.
+   */
+  private get chatHistory(): ChatHistoryStore {
+    const w = who();
+    if (w.kind === 'anonymous') throw new Error('Not logged in.');
+    if (w.kind === 'user' && w.role !== 'admin') {
+      let store = this.userChatHistories.get(w.id);
+      if (!store) {
+        store = new ChatHistoryStore(path.join(dataDir(), 'chat-history'));
+        this.userChatHistories.set(w.id, store);
+      }
+      return store;
+    }
+    return this.ownerChatHistory;
+  }
 
   /**
    * Where a stopped run leaves what every neuron and every connection was.
@@ -1431,6 +1469,19 @@ export class WebServer {
         );
       }
     }
+    // The shared brain learns from, and remembers, other people only if the admin says so.
+    setLearnPolicy(() => getAccounts().learnFromUsers());
+    try {
+      if (!getAccounts().hasAdmin()) {
+        console.log(
+          `\nNo admin account yet. Make it at http://localhost:${port}/accounts (from this machine),\n` +
+          `or from another device with this setup code: ${this.remoteAccess.firstTimeSetupCode}\n` +
+          `After that, anyone can sign up and nobody can see anyone else's stuff.\n`
+        );
+      }
+    } catch {
+      // A damaged accounts file is reported when it is used; it must not stop the server starting.
+    }
     if (process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD) {
       await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
     }
@@ -1471,6 +1522,55 @@ export class WebServer {
       const { sharedAccessManager } = await import('../models && skills/core/access-settings.js');
       return new DesktopControl(sharedAccessManager()).screenshot();
     });
+    // The AI works on projects that have it switched on, one round at a time,
+    // in the background (hive-background.ts). NEUROCLAW_HIVE_BACKGROUND=0 turns it off.
+    if (process.env.NEUROCLAW_HIVE_BACKGROUND !== '0' && !process.env.VITEST) {
+      this.stopBackgroundHives = startBackgroundHives({
+        each: run => this.eachPerson(run),
+        intervalMs: Number(process.env.NEUROCLAW_HIVE_INTERVAL_MS) || undefined,
+        deps: async () => {
+          let learner = null;
+          try {
+            const { getNeuroclawSystem } = await import('../src/index.js');
+            learner = (await getNeuroclawSystem()).hiveLearner();
+          } catch {
+            learner = null;
+          }
+          return { think: (_agent, prompt) => withTimeout(this.runner.generateText(prompt)), learner };
+        },
+      });
+    }
+    // Experts are standing AIs, one job each, that run by themselves
+    // (experts.ts). They start with the server and every enabled one resumes
+    // after a restart. NEUROCLAW_EXPERTS=0 turns them off.
+    if (process.env.NEUROCLAW_EXPERTS !== '0' && !process.env.VITEST) {
+      this.stopExperts = startExperts({
+        each: run => this.eachPerson(run),
+        deps: async () => expertDepsFor(m => this.runner.generateText(m), m => this.runner.generate(m)),
+      });
+    }
+    // The clock for scheduled actions (scheduler.ts). A scheduled message goes
+    // to the agent by its normal path, so risky tools still ask first.
+    // NEUROCLAW_SCHEDULER=0 turns it off.
+    if (process.env.NEUROCLAW_SCHEDULER !== '0' && !process.env.VITEST) {
+      this.stopScheduler = startScheduler({
+        each: run => this.eachPerson(run),
+        deps: async () => schedulerDepsFor({
+          chat: m => this.runner.generateText(m),
+          act: m => this.runner.generate(m),
+          chats: this.chatHistory,
+          learn: text => this.learnFromFiling(text),
+          learner: async () => {
+            try {
+              const { getNeuroclawSystem } = await import('../src/index.js');
+              return (await getNeuroclawSystem()).hiveLearner();
+            } catch {
+              return null;
+            }
+          },
+        }),
+      });
+    }
     // Same reasoning, same placement: loading every saved extension is
     // real work (parsing N files, remembering M neurons) that only makes
     // sense to pay once per actual live server process, not once per
@@ -1497,7 +1597,23 @@ export class WebServer {
    * With neither lock set -- a plain localhost run -- everything is allowed,
    * which is the behaviour this server has always had on loopback.
    */
-  private async isRemotelyAuthorized(req: http.IncomingMessage): Promise<boolean> {
+  /**
+   * Whether the request is logged in, by whoever it turned out to be (see
+   * identify()). Not logged in is the only way to fail.
+   */
+  private async isRemotelyAuthorized(_req: http.IncomingMessage): Promise<boolean> {
+    return who().kind !== 'anonymous';
+  }
+
+  /** Who this request is for: an account's login cookie, or else the older shared-password rules (accounts.ts resolveWho). */
+  private async identify(req: http.IncomingMessage) {
+    const legacyAllowed = await this.isLegacyAuthorized(req);
+    const legacyPasswordSet = this.remoteAccess.isSet() || this.remoteAccessLock.required;
+    return resolveWho(getAccounts(), readCookie(req.headers.cookie, USER_COOKIE), legacyAllowed, legacyPasswordSet);
+  }
+
+  /** The login that existed before accounts: the shared password, or an open server with none. */
+  private async isLegacyAuthorized(req: http.IncomingMessage): Promise<boolean> {
     if (this.remoteAccess.hasSession(readCookie(req.headers.cookie, SESSION_COOKIE))) return true;
     if (this.remoteAccessLock.required) {
       if (await this.isAuthorizedBasic(req, this.remoteAccessLock)) return true;
@@ -1734,6 +1850,12 @@ export class WebServer {
     this.selfImprovementServer.shutdown();
     this.stopScreenDonor?.();
     this.stopScreenDonor = null;
+    this.stopBackgroundHives?.();
+    this.stopBackgroundHives = null;
+    this.stopExperts?.();
+    this.stopExperts = null;
+    this.stopScheduler?.();
+    this.stopScheduler = null;
     return new Promise<void>((resolve) => {
       this.server?.close(() => { this.server = null; resolve(); });
     });
@@ -1776,6 +1898,67 @@ export class WebServer {
     const msg = err instanceof Error ? err.message : String(err);
     const status = statusForError(err);
     this.sendJson(res, { error: msg }, status);
+  }
+
+  /**
+   * Runs `run` once for the owner and once for each regular user, each as
+   * themselves (user-context.ts), so the experts, schedules and background hives
+   * of one person never touch another person's folder. The admin shares the
+   * owner's folder, so they are not run twice.
+   */
+  private async eachPerson(run: () => Promise<void>): Promise<void> {
+    await runAs(OWNER, run);
+    let users: Array<{ id: string; name: string }> = [];
+    try {
+      users = getAccounts().listUsers().filter(u => u.role === 'user' && u.disabledAt === null);
+    } catch {
+      users = [];
+    }
+    for (const u of users) await runAs({ kind: 'user', id: u.id, name: u.name, role: 'user' }, run);
+  }
+
+  private organizingFolders = false;
+
+  /** Hands one filing decision to the mesh to learn from, through its one door for learning. Never throws. */
+  private learnFromFiling(text: string): void {
+    void import('../src/index.js')
+      .then(m => m.getNeuroclawSystem())
+      .then(system => system.learnFrom(text, 'tool'))
+      .catch(() => undefined);
+  }
+
+  /**
+   * Has the agent file chats, wiki pages and projects into folders (see
+   * folder-organizer.ts): a few at a time, one pass at a time, after the
+   * response has gone out. NEUROCLAW_AGENT_ORGANIZE=0 turns it off.
+   */
+  private organizeFoldersInBackground(): void {
+    if (this.organizingFolders || process.env.NEUROCLAW_AGENT_ORGANIZE === '0') return;
+    this.organizingFolders = true;
+    void runFolderSweep({
+      chats: this.chatHistory,
+      think: prompt => withTimeout(this.runner.generateText(prompt)),
+      learn: text => this.learnFromFiling(text),
+      limit: 2,
+    })
+      .catch(() => undefined)
+      .finally(() => { this.organizingFolders = false; });
+  }
+
+  private namingChatGroups = false;
+
+  /**
+   * Has the agent give any unnamed chat group a proper topic name (see
+   * agent-organizer.ts). Runs after the list has already been sent, one pass
+   * at a time, and never delays or fails a request; the keyword name stays
+   * until the agent's replaces it. NEUROCLAW_AGENT_ORGANIZE=0 turns it off.
+   */
+  private nameChatGroupsInBackground(): void {
+    if (this.namingChatGroups || process.env.NEUROCLAW_AGENT_ORGANIZE === '0') return;
+    this.namingChatGroups = true;
+    void titleGroupsWithAgent(this.chatHistory, prompt => withTimeout(this.runner.generateText(prompt)))
+      .catch(() => undefined)
+      .finally(() => { this.namingChatGroups = false; });
   }
 
   /**
@@ -2148,13 +2331,19 @@ export class WebServer {
       let remembered = 0;
       let graftedNeurons = 0;
       for (const filename of entries) {
-        let data: { project?: { name?: string }; name?: string; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
+        let data: { project?: { name?: string }; name?: string; io?: unknown; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
         try {
           data = JSON.parse(await fs.readFile(path.join(dir, filename), 'utf8'));
         } catch {
           continue; // malformed/unreadable -- skip this one file, don't fail the boot
         }
         const extName = data.project?.name ?? data.name ?? filename;
+        // The doorways an extension asks for (its "io" block), declared before
+        // anything else so an extension that is only a doorway still counts.
+        if (data.io !== undefined) {
+          const { skipped } = system.doorways.declareFromExtension(extName, data.io);
+          for (const bad of skipped) console.warn(`[doorways] ${extName}: skipped an entry: ${bad.reason}`);
+        }
         const neurons = Array.isArray(data.neurons) ? data.neurons : [];
         if (neurons.length === 0) continue;
         filesLoaded++;
@@ -2206,7 +2395,23 @@ export class WebServer {
     }
   }
 
+  /**
+   * Works out who is asking, then handles the whole request AS them
+   * (user-context.ts), so every store the request touches picks that person's
+   * own data. Someone not logged in is handled as anonymous, which has no data
+   * folder at all.
+   */
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    let identity = null;
+    try {
+      identity = await this.identify(req);
+    } catch {
+      identity = null;
+    }
+    return runAs(identity ?? ANONYMOUS, () => this.handleRequestAs(req, res));
+  }
+
+  private async handleRequestAs(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     let parsedUrl: URL;
     try {
       // req.headers.host is a raw, attacker-controlled string with no
@@ -2276,6 +2481,37 @@ export class WebServer {
       return;
     }
 
+    // Default-deny for everyone who is not the admin: a regular user reaches only
+    // what accounts.ts lists. This server has a terminal, the file system and app
+    // launching behind it, and none of that is theirs.
+    {
+      const w = who();
+      if (!publicRoute && w.kind === 'user' && w.role === 'user' && !userMayReach(pathname, method)) {
+        this.setSecurityHeaders(res);
+        this.sendJson(res, { error: 'Only the admin can do that.' }, 403);
+        return;
+      }
+    }
+
+    // ── Accounts ────────────────────────────────────────────────────────
+    if (pathname === '/accounts' && method === 'GET') {
+      this.sendHtml(res, ACCOUNTS_PAGE);
+      return;
+    }
+    if (isAccountsRoute(pathname)) {
+      const handled = await handleAccountsRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        accounts: getAccounts(),
+        fromThisMachine: r => this.isFromThisMachine(r),
+        setupCodeOk: code => this.remoteAccess.checkSetupCode(code),
+        onSetup: () => { this.setupOnly = false; },
+        token: r => readCookie(r.headers.cookie, USER_COOKIE),
+      });
+      if (handled) return;
+    }
+
     // ── Logging in ──────────────────────────────────────────────────────
 
     // Data donor, lending and borrowing compute, and apps: one page, behind the normal gate.
@@ -2284,8 +2520,15 @@ export class WebServer {
       return;
     }
 
+    // Points, the leaderboard, projects and the hive: one page, same gate.
+    if (pathname === '/commons' && method === 'GET') {
+      this.sendHtml(res, COMMONS_PAGE);
+      return;
+    }
+
     if (pathname === '/login' && method === 'GET') {
-      this.sendHtml(res, this.loginPage());
+      // Once there is an admin, everyone logs in with an account.
+      this.sendHtml(res, getAccounts().hasAdmin() ? ACCOUNTS_PAGE : this.loginPage());
       return;
     }
 
@@ -2437,6 +2680,11 @@ export class WebServer {
       return;
     }
 
+    if (pathname === '/avatar' && method === 'GET') {
+      this.sendHtml(res, AVATAR_HTML);
+      return;
+    }
+
     if (pathname === '/' && method === 'GET') {
       this.sendHtml(res, HTML_TEMPLATE);
       return;
@@ -2455,6 +2703,48 @@ export class WebServer {
         status: () => {
           const st = this.runner.getStatus();
           return { running: st.running, uptime: Math.floor(st.uptime) };
+        },
+      });
+      if (handled) return;
+    }
+
+    // ── Risky tools, approvals, complete access, auto-continue ──────────
+    // See safety-routes.ts: owner routes behind the normal gate.
+    if (isSafetyRoute(pathname)) {
+      const handled = await handleSafetyRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        gate: sharedToolGate(),
+        access: async () => (await import('../models && skills/core/access-settings.js')).sharedAccessManager(),
+        runApproved: async (toolId, request) => {
+          const { getNeuroclawSystem } = await import('../src/index.js');
+          return (await getNeuroclawSystem()).pluginRegistry.runApproved(toolId, request);
+        },
+      });
+      if (handled) return;
+    }
+
+    // ── Points, projects and the hive ───────────────────────────────────
+    // See commons-routes.ts: owner routes behind the normal gate.
+    if (pathname === '/api/commons' || pathname.startsWith('/api/commons/')) {
+      const handled = await handleCommonsRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        // Text only, never a tool: see NeuroclawRunner.generateText().
+        chat: message => this.runner.generateText(message),
+        act: message => this.runner.generate(message),
+        status: () => ({ running: this.runner.getStatus().running }),
+        chats: this.chatHistory,
+        learn: text => this.learnFromFiling(text),
+        learner: async () => {
+          try {
+            const { getNeuroclawSystem } = await import('../src/index.js');
+            return (await getNeuroclawSystem()).hiveLearner();
+          } catch {
+            return null;
+          }
         },
       });
       if (handled) return;
@@ -2608,6 +2898,113 @@ export class WebServer {
       try {
         const { updateInstalls } = await import('../models && skills/core/store-install.js');
         this.sendJson(res, await updateInstalls());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // ── Doorways besides the Zip Loop ───────────────────────────────────
+    // Extensions declare them (their "io" block). Data goes in and out as raw
+    // bytes, base64 on the wire; nothing here makes tokens out of anything.
+    if (pathname === '/api/doorways' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { doorways: system.doorways.list() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/doorways/send' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { name?: unknown; data?: unknown } | null;
+        if (typeof body?.name !== 'string' || typeof body?.data !== 'string') {
+          this.sendJson(res, { error: 'Expected { name: string, data: base64 string }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, await system.doorways.send(body.name, new Uint8Array(Buffer.from(body.data, 'base64'))));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    if (pathname === '/api/doorways/receive' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { name?: unknown; bytes?: unknown } | null;
+        if (typeof body?.name !== 'string' || typeof body?.bytes !== 'number') {
+          this.sendJson(res, { error: 'Expected { name: string, bytes: number }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const out = await system.doorways.receive(body.name, body.bytes);
+        this.sendJson(res, { bytes: out.length, data: Buffer.from(out).toString('base64') });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    // ── Live content: played while the mesh is still making it ───────────
+    // The source is the mesh's own output on a doorway. Playing may begin as
+    // soon as it can never catch up with what is made (startDelaySeconds 0).
+    if (pathname === '/api/live/start' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as
+          { doorway?: unknown; bytesPerSecond?: unknown; totalSeconds?: unknown; chunkBytes?: unknown } | null;
+        if (typeof body?.doorway !== 'string' || typeof body?.bytesPerSecond !== 'number' || !(body.bytesPerSecond > 0)) {
+          this.sendJson(res, { error: 'Expected { doorway: string, bytesPerSecond: number > 0, totalSeconds?: number, chunkBytes?: number }.' }, 400);
+          return;
+        }
+        const name = body.doorway;
+        const chunk = typeof body.chunkBytes === 'number' && body.chunkBytes > 0 ? Math.min(Math.floor(body.chunkBytes), 65536) : 256;
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const stream = system.live.open(
+          { pull: async () => { const out = await system.doorways.receive(name, chunk); return out.length > 0 ? out : null; } },
+          { bytesPerSecond: body.bytesPerSecond, totalSeconds: typeof body.totalSeconds === 'number' ? body.totalSeconds : undefined },
+        );
+        this.sendJson(res, stream.status());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    const liveMatch = pathname.match(/^\/api\/live\/([^/]+)$/);
+    if (liveMatch && (method === 'GET' || method === 'DELETE')) {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const id = decodeURIComponent(liveMatch[1]);
+        if (method === 'DELETE') {
+          this.sendJson(res, { stopped: system.live.stop(id) });
+          return;
+        }
+        const stream = system.live.get(id);
+        if (!stream) { this.sendJson(res, { error: 'No such live stream.' }, 404); return; }
+        const q = new URL(req.url ?? '/', 'http://x').searchParams;
+        const from = Math.max(0, Number(q.get('from')) || 0);
+        const limit = Math.min(1 << 20, Math.max(0, Number(q.get('limit')) || 65536));
+        const data = stream.read(from, limit);
+        this.sendJson(res, { ...stream.status(), from, bytes: data.length, data: Buffer.from(data).toString('base64') });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    if (pathname === '/api/preneed' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { preNeed: system.preNeed.stats(), live: system.live.list() });
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
       }
@@ -3457,7 +3854,7 @@ export class WebServer {
           : undefined;
         // What the user told it about themselves and their goals, back in
         // memory after a restart before the first reply needs it.
-        await profileWithMemory().catch(() => undefined);
+        if (isOwnerOrAdmin()) await profileWithMemory().catch(() => undefined); // the owner's profile is the owner's
         const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
         let response: string;
         try {
@@ -3534,7 +3931,7 @@ export class WebServer {
         const bot = await getBot(await getNeuroclawSystem());
         // What the user told it about themselves and their goals, back in
         // memory after a restart before the first reply needs it.
-        await profileWithMemory().catch(() => undefined);
+        if (isOwnerOrAdmin()) await profileWithMemory().catch(() => undefined); // the owner's profile is the owner's
         const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
         let response: Awaited<ReturnType<typeof bot.processMessage>>;
         try {
@@ -3709,6 +4106,8 @@ export class WebServer {
     // "create group" step anywhere in this API on purpose.
     if (pathname === '/api/chat-history/groups' && method === 'GET') {
       this.sendJson(res, { groups: this.chatHistory.listGroupsWithThreads() });
+      this.nameChatGroupsInBackground();
+      this.organizeFoldersInBackground();
       return;
     }
 
@@ -3721,6 +4120,13 @@ export class WebServer {
           this.sendJson(res, { error: 'Thread not found' }, 404);
           return;
         }
+        // Continuing an old conversation: the mesh gets its context as a short
+        // replay through the Zip Loop (context compression), in the background,
+        // so the page never waits on it.
+        void import('../src/index.js')
+          .then(m => m.getNeuroclawSystem())
+          .then(system => system.continueThread(thread.id, thread.messages))
+          .catch(() => undefined);
         this.sendJson(res, { thread });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -4735,6 +5141,8 @@ export class WebServer {
         const body = await this.parseBody(req) as
           {
             name?: string;
+            /** Doorways beyond the Zip Loop this extension asks for: { inputs: [{name, kind}], outputs: [{name, kind}] }. */
+            io?: unknown;
             neurons?: Array<{
               name?: string; value?: number; definition?: string;
               scripts?: Array<{ userSays?: string; response?: string }>;
@@ -4742,6 +5150,13 @@ export class WebServer {
           } | null;
         const name = (body?.name ?? '').trim() || `extension_${Date.now()}`;
         const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+        let doorways: { declared: number; skipped: Array<{ reason: string }> } | undefined;
+        if (body?.io !== undefined) {
+          const { getNeuroclawSystem } = await import('../src/index.js');
+          const system = await getNeuroclawSystem();
+          const result = system.doorways.declareFromExtension(name, body.io);
+          doorways = { declared: result.declared.length, skipped: result.skipped.map(s => ({ reason: s.reason })) };
+        }
 
         const path = await import('node:path');
         const { promises: fs } = await import('node:fs');
@@ -4749,7 +5164,7 @@ export class WebServer {
         await fs.mkdir(dir, { recursive: true });
         const safe = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
         const filename = `${safe}_${Date.now()}.ext.json`;
-        await fs.writeFile(path.join(dir, filename), JSON.stringify({ name, neurons }, null, 2), 'utf8');
+        await fs.writeFile(path.join(dir, filename), JSON.stringify(body?.io !== undefined ? { name, io: body.io, neurons } : { name, neurons }, null, 2), 'utf8');
 
         const { remembered, grafted } = await this.installSkillProject(name, neurons);
 
@@ -4757,7 +5172,7 @@ export class WebServer {
         // actually joined the running mesh and how many of the skill's own
         // connections came with them. Reported rather than assumed -- a graft
         // that silently did nothing would look exactly like one that worked.
-        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted });
+        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted, ...(doorways ? { doorways } : {}) });
       } catch (err) {
         this.sendError(res, err);
       }
