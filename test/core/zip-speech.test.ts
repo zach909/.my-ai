@@ -150,3 +150,48 @@ describe('misuse', () => {
     expect(sp.speak('give me none').length).toBe(0)
   })
 })
+
+describe('options added for the generalisation experiments (defaults unchanged)', () => {
+  const engine = () => new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, seed: 7 })
+  const pairs = asPairs(6)
+
+  it('standardize and mean pooling still speak every taught answer exactly', () => {
+    for (const opts of [{ standardize: true }, { pooling: 'mean' as const }, { pooling: 'mean' as const, standardize: true }]) {
+      const sp = new ZipSpeaker(engine(), { maxAnswerBytes: 8, ...opts })
+      sp.teach(pairs)
+      for (const [q, a] of FACTS.slice(0, 6)) expect(sp.speakText(q)).toBe(a)
+    }
+  })
+
+  it('the default is exactly what it was: same answers with the options absent or false', () => {
+    const a = new ZipSpeaker(engine(), { maxAnswerBytes: 8 }); a.teach(pairs)
+    const b = new ZipSpeaker(engine(), { maxAnswerBytes: 8, pooling: 'last', standardize: false }); b.teach(pairs)
+    for (const [q] of FACTS) expect(a.strangeness(q)).toBe(b.strangeness(q))
+  })
+
+  it('a question read once is not read again, and forget() clears that', () => {
+    const e = engine()
+    const sp = new ZipSpeaker(e, { maxAnswerBytes: 8 }); sp.teach(pairs)
+    let ticks = 0
+    const real = e.process.bind(e)
+    ;(e as unknown as { process: unknown }).process = (...a: unknown[]) => { ticks++; return (real as (...x: unknown[]) => unknown)(...a) }
+    sp.speakText(FACTS[0][0])
+    expect(ticks).toBe(0)                          // taught question: cached from teach()
+    sp.speakText('a question never seen before')
+    const first = ticks
+    expect(first).toBeGreaterThan(0)
+    sp.speakText('a question never seen before')
+    expect(ticks).toBe(first)                      // second time costs nothing
+    sp.forget()
+    sp.speakText('a question never seen before')
+    expect(ticks).toBeGreaterThan(first)
+  })
+
+  it('loss() is 1 before teaching, about 0 on a taught pair, and clipped so an odd question cannot make it huge', () => {
+    const sp = new ZipSpeaker(engine(), { maxAnswerBytes: 8 })
+    expect(sp.loss('hello', 'x')).toBe(1)
+    sp.teach(pairs)
+    expect(sp.loss(FACTS[0][0], FACTS[0][1])).toBeLessThan(0.01)
+    expect(sp.loss('zzzz qqqq never seen', 'Paris')).toBeLessThanOrEqual(4)
+  })
+})
