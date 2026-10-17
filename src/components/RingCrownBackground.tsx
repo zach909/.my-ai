@@ -17,15 +17,17 @@
  * vignette layers in CSS; no post-processing pass is needed for a backdrop.
  *
  * The KCL itself needs a CAD kernel to render, so this component reproduces
- * its solved layout in three.js (see ring-crown-geometry.ts). Rotation is
- * driven from elapsed time rather than accumulated per-frame deltas, so the
- * motion path is identical on any refresh rate.
+ * its solved layout in three.js (see ring-crown-geometry.ts). The idle orbit
+ * is driven from elapsed time; the message-pulse spin-up integrates per-frame
+ * deltas instead, because a rate that changes mid-flight cannot be expressed
+ * as a pure function of time without jumping the angle.
  */
 
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { usePageVisible } from '@/hooks/usePageVisible'
+import { onRingEvent } from '@/lib/ring-pulse'
 import {
   buildCrownLayout,
   CORE_SPHERE_RADIUS,
@@ -48,6 +50,35 @@ const ORBIT_RATE = 0.07
 const SURGE_AMOUNT = 0.3
 /** Seconds per surge cycle. */
 const SURGE_PERIOD = 3.6
+
+/**
+ * Spin-up behaviour when a message is sent (see lib/ring-pulse):
+ * - ENERGY_TARGET: extra revolutions per second added on top of the idle
+ *   orbit rate while the ring is "excited" — roughly 4x its resting pace,
+ *   enough to read as a reaction without becoming a helicopter.
+ * - SPIN_UP_SECONDS: how long the ramp takes. Fast enough to feel like it
+ *   happened *because of* the send, slow enough not to snap.
+ * - COOL_DOWN_SECONDS: how long the wind-down takes once the reply lands.
+ *   Deliberately longer than the spin-up: a machine that races when handed
+ *   work and glides back to rest looks alive; one that stops dead looks off.
+ * - THINKING_ENERGY: the rate held for the WHOLE duration of a reply being
+ *   composed ("thinking"). Effectively infinite in human terms — the crown
+ *   becomes a blur, which is exactly what a spinning-blur status light is.
+ *   It cannot be expressed as a normal `energy` number because energy also
+ *   scales the core glow (a literal infinity would blow out the lighting),
+ *   so the frame loop special-cases the thinking flag instead.
+ */
+const ENERGY_TARGET = 0.28
+const SPIN_UP_SECONDS = 1.4
+const COOL_DOWN_SECONDS = 4.5
+/** Revolutions-per-second floor while thinking: far past readable motion. */
+const THINKING_ENERGY = 60
+
+/** Mouse-tracking limits for the parallax tilt. */
+const PARALLAX_X = 0.1
+const PARALLAX_Y = 0.07
+/** Fraction of the pointer offset the camera eases toward each second. */
+const PARALLAX_EASE = 3.5
 
 /** Backdrop camera field of view, degrees. */
 const FOV = 45
@@ -110,46 +141,128 @@ function fitDistance(fovRad: number, aspect: number, tilt: number): number {
   return Math.min(dV, dH) / FILL
 }
 
-function BackgroundCameraRig() {
+/** Shared live state between the crown and the camera rig, held in refs so
+ *  per-frame writes never re-render anything. */
+interface RingMotionState {
+  /** Normalised pointer position over the window, -1..1 on each axis. */
+  mouse: { x: number; y: number }
+  /** Eased parallax offsets actually applied to the scene (radians). */
+  parallaxX: number
+  parallaxY: number
+  /** Extra revolutions-per-second currently injected by message pulses. */
+  energy: number
+  /** True while the assistant is composing a reply: spin at blur speed. */
+  thinking: boolean
+}
+
+/**
+ * Camera rig: frames the crown to fill the viewport and leans the whole view
+ * a few degrees toward the pointer. The backdrop div is `pointer-events-none`,
+ * so the listener lives on `window` — the ring watches where the cursor is
+ * without ever intercepting clicks meant for the page above it.
+ */
+function BackgroundCameraRig({ motion }: { motion: MutableRefObject<RingMotionState> }) {
   const { camera, size } = useThree()
-  useFrame((state) => {
+  useEffect(() => {
+    const onPointerMove = (e: PointerEvent) => {
+      motion.current.mouse.x = (e.clientX / Math.max(1, window.innerWidth)) * 2 - 1
+      motion.current.mouse.y = (e.clientY / Math.max(1, window.innerHeight)) * 2 - 1
+    }
+    window.addEventListener('pointermove', onPointerMove, { passive: true })
+    return () => window.removeEventListener('pointermove', onPointerMove)
+  }, [motion])
+
+  useFrame((state, delta) => {
     const persp = camera as THREE.PerspectiveCamera
     const t = state.clock.elapsedTime
-    // Match the wobble applied to the crown itself (see OrbitingRingCrown).
-    const tilt = VIEW_TILT + Math.sin(t * 0.09) * 0.06
+    const m = motion.current
+    // Exponential ease toward the pointer target: frame-rate independent,
+    // and the lag is what makes it feel like weight rather than a tether.
+    const k = 1 - Math.exp(-PARALLAX_EASE * delta)
+    m.parallaxX += (m.mouse.x * PARALLAX_X - m.parallaxX) * k
+    m.parallaxY += (-m.mouse.y * PARALLAX_Y - m.parallaxY) * k
+    // Match the wobble + parallax applied to the crown itself (see OrbitingRingCrown).
+    const tilt = VIEW_TILT + Math.sin(t * 0.09) * 0.06 + m.parallaxY
+    const yaw = m.parallaxX
     const d = fitDistance(
       THREE.MathUtils.degToRad(persp.fov),
       size.width / Math.max(1, size.height),
       tilt,
     )
-    // Look straight down the tilted ring axis at the crown centre.
-    persp.position.set(0, d * Math.sin(tilt), d * Math.cos(tilt))
+    // Look down the tilted ring axis at the crown centre, swung sideways by
+    // the pointer so the halo shifts with the mouse.
+    persp.position.set(
+      d * Math.sin(yaw),
+      d * Math.sin(tilt) * Math.cos(yaw),
+      d * Math.cos(tilt) * Math.cos(yaw),
+    )
     persp.lookAt(0, 0, 0)
   })
   return null
 }
 
-function OrbitingRingCrown() {
+function OrbitingRingCrown({ motion }: { motion: MutableRefObject<RingMotionState> }) {
   const orbitRef = useRef<THREE.Group>(null)
   const tiltRef = useRef<THREE.Group>(null)
+  const glowRef = useRef<THREE.PointLight>(null)
   const { links, pins, center } = useMemo(() => {
     const layout = buildCrownLayout()
     // Centre the crown on the scene origin; the camera rig frames that point.
     return { ...layout, center: CROWN_EXTENT.center.clone() }
   }, [])
 
-  useFrame((state) => {
+  // Spin angle is integrated per frame instead of read off elapsed time,
+  // because energy from message pulses changes the RATE mid-flight — a
+  // time-multiplied angle would jump whenever the rate changed. Keeping the
+  // integral continuous means surging speeds up the spin smoothly and
+  // cooling down slows it smoothly, never teleporting it.
+  const angleRef = useRef(0)
+  const lastTimeRef = useRef<number | null>(null)
+  // Eased blur-speed factor while thinking: ramps to full speed over a few
+  // frames and back down after, so the ring is flung up rather than tele-
+  // ported — but far faster than the pulse ramp, because "thinking" should
+  // read as instant.
+  const spinFactorRef = useRef(0)
+
+  useFrame((state, delta) => {
     const t = state.clock.elapsedTime
+    const m = motion.current
+    if (lastTimeRef.current === null) lastTimeRef.current = t
+    // Clamp delta so a backgrounded tab returning does not fling the ring.
+    const dt = Math.min(delta, 0.1)
+    lastTimeRef.current = t
+
+    // Exponential approach to 1 while thinking, 0 when idle (~0.25s each way).
+    const target = m.thinking ? 1 : 0
+    spinFactorRef.current += (target - spinFactorRef.current) * (1 - Math.exp(-4 * dt))
+
     if (orbitRef.current) {
-      // Negative yaw: the ring circles the sphere the other way than before.
-      // The surge term keeps the pace uneven so the motion actually reads.
+      // Idle surge keeps the pace uneven so the motion reads even when calm.
       const surge = 1 + SURGE_AMOUNT * Math.sin((t / SURGE_PERIOD) * Math.PI * 2)
-      orbitRef.current.rotation.y = -t * ORBIT_RATE * Math.PI * 2 * surge
+      // While thinking the rate goes to THINKING_ENERGY rev/s — effectively
+      // infinite: at ~60 rev/s on a 60Hz display the crown advances a full
+      // revolution or more per frame, so it renders as pure blur. The idle
+      // surge multiplier is dropped in that regime (it would only add jitter
+      // nobody can see under a blur anyway).
+      const rate = m.thinking || spinFactorRef.current > 0.02
+        ? THREE.MathUtils.lerp(ORBIT_RATE * surge + m.energy, THINKING_ENERGY, spinFactorRef.current)
+        : ORBIT_RATE * surge + m.energy
+      // Negative yaw: the ring circles the sphere the other way than before.
+      angleRef.current -= rate * Math.PI * 2 * dt
+      orbitRef.current.rotation.y = angleRef.current
     }
     if (tiltRef.current) {
       // Gentle wobble on top of the fixed backdrop tilt — slow and small so
-      // the huge ring drifts rather than bobs.
-      tiltRef.current.rotation.x = VIEW_TILT + Math.sin(t * 0.09) * 0.06
+      // the huge ring drifts rather than bobs — plus pointer parallax shared
+      // with the camera rig (the crown tips slightly toward the mouse).
+      tiltRef.current.rotation.x = VIEW_TILT + Math.sin(t * 0.09) * 0.06 + m.parallaxY
+      tiltRef.current.rotation.z = -m.parallaxX * 0.5
+    }
+    if (glowRef.current) {
+      // The core brightens while the ring is spun up, then fades back. Capped
+      // contribution from the thinking state so a blur-speed spin glows hot
+      // but never blows out the lighting.
+      glowRef.current.intensity = 0.6 + m.energy * 6 + (m.thinking ? 1.5 : 0)
     }
   })
 
@@ -159,6 +272,11 @@ function OrbitingRingCrown() {
       <mesh>
         <sphereGeometry args={[CORE_SPHERE_RADIUS, 48, 32]} />
         <meshStandardMaterial color={RING_COLOR} roughness={0.35} metalness={0.35} />
+      </mesh>
+
+      <mesh position={[0, 0, CORE_SPHERE_RADIUS * 2.5]} ref={glowRef}>
+        {/* Core glow light — brightens while message pulses spin the ring up. */}
+        <pointLight color={RING_COLOR} intensity={0.6} distance={CORE_SPHERE_RADIUS * 40} decay={2} />
       </mesh>
 
       <group ref={tiltRef}>
@@ -192,14 +310,56 @@ function OrbitingRingCrown() {
 }
 
 /**
- * Full-bleed, non-interactive backdrop: the crown ring scaled to fill the
- * viewport behind page content, softly translucent with a warm glow bleeding
- * from its centre. Mount inside a `relative isolate` container. Passes
- * `frameloop="never"` while the page is hidden so a minimised window costs
- * nothing.
+ * Full-bleed backdrop: the crown ring scaled to fill the viewport behind page
+ * content, softly translucent with a warm glow bleeding from its centre. It
+ * reacts to the app in two ways: it leans toward the pointer (parallax), and
+ * it spins up hard when a message is sent, coasting back down once the reply
+ * lands — see lib/ring-pulse for how those events arrive. Mount inside a
+ * `relative isolate` container. Passes `frameloop="never"` while the page is
+ * hidden so a minimised window costs nothing.
  */
 export function RingCrownBackground({ opacity = 0.3 }: { opacity?: number }) {
   const visible = usePageVisible()
+
+  // One mutable object shared by reference into both frame loops; nothing
+  // here is state because per-frame changes must never re-render React.
+  const motion = useRef<RingMotionState>({ mouse: { x: 0, y: 0 }, parallaxX: 0, parallaxY: 0, energy: 0, thinking: false })
+
+  // Energy ramp: pulse() drives the target up fast, settle() drops it back
+  // to zero, and the actual value eases exponentially toward the target each
+  // frame — so repeated sends stack into one continuous surge instead of
+  // restarting the animation, and the wind-down always glides.
+  // thinking/idle are the sustained state: while the assistant composes a
+  // reply the flag is set and the frame loop holds the spin at blur speed;
+  // it is written straight to the ref because nothing about it needs a React
+  // render — only the pulse ramp below does.
+  const [energyTarget, setEnergyTarget] = useState(0)
+  useEffect(() => {
+    return onRingEvent((event) => {
+      if (event === 'pulse') {
+        setEnergyTarget((prev) => Math.min(prev + ENERGY_TARGET, ENERGY_TARGET * 2))
+      } else if (event === 'thinking') {
+        motion.current.thinking = true
+      } else if (event === 'idle') {
+        motion.current.thinking = false
+      } else {
+        setEnergyTarget(0)
+      }
+    })
+  }, [])
+  useEffect(() => {
+    const id = setInterval(() => {
+      const m = motion.current
+      const rate = m.energy < energyTarget ? SPIN_UP_SECONDS : COOL_DOWN_SECONDS
+      // Exponential approach over `rate` seconds: each tick closes the gap
+      // by a fixed fraction, so the ramp is frame-rate independent and the
+      // wind-down always glides rather than stopping dead.
+      m.energy += (energyTarget - m.energy) * (1 - Math.exp(-0.1 / rate))
+      if (Math.abs(m.energy - energyTarget) < 0.001) m.energy = energyTarget
+    }, 100)
+    return () => clearInterval(id)
+  }, [energyTarget])
+
   return (
     <div
       className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
@@ -220,10 +380,10 @@ export function RingCrownBackground({ opacity = 0.3 }: { opacity?: number }) {
           camera={{ position: [0, 2, 4], fov: FOV, near: 0.1, far: 100 }}
           gl={{ alpha: true, antialias: true }}
         >
-          <BackgroundCameraRig />
+          <BackgroundCameraRig motion={motion} />
           <hemisphereLight args={[0xfff3dd, 0x3a2f22, 1.2]} />
           <directionalLight position={[3, 5, 4]} intensity={0.9} />
-          <OrbitingRingCrown />
+          <OrbitingRingCrown motion={motion} />
         </Canvas>
       </div>
       {/* Soft vignette so the ring fades at the edges instead of clipping hard. */}
