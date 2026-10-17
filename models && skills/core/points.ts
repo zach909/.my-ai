@@ -173,6 +173,28 @@ function savePoints(state: PointsState, file: string): void {
   }
 }
 
+let nameGuard: (name: string) => boolean = () => false;
+
+/**
+ * The server says which names are taken by other people's accounts. A name on
+ * the board is just a label somebody typed, so without this a person could add
+ * "Sam" and pass for the real Sam. The guard is asked by addMember,
+ * setSelfName and when a computer on the network first appears.
+ */
+export function setNameGuard(fn: (name: string) => boolean): void {
+  nameGuard = fn;
+}
+
+function checkName(name: string): void {
+  let reserved = true;
+  try {
+    reserved = nameGuard(name);
+  } catch {
+    reserved = true;
+  }
+  if (reserved) throw new PointsError(`"${name}" is someone else's account. Ask them to join and add themselves, or use another name.`, 403);
+}
+
 const find = (state: PointsState, id: string): Member | undefined => state.members.find(m => m.id === id);
 
 function need(state: PointsState, id: string): Member {
@@ -204,6 +226,7 @@ export function setRates(input: { ask?: number; bid?: number }, file = pointsFil
 
 export function setSelfName(name: string, file = pointsFile()): PointsState {
   if (typeof name !== "string" || !NAME_RE.test(name)) throw new PointsError("A name is letters, digits, spaces, '.', '-' and '_', up to 64 characters.");
+  checkName(name);
   const state = loadPoints(file);
   if (state.members.some(m => m.id !== SELF_ID && m.name.toLowerCase() === name.toLowerCase())) throw new PointsError(`"${name}" is already taken.`);
   need(state, SELF_ID).name = name;
@@ -229,6 +252,8 @@ export interface AddMemberOptions {
 
 export function addMember(name: string, opts: AddMemberOptions = {}, file = pointsFile(), now = Date.now()): Member {
   if (typeof name !== "string" || !NAME_RE.test(name)) throw new PointsError("A name is letters, digits, spaces, '.', '-' and '_', up to 64 characters.");
+  const kindOf = opts.kind ?? "person";
+  if (kindOf === "person") checkName(name);
   const state = loadPoints(file);
   if (state.members.length >= MAX_MEMBERS) throw new PointsError(`This device tracks at most ${MAX_MEMBERS} members.`);
   if (state.members.some(m => m.name.toLowerCase() === name.toLowerCase())) throw new PointsError(`"${name}" is already on the board.`);
@@ -383,9 +408,15 @@ export function recordBorrow(peerName: string, points: number, file = pointsFile
   let peer = state.members.find(m => m.kind === "peer" && m.name === peerName);
   if (!peer) {
     const name = peerName.slice(0, 64);
+    let reserved = true;
+    try {
+      reserved = nameGuard(name);
+    } catch {
+      reserved = true;
+    }
     peer = {
       id: `peer-${randomBytes(5).toString("hex")}`,
-      name: state.members.some(m => m.name.toLowerCase() === name.toLowerCase()) ? `${name.slice(0, 58)} (peer)` : name,
+      name: reserved || state.members.some(m => m.name.toLowerCase() === name.toLowerCase()) ? `${name.slice(0, 58)} (peer)` : name,
       kind: "peer", points: 0, earned: 0, joinedAt: now, referredBy: null, referralPaid: true, hiredBy: null,
     };
     state.members.push(peer);

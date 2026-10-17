@@ -204,6 +204,12 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     <h2>Your chats, organised by the agent</h2>
     <p class="nc-dim">Chats are filed into groups as you go. The agent names each group once it has read what is in it.</p>
     <div id="chats"></div>
+    <div class="row">
+      <a class="nc-btn" id="c-export" href="/api/chat-history/export" download>Export my chats (.zip)</a>
+      <input class="nc-input grow" id="c-file" type="file" accept=".zip,application/zip">
+      <button class="nc-btn primary" id="c-import">Import chats</button>
+    </div>
+    <p class="nc-dim">Resetting a machine? Export first, then import the zip on the new one. Chats already there are left alone, so importing twice is safe.</p>
   </section>
 </main>
 <script>
@@ -569,6 +575,22 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     if (openId) loadDetail();
   }
 
+  $('c-import').addEventListener('click', function () {
+    var f = $('c-file').files && $('c-file').files[0];
+    if (!f) { say('Choose a zip first.', true); return; }
+    if (f.size > 25 * 1024 * 1024) { say('That zip is over 25 MB.', true); return; }
+    var reader = new FileReader();
+    reader.onerror = function () { say('Could not read that file.', true); };
+    reader.onload = function () {
+      var bytes = new Uint8Array(reader.result), bin = '';
+      for (var i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+      act(api('POST', '/api/chat-history/import', { zip: btoa(bin) })).then(function (r) {
+        $('c-file').value = '';
+        say('Added ' + r.added + ' chat' + (r.added === 1 ? '' : 's') + ', ' + r.skipped + ' already here' + (r.invalid ? ', ' + r.invalid + ' could not be read' : '') + '.');
+      }, function () {});
+    };
+    reader.readAsArrayBuffer(f);
+  });
   $('m-add').addEventListener('click', function () {
     act(api('POST', '/api/commons/members', { name: $('m-name').value })).then(function () { $('m-name').value = ''; });
   });

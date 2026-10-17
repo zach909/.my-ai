@@ -319,3 +319,27 @@ describe('hiring', () => {
     expect(() => payWage(SELF_ID, sam.id, 1, file)).toThrow(/does not work/)
   })
 })
+
+describe('names that belong to someone else\'s account', async () => {
+  const { setNameGuard } = await import('../../models && skills/core/points.js')
+  afterEach(() => setNameGuard(() => false))
+
+  it('cannot be added to the board, taken as your own name, or used by a computer that turns up', () => {
+    setNameGuard(n => n.toLowerCase() === 'sam')
+    expect(() => addMember('Sam', {}, file)).toThrow(/someone else's account/)
+    expect(() => addMember('SAM', {}, file)).toThrow(PointsError)
+    expect(() => setSelfName('sam', file)).toThrow(/someone else's account/)
+    addMember('Pat', {}, file) // a free name still works
+    award(SELF_ID, 5, 'task', 'w', file)
+    recordBorrow('Sam', 1, file) // a machine calling itself Sam is shown as a computer, not as the person
+    const peer = loadPoints(file).members.find(m => m.kind === 'peer')!
+    expect(peer.name).toBe('Sam (peer)')
+  })
+
+  it('treats a guard that throws as a no, and lets AIs through (they are not people)', () => {
+    setNameGuard(() => { throw new Error('boom') })
+    expect(() => addMember('Anyone', {}, file)).toThrow(PointsError)
+    setNameGuard(n => n === 'Coder')
+    expect(ensureMember('agent-1', 'Coder', 'agent', file).kind).toBe('agent')
+  })
+})

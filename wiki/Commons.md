@@ -14,6 +14,8 @@ Points are only created in bounded ways, so the pile cannot grow forever:
 
 The leaderboard ranks lifetime points earned, so spending points does not cost you your place. It ranks the people and AIs *this device* has dealt with: a club scoreboard on one device, not a bank. Two devices each keep their own copy of a trade.
 
+**Names cannot be borrowed.** A name on the board is a label somebody typed, so a regular user cannot add, or rename themselves to, the name of another account, and a computer that calls itself by an account's name is shown as "(peer)". The owner and the admin are exempt so they can list a friend who also has an account. Each person's board is their own ledger, so this protects what you see on your own board and what you put on it; it does not make one person's points visible or editable by another.
+
 ## What your compute is worth (Settings on /commons)
 
 Two numbers, in points per Compute Unit (CU, about a second of work on a reference computer):
@@ -113,3 +115,7 @@ A scheduled message goes to the agent like a typed one, so a risky tool still wa
 **The brain is shared.** By default it does **not** learn from or remember what other people say, and they cannot read what the owner put in, so one person's chat cannot surface in another's answer. The admin can turn learning on. What the brain has already learned stays shared either way.
 
 Projects were being written to the public wiki folder on every change; they are now private until you tick **Share in the league**.
+
+## Taking your chats with you
+
+Resetting a machine? On `/commons`, under your chats, **Export my chats (.zip)** downloads every conversation you have as one zip (`manifest.json` plus `threads/<id>.json`; it opens in any zip tool). On the new machine, choose the zip and press **Import chats**. Chats are filed into groups as usual. Chats already there are never overwritten, so importing the same zip twice is safe. Imported chats are kept, not re-taught to the AI. Each person exports and imports only their own chats. The zip is read defensively: size limits, checksums, and only well-formed chats are accepted.

@@ -10,6 +10,8 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+import { exportChats, importChats } from '../models && skills/core/chat-archive.js';
+import { ZipError } from '../models && skills/core/zip-archive.js';
 import { UserProfileStore, type ProfileList } from '../models && skills/core/user-profile-store.js';
 import type { NetworkStateSnapshot } from '../models && skills/core/onebrain.js';
 import {
@@ -31,7 +33,6 @@ import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AVATAR_HTML } from './avatar.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
-import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
 import { COMMONS_PAGE } from './commons-page.js';
@@ -40,7 +41,8 @@ import { startScheduler } from '../models && skills/core/scheduler.js';
 import { handleSafetyRoutes, isSafetyRoute } from './safety-routes.js';
 import { handleAccountsRoutes, isAccountsRoute, isAccountsPublicRoute } from './accounts-routes.js';
 import { ACCOUNTS_PAGE } from './accounts-page.js';
-import { getAccounts, resolveWho, userMayReach, USER_COOKIE } from '../models && skills/core/accounts.js';
+import { getAccounts, nameBelongsToAnotherAccount, resolveWho, userMayReach, USER_COOKIE } from '../models && skills/core/accounts.js';
+import { setNameGuard } from '../models && skills/core/points.js';
 import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, setLearnPolicy, who } from '../models && skills/core/user-context.js';
 import { sharedToolGate } from '../models && skills/core/tool-safety.js';
 import { startExperts } from '../models && skills/core/experts.js';
@@ -1471,6 +1473,8 @@ export class WebServer {
     }
     // The shared brain learns from, and remembers, other people only if the admin says so.
     setLearnPolicy(() => getAccounts().learnFromUsers());
+    // Nobody can put another account's name on the points board and pass for them.
+    setNameGuard(name => nameBelongsToAnotherAccount(getAccounts(), name));
     try {
       if (!getAccounts().hasAdmin()) {
         console.log(
@@ -4060,6 +4064,38 @@ export class WebServer {
           updatedAt: m.thread.updatedAt,
         })),
       });
+      return;
+    }
+
+    // GET /api/chat-history/export — every chat of the person asking, as one zip,
+    // to keep before resetting a machine. POST /api/chat-history/import brings a
+    // zip back ({ zip: <base64> }); chats already here are never overwritten.
+    if (pathname === '/api/chat-history/export' && method === 'GET') {
+      try {
+        const zip = exportChats(this.chatHistory);
+        this.setSecurityHeaders(res);
+        res.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="neuroclaw-chats-${new Date().toISOString().slice(0, 10)}.zip"`,
+          'Content-Length': zip.length,
+        });
+        res.end(zip);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+    if (pathname === '/api/chat-history/import' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req, 40 * 1024 * 1024) as { zip?: unknown } | null;
+        if (!body || typeof body.zip !== 'string' || !/^[A-Za-z0-9+/=\s]+$/.test(body.zip)) {
+          this.sendJson(res, { error: 'Send { "zip": "<the file, base64>" }.' }, 400);
+          return;
+        }
+        this.sendJson(res, importChats(this.chatHistory, Buffer.from(body.zip, 'base64')));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, err instanceof ZipError ? 400 : 500);
+      }
       return;
     }
 
