@@ -1,10 +1,31 @@
 import { defineConfig } from 'vite';
-import { tanstackStart } from '@tanstack/react-start/plugin/vite';
-import viteReact from '@vitejs/plugin-react';
-import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
+
+// ESM/CJS interop safety: if a package ever resolves through an interop layer
+// that double-wraps its default export, `namespace.default.default` is the real
+// function. Pick the deepest callable so the config works regardless of how the
+// bundler externalised the module.
+function pickCallable(ns: Record<string, unknown>, dflt: unknown): any {
+  let fn: any = typeof dflt === 'function' ? dflt : (ns as any).default;
+  if (typeof fn === 'function' && typeof fn.default === 'function') fn = fn.default;
+  return fn;
+}
+
+// Torn-install fallback (see the long comment above CONFIG_BARE_DEPS): when one
+// of the plugin packages below is corrupt, Vite's rolldown config-bundler dies
+// with "Failed to resolve entry" — but only for *static* bare imports. These
+// are dynamic `await import()` calls: externalize-deps resolves them lazily via
+// plain Node at run time, which is the one resolution path both reported
+// failures proved works. When every dep is intact these lines are equivalent
+// in effect to the static imports they replace.
+const modStart = await import(/* @vite-ignore */ '@tanstack/react-start/plugin/vite');
+const modReact = await import(/* @vite-ignore */ '@vitejs/plugin-react');
+const modTw = await import(/* @vite-ignore */ '@tailwindcss/vite');
+const tanstackStart = pickCallable(modStart, undefined) ?? (modStart as any).tanstackStart;
+const viteReact = pickCallable(modReact, modReact.default);
+const tailwindcss = pickCallable(modTw, modTw.default);
 
 // Guarantee global CSS survives an AI coding agent's rewrite of
 // src/routes/__root.tsx. TanStack Start only emits a stylesheet for CSS
@@ -220,18 +241,24 @@ function routeTreeHealth() {
 // runner caches or strict conditional-export handling around
 // '@tanstack/react-start/plugin/vite'). That is exactly the second crash above.
 //
-// Final approach: do NOT force any loader. Keep Vite's default `bundle` path
-// (verified working end-to-end here: config loads, route tree generates, server
-// listens), and add a self-healing fallback: before Vite touches the bundle
-// pipeline, verify every bare import this config needs actually resolves AND
-// that all files listed in each package's package.json "exports"/"main" exist
-// on disk. Only when the install is genuinely torn — i.e. the bundler WOULD die
-// with the opaque "Failed to resolve entry" error — do we re-exec the SAME
-// command once with `--config-loader=runner` as a last resort (an honest
-// ERR_MODULE_NOT_FOUND naming the broken package beats a silent startup veto),
-// guarded by an env var against loops. On a healthy install none of this runs
-// and behaviour is identical to stock Vite. scripts/dev.mjs likewise no longer
-// forces a loader.
+// Final approach — eliminate the fragile dependency instead of juggling loaders:
+// this file no longer *statically* imports any plugin package. The three Vite
+// plugins are loaded with plain-Node dynamic `await import()` (top of file),
+// which rolldown's externalize-deps pass never touches — it only resolves
+// static bare imports. So even on a torn install ("Failed to resolve entry for
+// package @vitejs/plugin-react"), the config bundles cleanly and the plugins
+// load through Node's own resolver, the one path both reported failures proved
+// works. No forced --config-loader flag anywhere (the runner variant caused the
+// second crash: ERR_MODULE_NOT_FOUND for packages plain Node resolves fine).
+//
+// Belt-and-braces last resort: the self-check below (`configDepIsIntact`)
+// verifies every bare specifier this config needs actually resolves AND that
+// all files listed in each package's package.json "exports"/"main" exist on
+// disk. If an install is so broken that something else still trips the bundler,
+// we re-exec the SAME command once with `--configLoader native` (Vite loads
+// this file through Node itself — no rolldown, no runner), guarded by an env
+// var against loops. On a healthy install none of this runs and behaviour is
+// identical to stock Vite. scripts/dev.mjs likewise does not force a loader.
 const CONFIG_BARE_DEPS = [
   'vite',
   '@tanstack/react-start',
@@ -296,34 +323,54 @@ function configDepIsIntact(specifier: string): boolean {
 }
 
 const BROKEN_CONFIG_DEPS = CONFIG_BARE_DEPS.filter((d) => !configDepIsIntact(d));
-const HAS_CONFIG_LOADER_FLAG = process.argv.some(
-  (a) => a === '--config-loader' || a.startsWith('--config-loader='),
-);
+
+// The three plugin specifiers loaded via dynamic `await import()` at the top of
+// this file. When any of them is torn, Vite's default `bundle` config-loader
+// (rolldown + externalize-deps) dies with the opaque "Failed to resolve entry"
+// error — but note it only ever *externalises* those imports now; nothing in
+// this file statically imports a plugin package anymore, so even a torn install
+// bundles cleanly here and the plain-Node dynamic resolution above succeeds.
+// The detection below exists as a belt-and-braces last resort for environments
+// where something else about the torn install still trips the bundler: we then
+// re-exec the SAME command once with `--configLoader native`, which loads this
+// exact file through Node itself (no rolldown, no runner pipeline), guarded by
+// an env var against loops. On a healthy install none of this runs.
+const SHIMMED_SPECS = [
+  '@tanstack/react-start/plugin/vite',
+  '@vitejs/plugin-react',
+  '@tailwindcss/vite',
+];
+const NEEDS_NATIVE_LOADER = BROKEN_CONFIG_DEPS.some((d) => SHIMMED_SPECS.includes(d));
+
 if (
-  BROKEN_CONFIG_DEPS.length > 0 &&
-  !HAS_CONFIG_LOADER_FLAG &&
+  NEEDS_NATIVE_LOADER &&
   !process.env.NEUROCLAW_CONFIG_LOADER_GUARD &&
+  process.argv.every(
+    (a) => a !== '--configLoader' && !a.startsWith('--configLoader='),
+  ) &&
   process.env.VITEST === undefined // vitest loads configs programmatically
 ) {
   console.error(
-    `[vite.config] Incomplete install detected for: ${BROKEN_CONFIG_DEPS.join(', ')}. ` +
-      'Retrying config load with --config-loader=runner. If this still fails, repair the ' +
-      'install: `rm -rf node_modules && npm install --legacy-peer-deps`.',
+    '[vite.config] Incomplete install detected for: ' +
+      BROKEN_CONFIG_DEPS.join(', ') +
+      '. Retrying config load with --configLoader native (plain Node). If this ' +
+      'still fails, repair the install: `rm -rf node_modules package-lock.json && npm install --legacy-peer-deps`.',
   );
-  process.env.NEUROCLAW_CONFIG_LOADER_GUARD = '1';
   try {
     const { spawnSync } = await import('node:child_process');
     const r = spawnSync(
       process.execPath,
-      [...process.execArgv, ...process.argv.slice(1), '--config-loader=runner'],
-      { stdio: 'inherit', env: process.env },
+      [...process.execArgv, ...process.argv.slice(1), '--configLoader', 'native'],
+      {
+        stdio: 'inherit',
+        env: { ...process.env, NEUROCLAW_CONFIG_LOADER_GUARD: '1' },
+      },
     );
-    if (!r.error && r.status !== null) process.exit(r.status);
+    if (!r.error) process.exit(r.status ?? 0);
     // Could not re-exec meaningfully — fall through and load normally.
   } catch {
     /* fail open: original startup behaviour */
   }
-  delete process.env.NEUROCLAW_CONFIG_LOADER_GUARD;
 }
 
 export default defineConfig({
