@@ -4,16 +4,16 @@
   "neurons": [
     {
       "name": "respond_0",
-      "id": 145
+      "id": 88
     },
     {
       "name": "respond_1",
-      "id": 146
+      "id": 89
     },
     {
       "name": "anticipate_2",
-      "id": 147
+      "id": 90
     }
   ],
-  "publishedAt": "2026-10-17T22:29:40.801Z"
+  "publishedAt": "2026-10-17T22:42:04.283Z"
 }
