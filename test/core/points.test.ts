@@ -9,6 +9,7 @@ import path from 'node:path'
 import {
   loadPoints, setRates, addMember, ensureMember, award, spend, recordLend, recordBorrow, leaderboard, pointsSummary,
   canTrade, priceOf, setSelfName, PointsError, SELF_ID, REFERRAL_BONUS, REFERRAL_CAP, DEFAULT_ASK,
+  JOIN_GRAB, hire, payWage, letGo,
 } from '../../models && skills/core/points.js'
 
 let dir: string
@@ -112,7 +113,10 @@ describe('adding people', () => {
       const m = addMember(`Friend ${i}`, {}, file)
       award(m.id, 1, 'task', 'work', file)
     }
-    expect(me().points).toBe(REFERRAL_CAP * REFERRAL_BONUS)
+    const s = loadPoints(file)
+    const paid = s.entries.filter(e => e.member === SELF_ID && e.kind === 'referral').length
+    expect(paid).toBe(REFERRAL_CAP)
+    expect(paid * REFERRAL_BONUS).toBe(REFERRAL_CAP * REFERRAL_BONUS)
   })
 
   it('agents and peers refer no one and never trigger a bonus', () => {
@@ -191,5 +195,127 @@ describe('the file', () => {
     expect(s.members.map(m => m.id).sort()).toEqual(['me', 'ok1'])
     expect(s.members.find(m => m.id === 'ok1')?.points).toBe(0)
     expect(s.ask).toBe(DEFAULT_ASK)
+  })
+})
+
+const total = () => loadPoints(file).members.reduce((n, m) => n + m.points, 0)
+const pts = (id: string) => loadPoints(file).members.find(m => m.id === id)!.points
+
+describe('adding a person takes from everyone else', () => {
+  it('moves JOIN_GRAB points from the others to whoever added the person, and prints none', () => {
+    const a = addMember('Ann', { referredBy: null }, file)
+    const b = addMember('Bob', { referredBy: null }, file)
+    award(a.id, 40, 'task', 'w', file)
+    award(b.id, 40, 'task', 'w', file)
+    const before = total()
+    addMember('Cy', {}, file) // added by you
+    expect(me().points).toBe(JOIN_GRAB)
+    expect(pts(a.id)).toBe(35)
+    expect(pts(b.id)).toBe(35)
+    expect(total()).toBe(before)
+    expect(me().earned).toBe(0) // a transfer is not work
+  })
+
+  it('takes less from someone who has less, and the rest from the others, so the total still reaches 10', () => {
+    const a = addMember('Ann', { referredBy: null }, file)
+    const b = addMember('Bob', { referredBy: null }, file)
+    award(a.id, 2, 'task', 'w', file)
+    award(b.id, 50, 'task', 'w', file)
+    addMember('Cy', {}, file)
+    expect(pts(a.id)).toBe(0)
+    expect(pts(b.id)).toBe(42)
+    expect(me().points).toBe(10)
+  })
+
+  it('takes only what exists when the others hold less than 10, and never goes below zero', () => {
+    const a = addMember('Ann', { referredBy: null }, file)
+    award(a.id, 3, 'task', 'w', file)
+    addMember('Cy', {}, file)
+    expect(pts(a.id)).toBe(0)
+    expect(me().points).toBe(3)
+  })
+
+  it('takes nothing from AIs or computers, or from the person just added', () => {
+    const bot = ensureMember('agent-1', 'Coder', 'agent', file)
+    award(bot.id, 30, 'task', 'w', file)
+    addMember('Cy', {}, file)
+    expect(pts(bot.id)).toBe(30)
+    expect(me().points).toBe(0)
+  })
+
+  it('stops after REFERRAL_CAP adds, so made-up names cannot drain the board', () => {
+    const a = addMember('Ann', { referredBy: null }, file)
+    award(a.id, 1000, 'task', 'w', file)
+    for (let i = 0; i < REFERRAL_CAP + 10; i++) addMember(`Friend ${i}`, {}, file)
+    expect(me().points).toBe(REFERRAL_CAP * JOIN_GRAB)
+    expect(pts(a.id)).toBe(1000 - REFERRAL_CAP * JOIN_GRAB)
+  })
+
+  it('does not take from a person who adds someone themselves', () => {
+    const a = addMember('Ann', { referredBy: null }, file)
+    award(a.id, 20, 'task', 'w', file)
+    award(SELF_ID, 20, 'task', 'w', file)
+    addMember('Dee', { referredBy: a.id }, file)
+    expect(pts(a.id)).toBe(30) // Ann gained 10 from you
+    expect(me().points).toBe(10)
+  })
+})
+
+describe('hiring', () => {
+  const setup = () => {
+    const sam = addMember('Sam', { referredBy: null }, file)
+    award(SELF_ID, 100, 'task', 'w', file)
+    return sam
+  }
+
+  it('puts someone under you and pays the wage out of your own balance', () => {
+    const sam = setup()
+    const before = total()
+    hire(SELF_ID, sam.id, 30, file)
+    expect(me().points).toBe(70)
+    expect(pts(sam.id)).toBe(30)
+    expect(loadPoints(file).members.find(m => m.id === sam.id)!.hiredBy).toBe(SELF_ID)
+    expect(total()).toBe(before)
+    expect(loadPoints(file).members.find(m => m.id === sam.id)!.earned).toBe(0)
+  })
+
+  it('refuses a hire you cannot afford, or for nothing, and changes nothing', () => {
+    const sam = setup()
+    expect(() => hire(SELF_ID, sam.id, 101, file)).toThrow(/Not enough/)
+    expect(() => hire(SELF_ID, sam.id, 0, file)).toThrow(PointsError)
+    expect(loadPoints(file).members.find(m => m.id === sam.id)!.hiredBy).toBeNull()
+    expect(me().points).toBe(100)
+  })
+
+  it('lets only one employer hold someone, and not yourself, a computer or someone above you', () => {
+    const sam = setup()
+    const ann = addMember('Ann', { referredBy: null }, file)
+    award(sam.id, 50, 'task', 'w', file)
+    hire(SELF_ID, sam.id, 10, file)
+    expect(() => hire(ann.id, sam.id, 1, file)).toThrow(/already works/)
+    expect(() => hire(SELF_ID, SELF_ID, 1, file)).toThrow(/yourself/)
+    expect(() => hire(sam.id, SELF_ID, 1, file)).toThrow(/above you/)
+    recordBorrow('far-pc', 1, file)
+    const peer = loadPoints(file).members.find(m => m.kind === 'peer')
+    if (peer) expect(() => hire(SELF_ID, peer.id, 1, file)).toThrow(PointsError)
+  })
+
+  it('pays more wage only to someone you hired', () => {
+    const sam = setup()
+    const ann = addMember('Ann', { referredBy: null }, file)
+    expect(() => payWage(SELF_ID, sam.id, 5, file)).toThrow(/does not work/)
+    hire(SELF_ID, sam.id, 10, file)
+    payWage(SELF_ID, sam.id, 5, file)
+    expect(pts(sam.id)).toBe(15)
+    expect(() => payWage(SELF_ID, ann.id, 5, file)).toThrow(/does not work/)
+  })
+
+  it('lets them go, and what was paid stays paid', () => {
+    const sam = setup()
+    hire(SELF_ID, sam.id, 10, file)
+    letGo(SELF_ID, sam.id, file)
+    expect(loadPoints(file).members.find(m => m.id === sam.id)!.hiredBy).toBeNull()
+    expect(pts(sam.id)).toBe(10)
+    expect(() => payWage(SELF_ID, sam.id, 1, file)).toThrow(/does not work/)
   })
 })

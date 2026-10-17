@@ -91,6 +91,10 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       <button class="nc-btn primary" id="m-add">Add</button>
     </div>
     <p class="nc-dim" id="ref-note"></p>
+    <div class="row">
+      <input class="nc-input" id="h-amount" type="number" min="1" step="1" value="10" style="width:110px" title="Points of wage">
+      <span class="nc-dim">points of wage for Hire and Pay on the people above</span>
+    </div>
   </section>
 
   <section class="nc-glass">
@@ -231,18 +235,32 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   // ── The board and the rates ──────────────────────────────────────────
   function renderBoard(pts) {
     var B = $('board'); B.textContent = '';
+    var byId = {};
+    pts.board.forEach(function (m) { byId[m.id] = m; });
+    var wage = function () { return Number($('h-amount').value); };
     pts.board.forEach(function (m) {
       var kind = m.kind === 'agent' ? 'AI' : m.kind === 'peer' ? 'computer' : '';
+      var boss = m.hiredBy && byId[m.hiredBy] ? byId[m.hiredBy] : null;
+      var buttons = [chip(fix(m.points) + ' pts', m.isYou ? 'hot' : '')];
+      if (!m.isYou && m.kind !== 'peer') {
+        if (m.hiredBy === 'me') {
+          buttons.push(btn('Pay', function () { act(api('POST', '/api/commons/members/' + encodeURIComponent(m.id) + '/pay', { amount: wage() })).catch(function () {}); }));
+          buttons.push(btn('Let go', function () { act(api('POST', '/api/commons/members/' + encodeURIComponent(m.id) + '/let-go', {})).catch(function () {}); }));
+        } else if (!m.hiredBy) {
+          buttons.push(btn('Hire', function () { act(api('POST', '/api/commons/members/' + encodeURIComponent(m.id) + '/hire', { amount: wage() })).catch(function () {}); }));
+        }
+      }
       B.appendChild(item(
         m.rank + '.  ' + m.name + (m.isYou && m.name !== 'You' ? '  (you)' : ''),
-        fix(m.earned) + ' earned' + (kind ? ' · ' + kind : ''),
-        [chip(fix(m.points) + ' pts', m.isYou ? 'hot' : '')],
+        fix(m.earned) + ' earned' + (kind ? ' · ' + kind : '') + (boss ? ' · works for ' + (boss.isYou ? 'you' : boss.name) : ''),
+        buttons,
         m.isYou ? 'you' : ''
       ));
     });
     var r = pts.referral;
-    $('ref-note').textContent = 'You are paid ' + r.bonus + ' points for each person you add, once, after they do their first paid work (up to ' + r.cap + ' people). ' +
-      r.paid + ' paid so far, ' + r.waiting + ' waiting.';
+    $('ref-note').textContent = 'Adding a person takes ' + r.joinGrab + ' points from everyone else, split evenly, and gives them to you. Nothing is printed: what you gain, they lose. You are also paid ' +
+      r.bonus + ' points for each person you add, once, after they do their first paid work (up to ' + r.cap + ' people each). ' +
+      r.paid + ' paid so far, ' + r.waiting + ' waiting. Hire someone to put them under you; the wage comes out of your own points.';
     if (document.activeElement !== $('r-ask')) $('r-ask').value = pts.ask;
     if (document.activeElement !== $('r-bid')) $('r-bid').value = pts.bid;
     if (document.activeElement !== $('r-name')) $('r-name').value = pts.you.name;

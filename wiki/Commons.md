@@ -9,6 +9,8 @@ Points are only created in bounded ways, so the pile cannot grow forever:
 - **A project's pot.** Fixed when the project is made, never raised. Tasks are paid out of it; amounts round down, so paid-out is always at or under the pot.
 - **Adding people.** 100 points, once per person you add, paid only after that person does their first paid work (up to 20 people). Adding a name alone pays nothing.
 - **Trading compute moves points, it never makes them.**
+- **Adding a person takes 10 from everyone else.** The 10 points come out of the other people on the board in equal shares (someone with less gives what they have and the rest is split among the others), and go to whoever added the person. What you gain, they lose, so nothing is printed. It happens for your first 20 adds only, and it does not count toward the leaderboard because it is not work.
+- **Hiring.** Hire a person or an AI and they go under you, but it costs: you pay a wage up front out of your own points (you cannot hire for nothing), and you can pay them more later or let them go. One employer at a time, and nobody can hire someone above them. Wages are moved, not made, and do not count as earned.
 
 The leaderboard ranks lifetime points earned, so spending points does not cost you your place. It ranks the people and AIs *this device* has dealt with: a club scoreboard on one device, not a bank. Two devices each keep their own copy of a trade.
 

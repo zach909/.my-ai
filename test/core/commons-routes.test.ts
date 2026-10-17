@@ -94,6 +94,14 @@ describe('the board and the exchange rate', () => {
     expect((await call('GET', '/api/commons')).json.points).toMatchObject({ ask: 3, bid: 5 })
   })
 
+  it('hires, pays and lets go of someone you added, from your own points', async () => {
+    const sam = (await call('POST', '/api/commons/members', { name: 'Sam' })).json.member
+    expect((await call('POST', `/api/commons/members/${sam.id}/hire`, { amount: 5 })).status).toBe(402) // you have nothing yet
+    expect((await call('POST', `/api/commons/members/${sam.id}/hire`, { amount: 0 })).status).toBe(400)
+    expect((await call('POST', '/api/commons/members/nobody/hire', { amount: 1 })).status).toBe(404)
+    expect((await call('POST', `/api/commons/members/${sam.id}/let-go`, {})).status).toBe(400) // not hired
+  })
+
   it('refuses a rate out of range', async () => {
     expect((await call('POST', '/api/commons/rates', { ask: -1 })).status).toBe(400)
     expect((await call('POST', '/api/commons/rates', { bid: 1e9 })).status).toBe(400)
