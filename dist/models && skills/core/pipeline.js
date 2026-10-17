@@ -1,4 +1,5 @@
 import { NetSkillRouter } from './net-skill-router.js';
+import { SkillAccuracyLedger } from './net-skill-accuracy.js';
 import { HyperDimensionalEngine } from './onebrain.js';
 import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
@@ -55,7 +56,17 @@ export class NeuroPipeline {
          */
         this.runHistoryCapacity = 5000;
         this.totalRunsCount = 0;
+        /** The accuracy ledger this pipeline's router reads and writes; shared so every router agrees on what is switched off. */
+        this.skillLedger = new SkillAccuracyLedger();
         this.config = { ...DEFAULT_CONFIG, ...config };
+    }
+    setSkillLedger(ledger) {
+        this.skillLedger = ledger;
+        this.skillRouter?.setLedger(ledger);
+    }
+    /** The router, once the pipeline has built it (it is built on first use). */
+    getSkillRouter() {
+        return this.skillRouter;
     }
     // ─── Lazy initialisation ──────────────────────────────────────────────────
     ensureSubsystems() {
@@ -65,7 +76,7 @@ export class NeuroPipeline {
         // each plugin/skill is a named region of the one mesh, and a tick asks the
         // regions whose MEANING is closest to the input. No separate router
         // network, no random expert weights.
-        this.skillRouter = new NetSkillRouter(2, this.config.embeddingDim);
+        this.skillRouter = new NetSkillRouter(2, this.config.embeddingDim, this.skillLedger);
         this.expertPluginMap.clear();
         this.expertMeaning.clear();
         const addRegion = (id, name, meaning) => {

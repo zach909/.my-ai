@@ -1,10 +1,32 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync } from "node:fs";
-import { join, basename } from "node:path";
-import { tmpdir } from "node:os";
+import { selectBackend } from "../models && skills/core/desktop/backends.js";
+import { pngSize } from "../models && skills/core/desktop/png.js";
+/**
+ * Screen capture.
+ *
+ * Captures through the same native backends as the desktop layer (the display
+ * server's own protocol on X11, the desktop portal on Wayland, the NeuroClaw
+ * app on a phone), so no screenshot program is run, no temp file is written
+ * and there is no command line for a filename to be injected into. The bytes
+ * come back in memory.
+ */
 export class ScreenshotsPlugin extends BasePlugin {
-    constructor(definition) { super(definition); }
+    /** @param backend  Injectable for tests; by default chosen from the environment on each call. */
+    constructor(definition, backend) {
+        super(definition);
+        this.fixedBackend = backend;
+    }
+    backend() {
+        return this.fixedBackend ?? selectBackend();
+    }
+    none(reason) {
+        return { data: "", width: 0, height: 0, format: "none", timestamp: Date.now(), reason };
+    }
+    /**
+     * @param filename  Validated for callers that still pass one. Nothing is
+     *                  written to disk any more, so it names nothing, but a
+     *                  hostile value is still rejected rather than ignored.
+     */
     async capture(filename) {
         if (filename !== undefined) {
             if (typeof filename !== "string") {
@@ -14,56 +36,20 @@ export class ScreenshotsPlugin extends BasePlugin {
                 throw new Error("Security Error: Potential argument injection detected in filename.");
             }
         }
-        const tmpDir = mkdtempSync(join(tmpdir(), "neuroclaw-ss-"));
-        // basename() so a caller-supplied filename can't escape tmpDir via `../`;
-        // execFileSync (no shell) below means it also can't inject shell commands.
-        const outPath = join(tmpDir, filename ? basename(filename) : `screenshot-${Date.now()}.png`);
         try {
-            if (existsSync("/usr/bin/import")) {
-                execFileSync("import", ["-window", "root", outPath], { timeout: 10000 });
-            }
-            else if (existsSync("/usr/bin/gnome-screenshot")) {
-                execFileSync("gnome-screenshot", ["-f", outPath], { timeout: 10000 });
-            }
-            else if (existsSync("/usr/bin/scrot")) {
-                execFileSync("scrot", [outPath], { timeout: 10000 });
-            }
-            else if (existsSync("/usr/bin/spectacle")) {
-                execFileSync("spectacle", ["-b", "-n", "-o", outPath], { timeout: 10000 });
-            }
-            else {
-                try {
-                    const dtype = process.env.DISPLAY ? "x11" : "pipe";
-                    execFileSync("ffmpeg", ["-f", dtype, "-i", ":0.0", "-vframes", "1", outPath, "-y"], {
-                        timeout: 10000,
-                        stdio: ["ignore", "ignore", "ignore"],
-                    });
-                }
-                catch { }
-            }
-            if (existsSync(outPath)) {
-                const buf = readFileSync(outPath);
-                const data = buf.toString("base64");
-                try {
-                    unlinkSync(outPath);
-                }
-                catch { }
-                return { data, width: 1920, height: 1080, format: "png", timestamp: Date.now(), path: outPath };
-            }
+            const png = await this.backend().screenshot();
+            const size = pngSize(png);
+            return {
+                data: png.toString("base64"),
+                width: size?.width ?? 0,
+                height: size?.height ?? 0,
+                format: "png",
+                timestamp: Date.now(),
+            };
         }
-        catch { }
-        finally {
-            // tmpDir is created unconditionally above, but every early-return path
-            // (no capture tool available, the tool failed, outPath was never
-            // written) skipped removing it -- the same "unbounded resource leak"
-            // bug class already fixed in camera.ts/microphone.ts, just via a
-            // directory created on literally every call rather than only some.
-            try {
-                rmdirSync(tmpDir);
-            }
-            catch { }
+        catch (e) {
+            return this.none(e.message);
         }
-        return { data: "", width: 0, height: 0, format: "none", timestamp: Date.now() };
     }
     async captureArea(x, y, w, h) {
         if (typeof x !== "number" || !Number.isFinite(x) || x < 0 ||
@@ -74,32 +60,21 @@ export class ScreenshotsPlugin extends BasePlugin {
             typeof h !== "number" || !Number.isFinite(h) || h <= 0 || !Number.isInteger(h) || h > 10000) {
             throw new Error("Security Error: w and h must be positive integers up to 10000.");
         }
-        const tmpDir = mkdtempSync(join(tmpdir(), "neuroclaw-ss-"));
-        const outPath = join(tmpDir, `area-${Date.now()}.png`);
         try {
-            if (existsSync("/usr/bin/import")) {
-                execFileSync("import", ["-window", "root", "-crop", `${w}x${h}+${x}+${y}`, outPath], { timeout: 10000 });
-            }
-            if (existsSync(outPath)) {
-                const buf = readFileSync(outPath);
-                const data = buf.toString("base64");
-                // capture() above already unlinks outPath before returning --
-                // this method never did, leaving the actual screenshot image (not
-                // just an empty directory) behind on disk after every single call.
-                try {
-                    unlinkSync(outPath);
-                }
-                catch { }
-                return { data, width: w, height: h, format: "png", timestamp: Date.now(), path: outPath };
-            }
+            const png = await this.backend().screenshot({ x, y, width: w, height: h });
+            const size = pngSize(png);
+            return {
+                data: png.toString("base64"),
+                // The area actually returned, which is smaller than asked for when it
+                // runs off the edge of the screen.
+                width: size?.width ?? 0,
+                height: size?.height ?? 0,
+                format: "png",
+                timestamp: Date.now(),
+            };
         }
-        catch { }
-        finally {
-            try {
-                rmdirSync(tmpDir);
-            }
-            catch { }
+        catch (e) {
+            return this.none(e.message);
         }
-        return { data: "", width: 0, height: 0, format: "none", timestamp: Date.now() };
     }
 }

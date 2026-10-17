@@ -35,6 +35,22 @@ export class NeuroclawRunner extends EventEmitter {
         this.systemAccess = systemAccess ?? new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
         this.multiDesktopManager = multiDesktopManager ?? this.systemAccess.getMultiDesktop();
     }
+    /**
+     * Text only: the language model's own answer, with NO plugin dispatch.
+     *
+     * generate() gives active plugins the first chance at any prompt, so a
+     * prompt that happens to name a tool's command can run that tool (email,
+     * terminal, files). That is right for a person typing to the agent, and wrong
+     * for the agent talking to itself: the hive's work and review prompts, the
+     * agent's filing and planning questions all carry text that someone else may
+     * have written (a project joined from the league), and none of it should be
+     * able to reach a tool. Everything the agent only THINKS goes through here.
+     */
+    async generateText(prompt) {
+        if (!this.running)
+            await this.start();
+        return this.llm.generate(prompt, {});
+    }
     async generate(prompt, memoryContext, promptingSkills) {
         if (!this.running)
             await this.start();
