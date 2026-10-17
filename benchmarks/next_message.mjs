@@ -27,6 +27,7 @@
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { writeFileSync } from 'node:fs';
+import { parseVariant, applyDensity } from './lib/engine-variants.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n, f) => { const i = args.indexOf('--' + n); return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : f; };
@@ -55,7 +56,9 @@ function meshConfig() {
   return MESH === 'live64' ? { ...live, neuronCount: 64, seed: SEED } : { neuronCount: 24, dimensions: 8, seed: SEED };
 }
 
-const engine = new HyperDimensionalEngine(meshConfig());
+const VARIANT = parseVariant(args);
+const engine = new HyperDimensionalEngine({ ...meshConfig(), ...VARIANT.engineOverrides });
+applyDensity(engine, VARIANT.density, SEED);
 const pred = new NextMessagePredictor(engine, { memoryVale: MEMORY, standardize: STD, maxBytes: 16 });
 
 // ── train (streamed, prequential) ──

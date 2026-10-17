@@ -47,6 +47,7 @@
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { writeFileSync } from 'node:fs';
+import { parseVariant, applyDensity } from './lib/engine-variants.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n, f) => { const i = args.indexOf('--' + n); return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : f; };
@@ -191,7 +192,9 @@ function meshConfig(name) {
 }
 
 function meshSystem(train) {
-  const engine = new HyperDimensionalEngine(meshConfig(MESH));
+  const VARIANT = parseVariant(args);
+  const engine = new HyperDimensionalEngine({ ...meshConfig(MESH), ...VARIANT.engineOverrides });
+  applyDensity(engine, VARIANT.density, SEED);
   const sp = new ZipSpeaker(engine, { maxAnswerBytes: 10, memoryVale: MEMORY, pooling: POOLING, standardize: STANDARDIZE });
   const t0 = performance.now();
   const rep = sp.teach(train.map((t) => ({ question: t.q, answer: t.gold })));

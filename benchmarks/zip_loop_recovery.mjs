@@ -14,6 +14,7 @@
 // engine is seeded, so a run is repeatable.
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { parseVariant, applyDensity } from './lib/engine-variants.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n, f) => { const i = args.indexOf('--' + n); return i >= 0 && args[i + 1] !== undefined ? args[i + 1] : f; };
@@ -32,11 +33,13 @@ const { freezeActivity, thawActivity } = await import(base + 'thread-context.js'
 
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
+const VARIANT = parseVariant(args);
 const engine = new HyperDimensionalEngine({
   dimensions: 64, ballStates: 8, neuronCount: N, stateTransitionThreshold: 0.4, noveltyDecay: 0.05, historyLength: 500,
   learningRate: 0.05, influenceDecay: 0.95, crossInfluenceStrength: 0.2, hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1,
-  hyperWaveAdd: 1, waveGain: 0.1, connectionBias: true, propagationSteps: 32, seed: SEED,
+  hyperWaveAdd: 1, waveGain: 0.1, connectionBias: true, propagationSteps: 32, seed: SEED, ...VARIANT.engineOverrides,
 });
+const kept = applyDensity(engine, VARIANT.density, SEED);
 const ids = zipLoopIdsFor(engine);
 const zip = new ZipLoopInterface(engine, ids, MEMORY > 0 ? { memory: { vale: MEMORY } } : {});
 const doorway = new Set(Object.values(ids).filter((v) => typeof v === 'number'));
@@ -92,7 +95,7 @@ const acc = (set, Zs) => Array.from({ length: L }, (_, p) => set.reduce((c, s, i
 const trainAcc = acc(train, Ztr), testAcc = acc(test, Zte);
 // Position p counts from the START of the sequence; "age" = bits sent after it.
 const byAge = testAcc.map((a, p) => ({ age: L - 1 - p, testAccuracy: +a.toFixed(3), trainAccuracy: +trainAcc[p].toFixed(3) })).sort((a, b) => a.age - b.age);
-const report = { dist, neurons: N, memoryVale: MEMORY, sequenceBits: L, train: TRAIN, test: TEST, seed: SEED, features: F,
+const report = { variant: VARIANT, keptConnections: kept.kept, dist, neurons: N, memoryVale: MEMORY, sequenceBits: L, train: TRAIN, test: TEST, seed: SEED, features: F,
   chance: 0.5, meanTestAccuracy: +(testAcc.reduce((a, b) => a + b, 0) / L).toFixed(3), byAge, featureSeconds: +(featMs / 1000).toFixed(1) };
 if (args.includes('--json')) console.log(JSON.stringify(report));
 else { console.log(`neurons ${N}, memory ${MEMORY || 'off'}, ${L}-bit random sequences, ${TRAIN} train / ${TEST} test (chance 0.50), ${report.featureSeconds}s`);

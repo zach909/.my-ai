@@ -21,6 +21,7 @@
 //   the same thing (the `stateChecksum` and `stateHead` fields).
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
+import { parseVariant, applyDensity } from './lib/engine-variants.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -57,7 +58,9 @@ function fixedBytes(n) {
 }
 
 function run() {
-  const engine = new HyperDimensionalEngine(LIVE);
+  const VARIANT = parseVariant(args);
+  const engine = new HyperDimensionalEngine({ ...LIVE, ...VARIANT.engineOverrides });
+  applyDensity(engine, VARIANT.density, SEED);
   const zip = new ZipLoopInterface(engine, zipLoopIdsFor(engine));
   // Count settle iterations without changing anything.
   const orig = engine.settle.bind(engine);

@@ -116,6 +116,11 @@ export class LearnedToolSelector {
   select(text: string): Selection {
     if (!this.trained) return { kind: "abstain", reason: "untrained" };
     const { scores, familiarity } = this.scores(text);
+    return this.decide(scores, familiarity);
+  }
+
+  /** The decision rule alone, so calibration can try many limits on scores computed once. */
+  private decide(scores: number[], familiarity: number): Selection {
     const order = scores.map((s, i) => ({ s, c: this.classes[i] })).sort((a, b) => b.s - a.s);
     const top = order[0], second = order[1];
     if (familiarity < this.limits.minFamiliarity) return { kind: "abstain", reason: "unfamiliar" };
@@ -148,13 +153,14 @@ export class LearnedToolSelector {
    */
   calibrate(validation: Array<{ text: string; gold: Gold }>, pairs: Array<{ text: string; tools: [string, string] }> = []): { limits: Limits; utility: number } {
     if (!this.trained) throw new Error("LearnedToolSelector.calibrate: train first");
+    const cache = validation.map((v) => this.scores(v.text));
     let best = { limits: this.limits, utility: -Infinity };
     for (const minScore of [-0.5, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]) {
       for (const minMargin of [0, 0.05, 0.1, 0.2, 0.3, 0.4]) {
         for (const minFamiliarity of [0, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4]) {
           this.limits = { ...this.limits, minScore, minMargin, minFamiliarity };
           let u = 0;
-          for (const v of validation) u += utility(this.select(v.text), v.gold);
+          for (let k = 0; k < validation.length; k++) u += utility(this.decide(cache[k].scores, cache[k].familiarity), validation[k].gold);
           u /= Math.max(1, validation.length);
           // Ties go to the earlier, i.e. more cautious, setting: require strictly better.
           if (u > best.utility + 1e-9) best = { limits: { ...this.limits }, utility: u };
