@@ -1,6 +1,6 @@
 {
   "name": "neuroclaw-desktop",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "NeuroClaw — local-first AI agent, powered by the OneBrain neural mesh",
   "main": "src/main/main.js",
   "scripts": {

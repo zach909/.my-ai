@@ -16,7 +16,7 @@ export const ACCOUNTS_PAGE = `<!DOCTYPE html>
 <style>
   :root { color-scheme: dark; }
   body { margin:0; min-height:100vh; background:#110c0e; color:#f8ede9; }
-  main { position:relative; z-index:1; max-width:560px; margin:0 auto; padding:40px 16px 80px; display:grid; gap:18px; }
+  main { position:relative; z-index:1; max-width:560px; margin:0 auto; padding:40px 16px 80px; display:grid; grid-template-columns:minmax(0,1fr); gap:18px; }
   h1 { font-size:22px; margin:6px 6px 0; }
   h2 { font-size:17px; margin:0 0 4px; }
   section { padding:24px 26px; }

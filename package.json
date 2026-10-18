@@ -2,7 +2,7 @@
   "name": "neuroclaw",
   "description": "NeuroClaw — a local-first AI agent powered by the OneBrain neural mesh engine.",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
@@ -15,7 +15,10 @@
     "test:smoke": "node scripts/build-backend.mjs && node test/smoke.mjs",
     "test:integration": "vitest run",
     "test:install": "bash test/install-sh.test.sh",
-    "test": "npm run check:third-party && npm run test:smoke && npm run test:integration && npm run test:install"
+    "test:platform": "node scripts/build-backend.mjs && node --test --test-concurrency=2 \"test/platform/*.test.mjs\"",
+    "test": "npm run check:third-party && npm run test:smoke && npm run test:platform && npm run test:integration && npm run test:install",
+    "release:version": "node scripts/release/version.mjs",
+    "release:extension": "node scripts/release/build-extension.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

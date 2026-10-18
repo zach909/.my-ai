@@ -43,7 +43,7 @@ Desktop application with cross-platform support.
 Distribution builds and compiled outputs.
 
 #### `/docs/`
-Comprehensive documentation:
+Comprehensive documentation (`PLATFORMS.md` is the cross-platform map and parity matrix):
 - `architecture/` - System architecture documents
 - `deployment/` - Deployment guides
 - `api/` - API documentation
@@ -64,7 +64,8 @@ Auto-generated output: `skills/` and `plugins/` produced by the Extension
 Builder, plus their generated `skills-wiki/` and `plugins-wiki/` pages.
 
 #### `/interface/`
-User interface components and CLI tools.
+User interface components and CLI tools. `interface/platform/` is the platform layer shared by every build: adapters (what each OS
+can do), the feature contract, shared settings, version and update status, the Settings page, and the installable-app files.
 
 #### `/live-usb/`
 Bootable/installable live USB build (`build.sh`) for trying or installing
@@ -89,7 +90,8 @@ System plugins for various functionalities (browser, camera, email, etc.).
 Public assets and static files.
 
 #### `/scripts/`
-Build and utility scripts:
+`scripts/release/` holds versioning, the release manifest, change-driven build planning and the platform packagers;
+`scripts/desktop-launcher.mjs` is what the installed desktop app runs. Build and utility scripts:
 - `build-backend.mjs` - Backend build script
 - `check-css-*.js` - CSS validation scripts
 - `finalize-static-build.mjs` - Static build finalization
@@ -106,7 +108,8 @@ Main source code (React/TypeScript):
 - `server/` - Server-side code
 
 #### `/test/`
-Test files including core tests and integration tests.
+Test files including core tests and integration tests. `test/platform/` holds the cross-platform tests (Node's built-in runner:
+`node --test "test/platform/*.test.mjs"`).
 
 #### `/tests/`
 Additional test suites:

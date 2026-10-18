@@ -47,6 +47,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { configFile } from "../../interface/platform/app-paths.js";
 import { ACCESS_SWITCHES, CAPABILITIES, type AccessManager } from "./access-manager.js";
 import { defaultSettings, saveSettings } from "./access-settings.js";
 import { USER_PLUGINS } from "./accounts.js";
@@ -120,12 +121,17 @@ export interface SafetySettings {
 
 export const defaultSafety = (): SafetySettings => ({ fullAccess: false, ask: {}, autoContinue: { enabled: true, maxSteps: DEFAULT_CONTINUE_STEPS } });
 
+/** Saved in the user's data folder (see interface/platform/app-paths.ts), not the working directory. */
 export function safetyFile(): string {
-  return process.env.CORONA_SAFETY_FILE ? path.resolve(process.env.CORONA_SAFETY_FILE) : path.resolve(process.cwd(), "config", "tool-safety.json");
+  return configFile("tool-safety.json", process.env.CORONA_SAFETY_FILE).write;
+}
+
+function safetyReadFile(): string {
+  return configFile("tool-safety.json", process.env.CORONA_SAFETY_FILE).read;
 }
 
 /** Never throws. A file we cannot read means the safe defaults (everything on the list asks), never "ask nothing". */
-export function loadSafety(file = safetyFile()): SafetySettings {
+export function loadSafety(file = safetyReadFile()): SafetySettings {
   const d = defaultSafety();
   if (!existsSync(file)) return d;
   try {

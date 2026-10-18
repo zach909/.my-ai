@@ -18,6 +18,11 @@ targets:
       # The full network: the PC's engine bundled for phones (npm run build:phone-brain).
       - path: "../brain/bundle/neuroclaw-brain.js"
         buildPhase: resources
+    settings:
+      base:
+        # Written by scripts/release/version.mjs from the one version in package.json; do not edit by hand.
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "100"
     entitlements:
       # The file itself (not generated from properties here) so its
       # explanatory comment survives `xcodegen generate` -- see
@@ -28,6 +33,8 @@ targets:
       path: NeuroClaw/Info.plist
       properties:
         CFBundleDisplayName: NeuroClaw
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         # "Give it access to everything": one usage-description string per
         # permission category iOS recognizes (Permissions.swift requests
