@@ -46,7 +46,7 @@ export const ACCOUNTS_PAGE = `<!DOCTYPE html>
 
   <section class="nc-glass" id="setup" hidden>
     <h2>Set up this server</h2>
-    <p class="nc-dim">Make the first account. It becomes the admin: it runs the computer, the tools and everyone else's access. After that anyone can make their own account, and nobody can see anyone else's chats, folders, projects or points.</p>
+    <p class="nc-dim">The computer's administrator sets this up, once. The account made here is the admin: it runs the computer, the tools and the agent. After that everyone gets access: anyone can make their own account from any device, and nobody can see anyone else's chats, folders, projects or points.</p>
     <div class="row"><input class="nc-input grow" id="su-name" placeholder="Admin name" maxlength="32" autocomplete="username"></div>
     <div class="row"><input class="nc-input grow" id="su-pass" type="password" placeholder="Password (8 or more characters)" autocomplete="new-password"></div>
     <div class="row" id="su-code-row"><input class="nc-input grow" id="su-code" placeholder="Setup code from the server's console" autocomplete="off" spellcheck="false"></div>
@@ -164,8 +164,13 @@ export const ACCOUNTS_PAGE = `<!DOCTYPE html>
       show('signup', s.hasAdmin && !signedIn && s.signup === 'open');
       show('me', signedIn);
       show('admin', signedIn && s.me.role === 'admin');
-      $('su-code-row').hidden = s.onThisMachine;
-      $('su-note').textContent = s.onThisMachine ? 'You are on the server itself, so no code is needed.' : 'The setup code is printed on the server\\'s console when it starts.';
+      var atMachine = s.onThisMachine && s.computerAdmin;
+      $('su-code-row').hidden = atMachine;
+      $('su-note').textContent = atMachine
+        ? 'You are at the computer and it is running as an administrator, so no code is needed.'
+        : s.onThisMachine
+          ? 'This computer is not running as an administrator. Run the server as the computer\\'s administrator, or use the setup code printed on its console.'
+          : 'Only the computer\\'s administrator can set this up. The setup code is printed on the server\\'s console when it starts.';
       if (signedIn) {
         $('me-title').textContent = s.me.kind === 'owner' ? 'You are the owner of this server' : 'Signed in as ' + s.me.name + (s.me.role === 'admin' ? ' (admin)' : '');
         $('pw-box').hidden = s.me.kind !== 'user';

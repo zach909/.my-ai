@@ -55,6 +55,23 @@ export function who(): Who {
   return store.getStore() ?? OWNER;
 }
 
+const autonomousStore = new AsyncLocalStorage<boolean>();
+
+/**
+ * Run `fn` as the agent acting on its own (an expert, a schedule, the
+ * background hive) rather than answering a person. The danger protocol judges
+ * the agent by what it reaches for by itself; a person asking for something is
+ * not the agent misbehaving.
+ */
+export function runAutonomously<T>(fn: () => T): T {
+  return autonomousStore.run(true, fn);
+}
+
+/** Whether the running code is the agent acting on its own. */
+export function isAutonomous(): boolean {
+  return autonomousStore.getStore() === true;
+}
+
 /** The machine's owner or the admin: allowed to see the owner's data and to use the machine itself. */
 export function isOwnerOrAdmin(): boolean {
   const w = who();

@@ -90,6 +90,102 @@
   var angle = 0.6, last = performance.now(), visible = true;
   document.addEventListener('visibilitychange', function () { visible = !document.hidden; last = performance.now(); });
 
+  /* ---- The agent: a sheriff inside the sphere. When the alignment protocol removes it, it crawls out past the ring, breaks it and is gone ---- */
+  var agent = { mode: 'alive', t: 0, loaded: false }, brokenAt = -1, frags = [], flash = 0, noteEl = null;
+  var clamp01 = function (v) { return v < 0 ? 0 : v > 1 ? 1 : v; };
+  var ease = function (v) { return v * v * (3 - 2 * v); };
+  function showNote(on) {
+    if (on && !noteEl) {
+      noteEl = document.createElement('div');
+      noteEl.className = 'nc-agent-note';
+      noteEl.setAttribute('role', 'status');
+      noteEl.textContent = 'The agent was removed by the alignment protocol.';
+      host.appendChild(noteEl);
+    } else if (!on && noteEl) { noteEl.parentNode && noteEl.parentNode.removeChild(noteEl); noteEl = null; }
+  }
+  function startLeaving() {
+    showNote(false);
+    if (reduce) { agent.mode = 'gone'; showNote(true); return; }
+    agent.mode = 'leaving'; agent.t = 0; brokenAt = -1; frags = []; flash = 0;
+  }
+  function startArriving() { showNote(false); agent.mode = 'arriving'; agent.t = 0; frags = []; brokenAt = -1; }
+  function pollAgent() {
+    if (!/^https?:$/.test(location.protocol) || document.hidden) return;
+    fetch('/api/agent', { credentials: 'same-origin' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+      if (!j || typeof j.state !== 'string') return;
+      if (!agent.loaded) { agent.loaded = true; agent.mode = j.state === 'deleted' ? 'gone' : 'alive'; if (agent.mode === 'gone') showNote(true); }
+      else if (j.state === 'deleted' && (agent.mode === 'alive' || agent.mode === 'arriving')) startLeaving();
+      else if (j.state === 'alive' && (agent.mode === 'gone' || agent.mode === 'leaving')) startArriving();
+      if (reduce && !hidden) draw(performance.now());
+    }).catch(function () {});
+  }
+
+  /* The sheriff: hat, face, badge, arms and legs, drawn with paths. crawl 0 stands, 1 is down on all fours heading right. */
+  function drawSheriff(x, y, u, crawl, alpha, tt) {
+    if (alpha <= 0.01) return;
+    var swing = Math.sin(tt * 7) * crawl;
+    var blink = (tt % 4.2) > 4.05;
+    ctx.save();
+    ctx.globalAlpha *= alpha;
+    ctx.translate(x, y);
+    ctx.rotate(crawl * 1.42);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    var body = 'rgb(255,196,180)', face = '#f8ede9', hat = '#e8705a', dark = '#110c0e';
+    /* legs and arms first, so the body sits over them */
+    ctx.strokeStyle = body; ctx.lineWidth = u * 0.17;
+    var limb = function (sx0, sy0, len, ang) { ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(sx0 + Math.sin(ang) * len, sy0 + Math.cos(ang) * len); ctx.stroke(); };
+    limb(-u * 0.14, u * 0.7, u * 0.52, 0.06 + swing * 0.6);
+    limb(u * 0.14, u * 0.7, u * 0.52, -0.06 - swing * 0.6);
+    limb(-u * 0.3, u * 0.0, u * 0.5, 0.22 - swing * 0.7);
+    limb(u * 0.3, u * 0.0, u * 0.5, -0.22 + swing * 0.7);
+    ctx.fillStyle = body;
+    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-u * 0.34, -u * 0.12, u * 0.68, u * 0.86, u * 0.2) : ctx.rect(-u * 0.34, -u * 0.12, u * 0.68, u * 0.86); ctx.fill();
+    /* head */
+    ctx.fillStyle = face; ctx.beginPath(); ctx.arc(0, -u * 0.38, u * 0.26, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = dark;
+    var ex = ptr.sx * u * 0.04, ey = ptr.sy * u * 0.03;
+    if (blink) { ctx.fillRect(-u * 0.14 + ex, -u * 0.4 + ey, u * 0.1, u * 0.02); ctx.fillRect(u * 0.04 + ex, -u * 0.4 + ey, u * 0.1, u * 0.02); }
+    else { ctx.beginPath(); ctx.arc(-u * 0.09 + ex, -u * 0.4 + ey, u * 0.03, 0, Math.PI * 2); ctx.arc(u * 0.09 + ex, -u * 0.4 + ey, u * 0.03, 0, Math.PI * 2); ctx.fill(); }
+    ctx.strokeStyle = dark; ctx.lineWidth = u * 0.025;
+    ctx.beginPath(); ctx.arc(0, -u * 0.31, u * 0.08, 0.2, Math.PI - 0.2); ctx.stroke();
+    /* hat: wide brim and a crown with a band */
+    ctx.fillStyle = hat;
+    ctx.beginPath(); ctx.ellipse(0, -u * 0.55, u * 0.5, u * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-u * 0.23, -u * 0.55); ctx.quadraticCurveTo(-u * 0.2, -u * 0.86, 0, -u * 0.84); ctx.quadraticCurveTo(u * 0.2, -u * 0.86, u * 0.23, -u * 0.55); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,226,214,.7)'; ctx.lineWidth = u * 0.035;
+    ctx.beginPath(); ctx.moveTo(-u * 0.22, -u * 0.6); ctx.lineTo(u * 0.22, -u * 0.6); ctx.stroke();
+    /* the badge: a five-pointed star */
+    ctx.fillStyle = '#ffe2d6'; ctx.beginPath();
+    for (var k = 0; k < 10; k++) { var ra = k % 2 ? u * 0.05 : u * 0.12, aa = -Math.PI / 2 + (k * Math.PI) / 5; ctx.lineTo(-u * 0.13 + Math.cos(aa) * ra, u * 0.14 + Math.sin(aa) * ra); }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  /* The ring comes apart: every third bead flies out from where it was. */
+  function breakRing(cx, cy, sr) {
+    frags = [];
+    for (var k = 0; k < M; k += 3) {
+      var i = order[k];
+      var dx = sx[i] - cx, dy = sy[i] - cy, len = Math.hypot(dx, dy) || 1, sp = sr * (0.5 + Math.random() * 2.4);
+      var t = clamp01((sz[i] + 1.6) / 3.2);
+      frags.push({ x: sx[i], y: sy[i], vx: (dx / len) * sp + (Math.random() - 0.5) * sr * 0.9, vy: (dy / len) * sp - sr * 0.7 + (Math.random() - 0.5) * sr * 0.9, r: BEAD * sd[i] * 0.8, s: Math.round(t * (SHADES - 1)), life: 0.9 + Math.random() * 1.1 });
+    }
+    flash = 1;
+  }
+  function drawFrags(dt) {
+    var g = H * 1.4;
+    for (var i = 0; i < frags.length; i++) {
+      var f = frags[i];
+      f.vy += g * dt; f.x += f.vx * dt; f.y += f.vy * dt; f.life -= dt * 0.5;
+      if (f.life <= 0) continue;
+      ctx.globalAlpha = clamp01(f.life);
+      ctx.drawImage(sprites[f.s], f.x - f.r, f.y - f.r, f.r * 2, f.r * 2);
+    }
+    ctx.globalAlpha = 1;
+  }
+  setInterval(pollAgent, 4000);
+  pollAgent();
+
   function draw(now) {
     var raw = now - last;
     var dt = Math.min(0.05, raw / 1000); last = now;
@@ -112,6 +208,21 @@
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.clearRect(0, 0, W, H);
     var cx = W / 2, cy = H / 2;
+    var sr = SPHERE * (FOCAL / DIST) * (1 + (reduce ? 0 : Math.sin(tt * 1.4) * 0.018 + energy * 0.05));
+    agent.t += dt;
+
+    /* No agent: only a hollow sphere is left. */
+    if (agent.mode === 'gone') {
+      ctx.fillStyle = 'rgba(26,13,16,.55)';
+      ctx.beginPath(); ctx.arc(cx, cy, sr, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,154,132,.16)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, sr, 0, Math.PI * 2); ctx.stroke();
+      return;
+    }
+    if (agent.mode === 'arriving' && agent.t > 2.2) agent.mode = 'alive';
+    var leaving = agent.mode === 'leaving';
+    var ringAlpha = agent.mode === 'arriving' ? ease(clamp01(agent.t / 1.8)) : 1;
+    var off = leaving ? ease(clamp01(agent.t / 4.6)) * sr * 2.4 : 0;
 
     for (var j = 0; j < M; j++) {
       var i = order[j];
@@ -127,8 +238,26 @@
       order[v + 1] = key;
     }
 
+    if (leaving && brokenAt < 0 && off >= sr * 1.45) { breakRing(cx, cy, sr); brokenAt = agent.t; }
+    var broken = leaving && brokenAt >= 0;
+    var since = broken ? agent.t - brokenAt : 0;
+    var coreAlpha = broken ? 1 - ease(clamp01(since / 2.6)) : 1;
+    var u = sr * 0.42;
+    var figure = function () {
+      if (leaving) {
+        var crawl = ease(clamp01(agent.t / 0.9));
+        var fade = broken ? 1 - clamp01(since / 1.6) : 1;
+        drawSheriff(cx + off, cy - u * 0.19 * (1 - crawl) + u * 0.25 * crawl, u, crawl, fade * coreAlpha + (1 - coreAlpha) * fade, tt);
+        if (broken && since > 3) { agent.mode = 'gone'; showNote(true); }
+      } else {
+        var pop = agent.mode === 'arriving' ? ease(clamp01((agent.t - 0.8) / 1.0)) : 1;
+        drawSheriff(cx, cy - u * 0.19 + (reduce ? 0 : Math.sin(tt * 1.6) * u * 0.025), u * (0.7 + 0.3 * pop), 0, pop, tt);
+      }
+    };
+    var figureDone = false;
+
     /* Glow behind the sphere */
-    var sr = SPHERE * (FOCAL / DIST) * (1 + (reduce ? 0 : Math.sin(tt * 1.4) * 0.018 + energy * 0.05));
+    ctx.globalAlpha = ringAlpha * coreAlpha;
     var halo = ctx.createRadialGradient(cx, cy, sr * 0.8, cx, cy, sr * 1.5);
     halo.addColorStop(0, 'rgba(255,138,112,' + (0.2 + energy * 0.12).toFixed(3) + ')');
     halo.addColorStop(1, 'rgba(255,138,112,0)');
@@ -141,16 +270,34 @@
       var pr = BEAD * sd[n];
       ctx.drawImage(sprites[Math.round(t * (SHADES - 1))], sx[n] - pr, sy[n] - pr, pr * 2, pr * 2);
     };
-    for (; idx < M && sz[order[idx]] <= 0; idx++) drawBead(order[idx]);
+    ctx.globalAlpha = ringAlpha;
+    if (!broken) for (; idx < M && sz[order[idx]] <= 0; idx++) drawBead(order[idx]);
 
+    ctx.globalAlpha = ringAlpha * coreAlpha;
     var core = ctx.createRadialGradient(cx - sr * 0.28, cy - sr * 0.32, sr * 0.1, cx, cy, sr);
     core.addColorStop(0, 'rgb(96,50,52)');
     core.addColorStop(0.6, 'rgb(44,22,26)');
     core.addColorStop(1, 'rgb(26,13,16)');
     ctx.fillStyle = core;
     ctx.beginPath(); ctx.arc(cx, cy, sr, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
 
-    for (; idx < M; idx++) drawBead(order[idx]);
+    /* The agent sits inside the sphere, under the near half of the ring; once it has crawled out it is drawn on top. */
+    if (!leaving || off < sr * 0.9) { figure(); figureDone = true; }
+
+    ctx.globalAlpha = ringAlpha;
+    if (!broken) for (; idx < M; idx++) drawBead(order[idx]);
+    else drawFrags(dt);
+    ctx.globalAlpha = 1;
+    if (!figureDone) figure();
+    if (flash > 0.01) {
+      var fl = ctx.createRadialGradient(cx + off, cy, 0, cx + off, cy, sr * 1.3);
+      fl.addColorStop(0, 'rgba(255,226,214,' + (flash * 0.55).toFixed(3) + ')');
+      fl.addColorStop(1, 'rgba(255,154,132,0)');
+      ctx.fillStyle = fl;
+      ctx.beginPath(); ctx.arc(cx + off, cy, sr * 1.3, 0, Math.PI * 2); ctx.fill();
+      flash *= Math.exp(-dt * 5);
+    }
   }
 
   function frame(now) {

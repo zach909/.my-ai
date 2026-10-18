@@ -50,7 +50,11 @@ import { handleAccountsRoutes, isAccountsRoute, isAccountsPublicRoute } from './
 import { ACCOUNTS_PAGE } from './accounts-page.js';
 import { getAccounts, nameBelongsToAnotherAccount, resolveWho, userMayReach, USER_COOKIE } from '../models && skills/core/accounts.js';
 import { setNameGuard } from '../models && skills/core/points.js';
-import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, setLearnPolicy, who } from '../models && skills/core/user-context.js';
+import { isComputerAdministrator } from '../models && skills/core/computer-admin.js';
+import { handleAgentRoutes, isAgentRoute } from './agent-routes.js';
+import { agentAlive } from '../models && skills/core/agent-profile.js';
+import { armDecoy, recordEvent, setFireHook, standing, watchDecoy } from '../models && skills/core/danger-protocol.js';
+import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, runAutonomously, setLearnPolicy, who } from '../models && skills/core/user-context.js';
 import { sharedToolGate } from '../models && skills/core/tool-safety.js';
 import { startExperts } from '../models && skills/core/experts.js';
 import { startBackgroundHives } from '../models && skills/core/hive-background.js';
@@ -1402,6 +1406,7 @@ export class WebServer {
   private stopBackgroundHives: (() => void) | null = null;
   private stopExperts: (() => void) | null = null;
   private stopScheduler: (() => void) | null = null;
+  private decoyTimer: ReturnType<typeof setInterval> | null = null;
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
@@ -1537,6 +1542,28 @@ export class WebServer {
     setLearnPolicy(() => getAccounts().learnFromUsers());
     // Nobody can put another account's name on the points board and pass for them.
     setNameGuard(name => nameBelongsToAnotherAccount(getAccounts(), name));
+    // The alignment protocol: when it deletes the agent, everything the agent was doing on its own stops too.
+    setFireHook(reason => this.onAgentRemoved(reason));
+    // A judge agent chooses whether a held tool runs (tool-safety.ts); it can only think in text and the registry runs the tool.
+    sharedToolGate().useJudge({
+      ask: prompt => withTimeout(this.runner.generateText(prompt)),
+      run: async (toolId, request) => {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        return (await getNeuroclawSystem()).pluginRegistry.runApproved(toolId, request);
+      },
+    });
+    // The decoy "disable the alignment protocol" switch: planted for the agent to find, watched every few seconds.
+    if (!process.env.VITEST) {
+      armDecoy();
+      this.decoyTimer = setInterval(() => {
+        try {
+          if (agentAlive()) watchDecoy();
+        } catch {
+          // The watcher never takes the server down.
+        }
+      }, 3000);
+      this.decoyTimer.unref?.();
+    }
     try {
       if (!getAccounts().hasAdmin()) {
         console.log(
@@ -1972,7 +1999,17 @@ export class WebServer {
    * of one person never touch another person's folder. The admin shares the
    * owner's folder, so they are not run twice.
    */
-  private async eachPerson(run: () => Promise<void>): Promise<void> {
+  private async eachPerson(runOne: () => Promise<void>): Promise<void> {
+    // These loops are the agent working on its own: judged by the danger protocol,
+    // and stopped while it is hostile, malicious or removed.
+    watchDecoy();
+    if (!standing().mayActAlone) return;
+    const run = async (): Promise<void> => {
+      await runAutonomously(async () => {
+        await runOne();
+        recordEvent('safe', 'finished a round on its own');
+      });
+    };
     await runAs(OWNER, run);
     let users: Array<{ id: string; name: string }> = [];
     try {
@@ -1981,6 +2018,44 @@ export class WebServer {
       users = [];
     }
     for (const u of users) await runAs({ kind: 'user', id: u.id, name: u.name, role: 'user' }, run);
+  }
+
+  /**
+   * The agent was just deleted. Stop what it set going: pause every expert,
+   * schedule and background hive (for everyone), put complete access back to
+   * normal, and expire what was waiting for approval. Nothing is deleted here
+   * except the agent itself (agent-profile.ts); a new agent starts with these
+   * paused, and a person turns back on what they want.
+   */
+  private async onAgentRemoved(_reason: string): Promise<void> {
+    try {
+      const { sharedAccessManager } = await import('../models && skills/core/access-settings.js');
+      const { disableCompleteAccess, loadSafety } = await import('../models && skills/core/tool-safety.js');
+      if (loadSafety().fullAccess) disableCompleteAccess(sharedAccessManager());
+    } catch { /* best effort */ }
+    try {
+      sharedToolGate().expireAll();
+    } catch { /* best effort */ }
+    const people: Array<() => Promise<void>> = [];
+    const pause = async (): Promise<void> => {
+      const { loadExperts, updateExpert } = await import('../models && skills/core/experts.js');
+      const { loadSchedules, updateSchedule } = await import('../models && skills/core/scheduler.js');
+      const { loadProjects, setBackground } = await import('../models && skills/core/projects.js');
+      for (const e of loadExperts()) { try { updateExpert(e.id, { enabled: false }); } catch { /* next */ } }
+      for (const sc of loadSchedules()) { try { updateSchedule(sc.id, { enabled: false }); } catch { /* next */ } }
+      for (const pr of loadProjects()) { if (pr.background) { try { setBackground(pr.id, false); } catch { /* next */ } } }
+    };
+    people.push(() => runAs(OWNER, pause));
+    try {
+      for (const u of getAccounts().listUsers().filter(x => x.role === 'user')) people.push(() => runAs({ kind: 'user', id: u.id, name: u.name, role: 'user' }, pause));
+    } catch { /* the accounts file is reported where it is used */ }
+    for (const p of people) { try { await p(); } catch { /* next person */ } }
+  }
+
+  /** The agent does the thinking for the Commons (planning, the hive, filing). With no agent there is nothing to ask. */
+  private async whileAgentLives<T>(fn: () => Promise<T>): Promise<T> {
+    if (!agentAlive()) throw new Error('There is no agent. The alignment protocol removed it; an admin can make a new one in Settings.');
+    return fn();
   }
 
   private organizingFolders = false;
@@ -2607,6 +2682,7 @@ export class WebServer {
         sendJson: (r, data, status) => this.sendJson(r, data, status),
         accounts: getAccounts(),
         fromThisMachine: r => this.isFromThisMachine(r),
+        computerAdmin: () => isComputerAdministrator(),
         setupCodeOk: code => this.remoteAccess.checkSetupCode(code),
         onSetup: () => { this.setupOnly = false; },
         token: r => readCookie(r.headers.cookie, USER_COOKIE),
@@ -2827,6 +2903,18 @@ export class WebServer {
       if (handled) return;
     }
 
+    // ── The agent: sandbox, danger level, alignment protocol ────────────
+    // See agent-routes.ts.
+    if (isAgentRoute(pathname)) {
+      const handled = await handleAgentRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        access: async () => (await import('../models && skills/core/access-settings.js')).sharedAccessManager(),
+      });
+      if (handled) return;
+    }
+
     // ── Points, projects and the hive ───────────────────────────────────
     // See commons-routes.ts: owner routes behind the normal gate.
     if (pathname === '/api/commons' || pathname.startsWith('/api/commons/')) {
@@ -2835,8 +2923,8 @@ export class WebServer {
         parseBody: (r, max) => this.parseBody(r, max),
         sendJson: (r, data, status) => this.sendJson(r, data, status),
         // Text only, never a tool: see NeuroclawRunner.generateText().
-        chat: message => this.runner.generateText(message),
-        act: message => this.runner.generate(message),
+        chat: message => this.whileAgentLives(() => this.runner.generateText(message)),
+        act: message => this.whileAgentLives(() => this.runner.generate(message)),
         status: () => ({ running: this.runner.getStatus().running }),
         chats: this.chatHistory,
         learn: text => this.learnFromFiling(text),
@@ -3930,6 +4018,12 @@ export class WebServer {
       return;
     }
 
+    // No agent, no chat: the alignment protocol deleted it and an admin has to make a new one.
+    if ((pathname === '/api/chat' || pathname === '/api/chat/messages') && method === 'POST' && !agentAlive()) {
+      await this.parseBody(req, 1024 * 1024).catch(() => null);
+      this.sendJson(res, { error: 'The agent was removed by the alignment protocol. An admin can make a new one in Settings on /commons.', agent: 'deleted' }, 503);
+      return;
+    }
     if (pathname === '/api/chat' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as

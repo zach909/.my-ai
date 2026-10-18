@@ -253,11 +253,11 @@ describe('working out who is asking', () => {
 })
 
 describe('what a regular user may reach', () => {
-  const yes = ['/', '/commons', '/api/chat', '/api/chat-history/threads', '/api/chat-history/export', '/api/chat-history/threads/abc', '/api/chat-history/threads/abc/pin', '/api/commons', '/api/commons/projects', '/api/commons/projects/weather/tasks/t1/claim', '/api/commons/folders/organize', '/api/commons/experts', '/api/commons/schedules', '/api/commons/league', '/api/accounts/me', '/api/auth/logout']
+  const yes = ['/', '/commons', '/api/chat', '/api/chat-history/threads', '/api/chat-history/export', '/api/chat-history/threads/abc', '/api/chat-history/threads/abc/pin', '/api/agent', '/api/commons', '/api/commons/projects', '/api/commons/projects/weather/tasks/t1/claim', '/api/commons/folders/organize', '/api/commons/experts', '/api/commons/schedules', '/api/commons/league', '/api/accounts/me', '/api/auth/logout']
   const no = [
     '/api/terminals', '/api/apps/launch', '/api/apps/list', '/api/memory', '/api/memory/all', '/api/profile', '/api/system/install', '/api/access/switch', '/api/settings/brain',
     '/api/store/install', '/api/store/uninstall', '/api/updates/apply', '/api/github/publish', '/api/extension/build', '/api/train', '/api/phone-sync', '/api/captures',
-    '/api/compute', '/api/compute/leases', '/api/donor', '/api/corona-apps', '/sharing', '/api/safety', '/api/safety/complete-access', '/api/safety/approvals/abc/approve',
+    '/api/compute', '/api/compute/leases', '/api/donor', '/api/corona-apps', '/sharing', '/api/safety', '/api/safety/complete-access', '/api/safety/approvals/abc/approve', '/api/agent/sandbox', '/api/agent/delete', '/api/agent/alignment', '/api/agent/create', '/api/agent/forgive', '/api/safety/judge',
     '/api/commons/market', '/api/commons/market/orders', '/api/commons/market/borrow', '/api/commons/projects/weather/publish',
     '/api/chat-groups/collaborate', '/api/zip-loop/run', '/api/accounts/users', '/api/accounts/settings', '/api/accounts/users/aaaaaaaa/delete', '/api/chat/../terminals', '/api/commons/..%2fsafety',
     '/api/doorways/send', '/api/net-skills', '/api/self-improvement/server/start', '/avatar', '',
