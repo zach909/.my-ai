@@ -67,6 +67,25 @@ export function assertNoPackages(distDir) {
   if (bad.size) throw new Error(`the compiled backend imports packages that the payload does not carry:\n  ${[...bad].join('\n  ')}`);
 }
 
+/**
+ * A package that bundles Node must bundle all of it. Debian's and Ubuntu's own `node` is a small launcher that loads the
+ * system's libnode, so copying it gives a package that only runs where Node happens to be installed. Refuse that, and say how
+ * to get a self-contained runtime (the official nodejs.org build, which is a single executable of 80 MB or more).
+ */
+export function assertSelfContainedRuntime(file) {
+  const size = statSync(file).size;
+  let dynamic = false;
+  if (process.platform === 'linux') {
+    const r = spawnSync('ldd', [file], { encoding: 'utf8' });
+    dynamic = /libnode/.test(r.stdout || '');
+  }
+  if (dynamic || size < 40 * 1024 * 1024) {
+    throw new Error(`${file} is not a self-contained Node (${Math.round(size / 1048576)} MB${dynamic ? ', links the system libnode' : ''}). `
+      + 'Build with the official nodejs.org Node 22 binary on PATH, or pass --no-runtime to stage without one. '
+      + 'A package built from this runtime would only work on machines that already have Node installed.');
+  }
+}
+
 export function stageApp({ out, channel = 'dev', commit = null, runtime = true }) {
   const bad = drift();
   if (bad.length) throw new Error(`version drift, run scripts/release/version.mjs sync: ${bad.map((b) => b.name).join(', ')}`);
@@ -102,6 +121,7 @@ export function stageApp({ out, channel = 'dev', commit = null, runtime = true }
     const rt = path.join(out, 'runtime');
     mkdirSync(rt, { recursive: true });
     const dest = path.join(rt, process.platform === 'win32' ? 'node.exe' : 'node');
+    assertSelfContainedRuntime(process.execPath);
     copyFileSync(process.execPath, dest);
     if (process.platform !== 'win32') chmodSync(dest, 0o755);
   }
