@@ -1,0 +1,30 @@
+{
+  "dist": "/tmp/claude-0/-home-user--my-ai/77070fd4-8f69-5930-8630-ce9dc61d79e2/scratchpad/dist_abl",
+  "neurons": 64,
+  "dimensions": 64,
+  "seed": 1,
+  "connectionsPerDimension": 4032,
+  "connectionsTotal": 262080,
+  "weightsHeld": 798720,
+  "settleIterationsPerBit": 2,
+  "msPerBit": {
+    "median": 2.6839164375000024,
+    "min": 2.5860048125000006,
+    "max": 18.298880500000003
+  },
+  "msPerByte": 21.47133150000002,
+  "bytesPerSecond": 46.573730185293776,
+  "rssMB": 83,
+  "heapUsedMB": 9,
+  "rssGrowthMB": 37,
+  "stateChecksum": 262.76478996330627,
+  "stateHead": [
+    1,
+    1,
+    1,
+    1
+  ],
+  "bytesPerRun": 2,
+  "repeats": 5,
+  "node": "v22.22.0"
+}

@@ -28,6 +28,33 @@ Two scores per idea, 0 to 10:
   █████░░░░░ ░░░░░░░░░░  Self-improvement / RSI (not measured)
 ```
 
+## Update from the research branch: implemented / tested / demonstrated / unproven
+
+Measured in `docs/MESH_RESEARCH_RESULTS.md` (scripts in `benchmarks/`). "Demonstrated" means a held-out measurement shows the useful effect; none of the rows below that read "unproven" should be described as working.
+
+| Capability | Implemented | Tested | Demonstrated | Evidence / limit |
+|---|---|---|---|---|
+| Bit-exact input through the Zip Loop | yes | yes (42 tests) | yes (encoding) | Three silent-corruption paths fixed (`sendByte(300)` became 44; empty message re-learned; output ties decoded as 0) |
+| Mesh holds what went through the loop | yes, opt-in memory | yes | yes with memory | held-out bit recovery 0.85-0.96 (memory .97) vs last 4 bits only without it |
+| Faster live mesh | yes | checksum-identical | yes | 613-633 -> 502-511 ms/byte (-19%) at 336 neurons; threads/SIMD not attempted |
+| Taught recall (`ZipSpeaker`) | yes | yes | yes, as lookup | 70% -> 94% of 54 taught questions with standardised features |
+| **Paraphrase generalisation** | no | measured | **no** | 0% on held-out paraphrases, 3 seeds, 5 configs; keyword overlap 75% on the same items |
+| Abstention on unknown questions | yes | yes | partly | 91-95% right abstention, 5-9% hallucinated |
+| Next-message prediction | yes (new) | yes | learns, **does not generalise** | loss 1.0 -> 0.01 on seen pairs; unseen names no better than the average guess |
+| Learned tool selection | yes (new) | yes | partly | 100% familiar, 63% paraphrase, 6% no shared words, abstains safely; same overall as keyword overlap (40% vs 39%) |
+| Tool execution needs explicit authorization | yes | yes | yes | untrained selector abstains on everything; consequential tools never run without a per-call grant; two approval bypasses fixed |
+| Wave layer helps | yes | ablation | yes (modestly) | retention 0.94 vs 0.81, recall 0.94 vs 0.78 without it |
+| All-to-all connectivity helps | yes | ablation | weakly | 10% density loses (0.83 / 0.70); 50% barely does (0.90 / 0.91) |
+| Hyperdimensional term, connection bias, shift links | yes | ablation | **no effect found** | removing each changed nothing measurable on these tasks |
+| "Quantum" interference | yes | yes | no | classical complex arithmetic; no advantage measured or claimed |
+| Elastic protection of the live engine | yes | yes (block) | **no** on the live engine | importance protection moved weights as much as none; readout lost 0/12 |
+| Rehearsal against forgetting | yes | yes | yes | 12/12 after drift when stored pairs are replayed; unreplayed pairs lost |
+| Controlled improvement loop | yes (new) | yes (15) | machinery only | 24 proposals, 0 promoted; every forbidden proposal refused; no improvement shown |
+| Recursive self-improvement | no | no | **unproven** | the loop tunes two hyper-parameters; nothing edits behaviour |
+| Language understanding | no | no | **unproven** | nothing measured shows it |
+
+Revised per-idea "Today" scores for the rows this branch measured: predict-next-message 1 -> 3 (it now learns, still no generalisation); net-skill routing / tool choice 3-4 -> 4 (selection learns and abstains; no-shared-word is still chance); self-improvement "not measured" -> 2 (infrastructure and a null result); wave layer 4 -> 5 (a measured benefit); elastic protection 7 -> 5 (does not transfer to the live engine); the rest unchanged.
+
 ## The verdict
 
 **Good where it is plain, well-understood machinery done carefully; not yet good at the thing the project is for.**

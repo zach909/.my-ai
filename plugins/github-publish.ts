@@ -144,6 +144,11 @@ export class GithubPublishPlugin extends BasePlugin {
    * language that cannot express file contents can only manage things
    * someone else already uploaded.
    */
+  override wouldAct(message: unknown): boolean {
+    const input = (typeof message === "string" ? message : String(message ?? "")).trim();
+    return /^(?:github\s+push|push\s+to\s+github|publish\s+to\s+github)\b/i.test(input);
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = (typeof message === "string" ? message : String(message ?? "")).trim();
     if (!input) return null;
