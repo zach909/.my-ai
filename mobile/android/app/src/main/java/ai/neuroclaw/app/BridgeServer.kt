@@ -23,6 +23,8 @@ import java.util.concurrent.Executors
  *   POST /v1/click       {windowId, x, y, button}
  *   POST /v1/close       {windowId}
  *   POST /v1/launch      {target}  (an installed app's package name)
+ *   GET  /v1/tools       native tool catalog
+ *   POST /v1/tools/{name}  execute one permission-aware native tool
  *
  * Plain java.net sockets: no web-server library. Every request needs the
  * bearer token from Settings; without it nothing else is reached. It listens
@@ -127,7 +129,16 @@ class BridgeServer(private val service: AgentBridgeService, private val settings
         if (!MessageDigest.isEqual(presented, settings.bridgeToken.toByteArray())) return error(401, "Missing or wrong bridge token.")
 
         val body = if (req.body.isEmpty()) JSONObject() else JSONObject(String(req.body, Charsets.UTF_8))
-        return when ("${req.method} ${req.path}") {
+        val path = req.path.substringBefore("?")
+        if (req.method == "GET" && path == "/v1/tools") {
+            return json(200, JSONObject().put("tools", DeviceTools(service).catalog()))
+        }
+        if (req.method == "POST" && path.startsWith("/v1/tools/")) {
+            val name = path.removePrefix("/v1/tools/").substringBefore("/").trim()
+            if (name.isEmpty() || name.length > 80) return error(400, "Tool name is required.")
+            return json(200, DeviceTools(service).execute(name, body))
+        }
+        return when ("${req.method} $path") {
             "GET /v1/info" -> info()
             "GET /v1/windows" -> windows()
             "GET /v1/screenshot" -> {
@@ -171,6 +182,7 @@ class BridgeServer(private val service: AgentBridgeService, private val settings
             .put("moveResize", false)
             .put("settings", false)
             .put("launch", true)
+            .put("nativeTools", true)
         val notes = JSONArray()
             .put("Android: the agent can see every window and take screenshots, but can only type, tap and press Back in NeuroClaw's own windows.")
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) notes.put("Screenshots need Android 11 or newer.")

@@ -1,0 +1,51 @@
+{
+ "meta": {
+  "dist": "/tmp/claude-0/-home-user--my-ai/77070fd4-8f69-5930-8630-ce9dc61d79e2/scratchpad/dist_fin",
+  "mesh": "live64",
+  "seed": 1,
+  "protectFraction": 0.9,
+  "A": 12,
+  "B": 12,
+  "events": 30
+ },
+ "strategies": {
+  "unprotected": {
+   "weightsMovedMeanAbs": 0.002649,
+   "staleA": 0,
+   "learnsB": 12,
+   "overwrite": {
+    "A": 0,
+    "B": 12
+   },
+   "rehearsal": {
+    "A": 12,
+    "B": 12
+   },
+   "rehearsal3": {
+    "A": 3,
+    "Areplayed": 3,
+    "Aunreplayed": 0,
+    "B": 12
+   }
+  },
+  "protect": {
+   "weightsMovedMeanAbs": 0.002429,
+   "staleA": 0,
+   "learnsB": 12
+  },
+  "scrambled": {
+   "weightsMovedMeanAbs": 0.0009937,
+   "staleA": 0,
+   "learnsB": 12
+  },
+  "slower": {
+   "weightsMovedMeanAbs": 0.0004254,
+   "staleA": 0,
+   "learnsB": 12
+  }
+ },
+ "beforeAnyDrift": {
+  "A": 12
+ },
+ "seconds": 165.9
+}

@@ -13,36 +13,14 @@ import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
 import { OrbitControls, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import type { MeshState, Neuron } from '@/features/mesh/types';
+import { fibonacciPoints } from './fibonacci-sphere';
 
 // ─── Layout: arrange neurons on a 3D sphere ────────────────────────────────
 
-/** Fibonacci sphere — evenly distributes N points on a sphere surface. */
-// eslint-disable-next-line react-refresh/only-export-components -- math utility function, not a component; tested in unit tests and used in MeshVisualization component
+/** Fibonacci sphere — evenly distributes N points on a sphere surface (the maths is in fibonacci-sphere.ts). */
+// eslint-disable-next-line react-refresh/only-export-components -- math utility function, not a component; tested in unit tests and used in MeshVisualization
 export function fibonacciSphere(n: number, radius: number): THREE.Vector3[] {
-  if (n <= 1) {
-    // i / (n - 1) below divides by zero once n === 1 (0/0 = NaN), which
-    // propagates into every coordinate -- reached whenever the mesh has
-    // exactly one neuron, or zero (MeshScene's `Math.max(neuronCount, 1)`
-    // still calls this every render, even before meshState loads).
-    return n === 1 ? [new THREE.Vector3(0, radius, 0)] : [];
-  }
-  const points: THREE.Vector3[] = [];
-  const phi = Math.PI * (3 - Math.sqrt(5));
-
-  for (let i = 0; i < n; i++) {
-    const y = 1 - (i / (n - 1)) * 2;
-    const radiusAtY = Math.sqrt(1 - y * y);
-    const theta = phi * i;
-
-    points.push(
-      new THREE.Vector3(
-        Math.cos(theta) * radiusAtY * radius,
-        y * radius,
-        Math.sin(theta) * radiusAtY * radius,
-      ),
-    );
-  }
-  return points;
+  return fibonacciPoints(n, radius).map((p) => new THREE.Vector3(p.x, p.y, p.z));
 }
 
 // ─── Neuron Sphere ──────────────────────────────────────────────────────────

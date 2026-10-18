@@ -408,6 +408,17 @@ describe('Neuroclaw Integration Tests', () => {
       expect(isWikiPublicRoute('/api/wiki/some-page/backups', 'GET')).toBe(false);
     });
 
+    it('still exempts reading a nested page, so reserving "backups" and "restore" does not over-block', () => {
+      expect(isWikiPublicRoute('/api/wiki/getting-started/installation', 'GET')).toBe(true);
+      expect(isWikiPublicRoute('/api/wiki/a/b/c', 'GET')).toBe(true);
+      expect(isWikiPublicRoute('/api/wiki/backups-and-recovery', 'GET')).toBe(true);   // only the exact trailing word is reserved
+    });
+
+    it('never exempts a nested name that ends in a reserved sub-route, on any depth', () => {
+      expect(isWikiPublicRoute('/api/wiki/getting-started/installation/backups', 'GET')).toBe(false);
+      expect(isWikiPublicRoute('/api/wiki/some-page/restore', 'GET')).toBe(false);
+    });
+
     it('never exempts any non-wiki route -- "I don\'t want them to have admin access to the whole thing"', () => {
       expect(isWikiPublicRoute('/api/status', 'GET')).toBe(false);
       expect(isWikiPublicRoute('/api/plugins', 'GET')).toBe(false);

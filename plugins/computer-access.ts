@@ -91,6 +91,11 @@ export class ComputerAccessPlugin extends BasePlugin {
     };
   }
 
+  override wouldAct(message: unknown): boolean {
+    const input = (typeof message === "string" ? message : String(message ?? "")).trim();
+    return /^(?:turn off|turn on|disable|enable|stop|kill|allow|restore)\s/i.test(input);
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = (typeof message === "string" ? message : String(message ?? "")).trim();
     if (!input) return null;

@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import threading
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, List, Optional
 
@@ -37,26 +38,32 @@ _INDEX_HTML = b"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>TinyGPT</title>
+<link rel="stylesheet" href="/ambient.css">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0a0a0a; color: #e6e6e6; font-family: system-ui, sans-serif;
-         height: 100vh; display: flex; flex-direction: column; }
-  #header { padding: 10px 16px; border-bottom: 1px solid #2a2a2a; font-size: 13px;
-            color: #888; display: flex; justify-content: space-between; }
-  #chat { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
-  .msg { max-width: 75%; padding: 8px 12px; border-radius: 6px; line-height: 1.45; font-size: 14px; }
-  .user { align-self: flex-end; background: #1e3a5f; }
-  .bot { align-self: flex-start; background: #1a1a1a; border: 1px solid #2a2a2a; }
-  .err { align-self: center; color: #ff6b6b; font-size: 12px; }
-  #bar { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #2a2a2a; }
-  #in { flex: 1; background: #111; border: 1px solid #333; color: #eee; padding: 10px 12px;
-        border-radius: 6px; font-size: 14px; }
-  #send { background: #1e3a5f; color: #fff; border: none; padding: 10px 18px;
-          border-radius: 6px; cursor: pointer; font-size: 14px; }
-  #send:disabled { opacity: 0.5; cursor: default; }
+  body { background: #110c0e; color: #f8ede9; font-family: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+         height: 100vh; display: flex; flex-direction: column; padding: 18px; gap: 14px; }
+  #header { padding: 12px 22px; font-size: 13px; color: rgba(248,237,233,.62); display: flex; justify-content: space-between;
+            background: rgba(255,240,232,.08); border: 1px solid rgba(255,228,218,.2); border-radius: 999px;
+            backdrop-filter: blur(26px) saturate(1.5); }
+  #chat { flex: 1; overflow-y: auto; padding: 10px 6px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 75%; padding: 10px 16px; border-radius: 24px; line-height: 1.45; font-size: 14px;
+         backdrop-filter: blur(26px) saturate(1.5); }
+  .user { align-self: flex-end; background: rgba(255,154,132,.16); border: 1px solid rgba(255,154,132,.5); color: #ffc4b4; }
+  .bot { align-self: flex-start; background: rgba(255,240,232,.08); border: 1px solid rgba(255,228,218,.2); }
+  .err { align-self: center; color: #ff9aa8; font-size: 12px; }
+  #bar { display: flex; gap: 10px; padding: 10px; border-radius: 999px; background: rgba(255,240,232,.08);
+         border: 1px solid rgba(255,228,218,.2); backdrop-filter: blur(26px) saturate(1.5); }
+  #in { flex: 1; background: transparent; border: none; outline: none; color: #f8ede9; padding: 8px 14px; font-size: 14px; font-family: inherit; }
+  #send { background: rgba(255,154,132,.16); color: #ffc4b4; border: 1px solid rgba(255,154,132,.5); padding: 10px 22px;
+          border-radius: 999px; cursor: pointer; font-size: 14px; font-family: inherit;
+          transition: transform .3s cubic-bezier(.34,1.56,.64,1), background .3s; }
+  #send:hover { background: rgba(255,154,132,.28); transform: translateY(-2px) scale(1.03); }
+  #send:active { transform: scale(.95); }
+  #send:disabled { opacity: 0.5; cursor: default; transform: none; }
 </style>
 </head>
-<body>
+<body class="nc-soft">
 <div id="header"><span>TinyGPT (local, no external APIs)</span><span id="status">loading...</span></div>
 <div id="chat"></div>
 <div id="bar">
@@ -109,6 +116,7 @@ _INDEX_HTML = b"""<!DOCTYPE html>
   send.onclick = submit;
   input.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
 </script>
+<script src="/ambient.js" defer></script>
 </body>
 </html>
 """
@@ -176,6 +184,19 @@ def _make_handler(server_state: ChatServer):
                 self.send_header("Content-Length", str(len(_INDEX_HTML)))
                 self.end_headers()
                 self.wfile.write(_INDEX_HTML)
+            elif self.path in ("/ambient.css", "/ambient.js"):
+                # The shared look (interface/ambient.ts, written out to interface/static).
+                name = self.path[1:]
+                f = Path(__file__).resolve().parents[2] / "interface" / "static" / name
+                if f.is_file():
+                    data = f.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/css; charset=utf-8" if name.endswith(".css") else "text/javascript; charset=utf-8")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                else:
+                    self._json(404, {"error": "not found"})
             elif self.path == "/api/status":
                 self._json(200, server_state.status())
             else:

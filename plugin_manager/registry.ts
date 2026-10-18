@@ -15,6 +15,12 @@ import { CapabilityRouter, type Ranked } from "./capability-router.js";
  */
 const MAX_PLUGINS_TRIED = 4;
 
+/**
+ * Intents whose caller has already chosen the plugin: the order of their candidate list is
+ * binding, so scoring against the message cannot reorder it (see dispatch()).
+ */
+const BINDING_INTENTS = new Set(["skill-creation", "extension-creation", "documentation"]);
+
 /** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
 function sanitizePluginIdForPath(pluginId: string): string {
   return pluginId.replace(/[^a-zA-Z0-9_-]+/g, "_") || "unknown";
@@ -347,6 +353,32 @@ export class PluginRegistry {
     return intentToPlugins[intent] ?? [];
   }
 
+  /**
+   * Risky tools ask first (models && skills/core/tool-safety.ts). When a gate is
+   * set, it is consulted BEFORE a plugin's onMessage() runs: a tool that needs
+   * approval is not called at all, and dispatch returns the gate's message
+   * ("waiting for your permission") in place of a result.
+   */
+  private gate: { check(pluginId: string, input: string, score: number, acts?: boolean): { allow: true } | { allow: false; message: string } } | null = null;
+
+  setGate(gate: PluginRegistry["gate"]): void {
+    this.gate = gate;
+  }
+
+  /**
+   * Runs one tool once, with no gate, for a call its owner just approved. Null
+   * if the tool is not active or had nothing to do for that message.
+   */
+  async runApproved(pluginId: string, input: string): Promise<string | null> {
+    const plugin = this.activePlugins.has(pluginId) ? this.plugins.get(pluginId) : undefined;
+    if (!plugin) return null;
+    const result = await plugin.onMessage?.(input);
+    if (result == null) return null;
+    this.firePluginNeurons(pluginId);
+    this.lastHandledBy = pluginId;
+    return typeof result === "string" ? result : JSON.stringify(result);
+  }
+
   // Route an input to the most relevant active plugin, scoring every plugin's
   // declared capabilities rather than walking a hardcoded list.
   async dispatch(input: string, intent: string): Promise<string | null> {
@@ -391,16 +423,30 @@ export class PluginRegistry {
     // orders them; the intent map's suggestions get a boost inside that
     // scoring rather than deciding the outcome alone.
     const ranked = this.router.rank(input, candidates);
-    const ordered = ranked.map(r => r.id).filter(id => this.activePlugins.has(id));
+    // For the dedicated intents the caller has already chosen the plugin, and the order of their
+    // candidate list is the choice (skill-maker, then fallbacks): it is binding, not a prior.
+    // Scoring let file-system outrank skill-maker for any procedure that mentions a file, and
+    // file-system answers with text rather than declining, so teaching the same "open the file,
+    // parse each line, write the results" procedure twice produced "[FileSystem] ..." instead of a skill.
+    const ordered = (BINDING_INTENTS.has(intent) ? candidates : ranked.map(r => r.id)).filter(id => this.activePlugins.has(id));
     this.lastRouting = ranked.slice(0, 5);
 
     // Only the best few are actually called. Scoring does not execute plugin
     // code, so the expensive part is now bounded: previously every candidate
     // that could not handle a message still paid a full onMessage() to find
     // that out, including whatever disk or network work it did first.
+    const scoreOf = new Map(ranked.map(r => [r.id, r.score]));
     for (const pluginId of ordered.slice(0, MAX_PLUGINS_TRIED)) {
       const plugin = this.plugins.get(pluginId);
       if (!plugin) continue;
+      let acts: boolean | undefined;
+      try { acts = (plugin as { wouldAct?(m: unknown): boolean }).wouldAct?.(input); } catch { acts = true; }  // a predicate that throws is treated as "would act": fail closed
+      const verdict = this.gate?.check(pluginId, input, scoreOf.get(pluginId) ?? 0, acts);
+      if (verdict && verdict.allow === false) {
+        // Held, not run. The tool never saw this message.
+        this.lastHandledBy = null;
+        return (verdict as { message: string }).message;
+      }
       try {
         const result = await plugin.onMessage?.(input);
         if (result != null) {

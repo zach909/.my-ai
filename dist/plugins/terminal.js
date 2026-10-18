@@ -25,6 +25,7 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { ToolPlugin } from "../plugin_manager/sdk.js";
 import { readItem, listCatalog, readItemFile } from "../models && skills/core/store.js";
+import { fetchItemFile } from "../models && skills/core/store-fetch.js";
 import { applyMod, revertMod, isApplied, listAppliedMods } from "../models && skills/core/mod-apply.js";
 import { sharedAccessManager } from "../models && skills/core/access-settings.js";
 const execAsync = promisify(exec);
@@ -208,7 +209,16 @@ export class TerminalPlugin extends ToolPlugin {
                 const filename = textArg(args, "filename");
                 if (!readItem("mods", name))
                     throw new Error(`There is no published mod "${name}".`);
-                const content = readItemFile("mods", name, filename);
+                let content = readItemFile("mods", name, filename);
+                if (!content) {
+                    // Not on this device: never downloaded, or offloaded after going unused.
+                    try {
+                        content = (await fetchItemFile("mods", name, filename)).buf;
+                    }
+                    catch {
+                        content = null;
+                    }
+                }
                 if (!content)
                     throw new Error(`Mod "${name}" has no file "${filename}".`);
                 const text = content.toString("utf8");

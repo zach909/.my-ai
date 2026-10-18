@@ -2,7 +2,7 @@ import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { dataDir } from "../models && skills/core/user-context.js";
 
 export interface Task {
   id: string;
@@ -15,8 +15,9 @@ export interface Task {
   tags: string[];
 }
 
-const STORAGE_DIR = join(homedir(), ".neuroclaw");
-const STORAGE = join(STORAGE_DIR, "tasks.json");
+// Per person: the owner's tasks stay in ~/.neuroclaw/tasks.json, everyone else has their own.
+const storageDir = (): string => dataDir();
+const storagePath = (): string => join(dataDir(), "tasks.json");
 
 export class TasksPlugin extends BasePlugin {
   private tasks: Task[] = [];
@@ -26,13 +27,13 @@ export class TasksPlugin extends BasePlugin {
   async onActivate(context: any): Promise<void> {
     await super.onActivate(context);
     try {
-      if (!existsSync(STORAGE_DIR)) {
-        mkdirSync(STORAGE_DIR, { recursive: true, mode: 0o700 });
+      if (!existsSync(storageDir())) {
+        mkdirSync(storageDir(), { recursive: true, mode: 0o700 });
       }
       if (process.platform !== "win32" && typeof chmodSync === "function") {
-        chmodSync(STORAGE_DIR, 0o700);
-        if (existsSync(STORAGE)) {
-          chmodSync(STORAGE, 0o600);
+        chmodSync(storageDir(), 0o700);
+        if (existsSync(storagePath())) {
+          chmodSync(storagePath(), 0o600);
         }
       }
     } catch { }
@@ -54,6 +55,7 @@ export class TasksPlugin extends BasePlugin {
         throw new Error("Security Error: Invalid task tags.");
       }
     }
+    this.load(); // this person's tasks, not whoever used the plugin last
     const task: Task = {
       id: `task-${Date.now()}-${Math.random().toString(36).slice(2,9)}`,
       title, completed: false, priority: "medium", createdAt: Date.now(),
@@ -71,6 +73,7 @@ export class TasksPlugin extends BasePlugin {
         throw new Error("Security Error: Invalid filter tag.");
       }
     }
+    this.load();
     let result = [...this.tasks];
     if (filter?.completed !== undefined) result = result.filter(t => t.completed === filter.completed);
     if (filter?.priority) result = result.filter(t => t.priority === filter.priority);
@@ -80,6 +83,7 @@ export class TasksPlugin extends BasePlugin {
 
   async complete(id: string): Promise<boolean> {
     this.validateId(id);
+    this.load();
     const t = this.tasks.find(task => task.id === id);
     if (!t) return false;
     t.completed = true; this.save(); return true;
@@ -87,6 +91,7 @@ export class TasksPlugin extends BasePlugin {
 
   async remove(id: string): Promise<boolean> {
     this.validateId(id);
+    this.load();
     const idx = this.tasks.findIndex(t => t.id === id);
     if (idx === -1) return false;
     this.tasks.splice(idx, 1); this.save(); return true;
@@ -98,11 +103,14 @@ export class TasksPlugin extends BasePlugin {
     }
   }
 
+  /**
+   * This person's tasks. A person with no file yet has NO tasks: leaving the list
+   * as it was would hand them whatever the last person using this one plugin
+   * instance had in memory.
+   */
   private load(): void {
     try {
-      if (existsSync(STORAGE)) {
-        this.tasks = JSON.parse(readFileSync(STORAGE, "utf-8"));
-      }
+      this.tasks = existsSync(storagePath()) ? JSON.parse(readFileSync(storagePath(), "utf-8")) : [];
     } catch {
       this.tasks = [];
     }
@@ -110,18 +118,18 @@ export class TasksPlugin extends BasePlugin {
 
   private save(): void {
     try {
-      if (!existsSync(STORAGE_DIR)) {
-        mkdirSync(STORAGE_DIR, { recursive: true, mode: 0o700 });
+      if (!existsSync(storageDir())) {
+        mkdirSync(storageDir(), { recursive: true, mode: 0o700 });
       }
       if (process.platform !== "win32" && typeof chmodSync === "function") {
-        chmodSync(STORAGE_DIR, 0o700);
+        chmodSync(storageDir(), 0o700);
       }
-      writeFileSync(STORAGE, JSON.stringify(this.tasks, null, 2), {
+      writeFileSync(storagePath(), JSON.stringify(this.tasks, null, 2), {
         encoding: "utf-8",
         mode: 0o600,
       });
       if (process.platform !== "win32" && typeof chmodSync === "function") {
-        chmodSync(STORAGE, 0o600);
+        chmodSync(storagePath(), 0o600);
       }
     } catch { }
   }

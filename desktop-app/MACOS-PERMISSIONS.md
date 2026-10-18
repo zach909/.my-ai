@@ -1,0 +1,93 @@
+# macOS permissions for NeuroClaw
+
+NeuroClaw's macOS desktop build declares privacy purpose strings for supported macOS-protected resources. These strings explain why access may be requested; they do **not** grant permission by themselves. macOS controls each permission through TCC and System Settings, and the user must approve it. NeuroClaw must request access only when the user invokes the corresponding feature.
+
+## Permission inventory
+
+| Permission / capability | How macOS grants it | Important limitation |
+|---|---|---|
+| Location Services | Location prompt when a location feature is implemented and invoked | Electron/Node does not automatically gain a reliable native location API just because a plist string exists. |
+| Contacts, Calendars, Reminders | Per-category privacy prompts from a native API or supported helper | Purpose strings alone do not implement these integrations. |
+| Photos | Photo-library prompt where applicable; file picker can grant access to selected items | Prefer the picker when the feature only needs a chosen file. |
+| Bluetooth | Bluetooth privacy prompt when a supported API is used | A usage string does not add a Bluetooth implementation. |
+| Local Network | Local-network prompt when the app browses or connects to LAN devices | Only connect to user-selected/trusted devices. |
+| Microphone, Camera | Electron media permission flow plus macOS privacy approval | Ask at point of use; never activate covertly. |
+| Speech Recognition | Speech-recognition authorization when the native speech API is used | Separate from microphone permission. |
+| HomeKit, Media & Apple Music | Native framework authorization where supported | These require real integrations and may need additional capabilities or signing setup. |
+| Desktop, Documents, Downloads, network and removable volumes | User-selected open/save dialogs and macOS privacy controls | The app cannot silently grant itself access to every folder or volume. |
+| Screen & System Audio Recording | User enables Screen Recording / audio capture in System Settings; app may need to be relaunched | There is no legitimate plist key that silently grants screen/audio capture. |
+| Accessibility | User enables NeuroClaw in Privacy & Security → Accessibility | Cannot be granted by the app. Use only for user-authorized assistive/automation features. |
+| Input Monitoring | User enables NeuroClaw in Privacy & Security → Input Monitoring | Cannot be silently granted. |
+| Automation / Apple Events | User approves each target-app automation request in macOS prompts/System Settings | Add a target-specific Apple Events usage description only when the target integration is known. |
+| Full Disk Access | User explicitly enables NeuroClaw in Privacy & Security → Full Disk Access | No entitlement or plist key can grant this. It is broad and should not be required for ordinary file access. |
+| Focus, Notifications, Shortcuts | User/system authorization or per-feature configuration, depending on API | There is no universal “Focus permission” that unlocks every Focus setting. Shortcuts access is API- and workflow-specific. |
+| App Management, Developer Tools, System Configuration | Depends on the specific operation; some actions require admin approval or separate developer tools | Not a single blanket permission. Do not bypass system prompts or privilege boundaries. |
+| Extensions, Remote Desktop | Per-extension approval, app-specific configuration, or managed system settings | System extensions and remote-control features can require signed/notarized builds, special entitlements, or user/admin approval. |
+| HomeKit and other protected frameworks | Framework-specific authorization and capability configuration | Must be implemented and tested separately; declaration alone is insufficient. |
+
+## Additional macOS controls to account for
+
+Depending on features implemented, users may also see prompts or settings for Notifications, Apple Events automation, file-provider/document-picker access, removable volumes, network volumes, Bluetooth, Screen Recording, Accessibility, Input Monitoring, camera, microphone, speech recognition, location, Photos, Contacts, Calendars, Reminders, and protected developer/system extensions. Keychain access is controlled by signing identity and keychain ACLs rather than a universal privacy switch. Administrator privileges are not a privacy permission and should be requested only for a specific installation or system operation.
+
+## Implementation rules
+
+1. Request permission only immediately before the user starts the feature that needs it.
+2. Explain the feature and data use in the UI before opening a system prompt or Settings page.
+3. Treat denied, restricted, unavailable, and not-yet-requested as distinct states. Never loop prompts or imply that access was granted.
+4. Provide a Settings-opening help action for permissions macOS does not let an app request programmatically.
+5. Do not claim “all permissions granted” based on plist declarations. Show each permission as **Granted**, **Not granted**, **Needs Settings**, **Unsupported**, or **Feature not implemented** based on a real platform check.
+6. Never attempt to bypass TCC, elevate silently, or obtain screen, audio, input, or filesystem access without user consent.
+
+## Runtime helpers now exposed to the renderer
+
+The Electron preload exposes three narrowly scoped helpers:
+
+- `getMacOSPermissionsStatus()` reports the platform and the permission states Electron can query directly. For categories Electron cannot reliably inspect, it returns `settings-required`; that is not the same as granted.
+- `requestMacOSMediaAccess('camera' | 'microphone')` invokes Electron's native consent flow for those two supported media categories and returns the actual result.
+- `openMacOSPrivacySettings(category)` opens the relevant Privacy & Security pane for supported categories such as camera, microphone, location, Accessibility, Input Monitoring, Screen Recording, Full Disk Access, Bluetooth, and Automation.
+
+These are renderer-facing APIs, not a completed permission dashboard. A UI must call them when the user enables a feature, display the returned state accurately, and handle OS-version differences. Do not use the status helper to imply access to Contacts, Calendar, files, or other categories that it cannot query directly.
+
+The entitlement file configured for Electron's hardened runtime is not a permission grant. Distribution still requires macOS build testing and, for external distribution, appropriate code signing and notarization.
+
+
+## Extended protected-resource catalog
+
+The runtime registry also includes Apple's documented TCC service identifiers that are not separate general-purpose permission prompts in Electron: `AppleEvents`, `AudioCapture`, `Siri`, `UserTracking`, `SystemPolicyAppBundles`, `SystemPolicyAppData`, `SystemPolicySysAdminFiles`, `VirtualMachineNetworking`, `VoiceBanking`, `WebBrowserPublicKeyCredential`, and `PostEvent`. Calendar write-only/full-access and Reminders full-access are listed separately because modern macOS distinguishes authorization levels. The catalog also has explicit user-selected file and folder entries.
+
+Apple's documented service list is a list of protected-resource services, not a promise that every service has a public request API or a dedicated Settings pane. For services without a supported request API, the tool reports that a feature-specific native implementation or user/admin action is required. It must never report a grant based only on a purpose string, entitlement, catalog entry, or Settings link.
+
+Official reference: [Apple — Resetting access to protected resources in macOS](https://developer.apple.com/documentation/Xcode/resetting-access-to-protected-resources-in-macOS).
+
+
+## Final Apple-listed protected-resource coverage pass
+
+The catalog includes explicit entries for the remaining services in Apple's published macOS protected-resource reset list: EnergyKit guidance, external-camera media, File Provider domains and presence, Focus status, and Game Center friends. Protected developer-file access is also represented separately. The catalog previously had 92 tool IDs; this pass adds 39 distinct explicit service aliases, and the preload exposes the same IDs.
+
+This is a coverage inventory, not 82 independent macOS permission prompts. Apple documents a finite list of protected-resource service names, while other capabilities (for example administrator rights, keychain access, network sockets, printing, biometric authentication, and background items) are governed by different APIs, entitlements, user approvals, or operating-system policies. The app must implement and test each feature-specific API; adding a registry entry does not itself implement or grant the capability.
+
+Apple's reference list: [Resetting access to protected resources in macOS](https://developer.apple.com/documentation/xcode/resetting-access-to-protected-resources-in-macos) and [Protected resources](https://developer.apple.com/documentation/bundleresources/protected-resources).
+
+
+## Additional explicit service aliases
+
+The registry now also exposes one named tool for each remaining Apple-listed TCC service category, including Accessibility, BluetoothAlways, Calendar, Camera, Microphone, Motion, Photos and PhotosAdd, Reminders, RemoteDesktop, ScreenCapture, SpeechRecognition, HomeKit, Apple Events, AudioCapture, PostEvent, FocusStatus, File Provider services, Game Center friends, app data and bundle services, developer/system files, virtual-machine networking, Personal Voice, browser public-key credentials, EnergyKit, and external-camera media. Several aliases intentionally map to the same underlying macOS service or Settings pane; they improve discoverability and do not create new independent permissions.
+
+The usage-description dictionary also includes purpose strings for additional Apple-defined privacy categories. Some keys apply only to particular OS versions, hardware, entitlements, or APIs. The build must be validated on macOS, and a purpose string is not a substitute for the corresponding native framework integration or user authorization.
+
+
+## Additional macOS capability entries
+
+This update adds explicit entries for system-extension approval, driver-extension approval, Network Extension configuration, Endpoint Security, App Sandbox entitlements, login-item/background-task management, notification authorization, Keychain access groups, privileged helper tools, Virtualization framework access, and network client/server entitlements. These are capability/entitlement records rather than independent privacy prompts. Their actual availability depends on the macOS version, signed entitlements, provisioning, the API used, and any required user or administrator approval. The catalog does not bypass these requirements.
+
+Apple's documented protected-resource TCC services are represented in the catalog. Some catalog IDs are aliases for the same underlying service; they do not represent separate grants. The app still needs feature-specific native API calls for permission requests and access checks.
+
+
+### Additional documented camera resource
+
+Added `mainCamera` for Apple's `NSMainCameraUsageDescription` protected-resource key. It uses the existing camera consent flow and opens the Camera privacy settings pane when manual approval is needed. This is a distinct documented usage-description key, not a bypass or a new grant separate from macOS camera authorization.
+
+
+### Additional Apple-documented location and Bluetooth entries
+
+Added catalog entries and property-list configuration for the legacy Bluetooth peripheral usage-description key, legacy always-on location usage-description key, temporary full-accuracy location purpose dictionary, and reduced-accuracy default setting. Apple marks some of these keys as deprecated or platform/API-specific; they do not create permission prompts on their own. The temporary-accuracy dictionary must use a purpose key that matches the native location API call, and the native location feature must be implemented before these settings have an effect.

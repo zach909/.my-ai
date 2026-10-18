@@ -5,13 +5,26 @@ services:
     volumes:
       - ./:/app
     # `npm run dev` (scripts/dev.mjs) builds the TS backend (tsc -> dist/) and
-    # runs it on 127.0.0.1:7861. The Vite frontend is gone, so nothing listens
-    # on the published port 3000 any more.
+    # runs it in the foreground. The backend serves the terminal page (/), the
+    # dashboard (/app) and /api/* itself, all on port 3000 here, so the browser
+    # at http://localhost:3000 talks to the real backend directly. There is no
+    # Vite and no proxy: a proxy would make remote clients look like loopback
+    # to the backend and bypass its password gate.
+    #
+    # Inside the container the backend binds 0.0.0.0 (a published port cannot
+    # reach a loopback-only listener), so it counts every browser as remote and
+    # asks for a password. Set NEUROCLAW_WEB_PASSWORD in your shell or a .env
+    # file, or leave it unset and open http://localhost:3000/login with the
+    # setup code printed by `docker compose -f docker-compose.dev.yml logs web`.
+    # The host side of the port is bound to loopback only.
     # NEUROCLAW_AUTO_UPDATE=0 stops the startup git fetch/pull from touching
     # the bind-mounted working tree.
     command: sh -c "npm install && npm run dev"
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
-      - CHOKIDAR_USEPOLLING=true
+      - NEUROCLAW_WEB_PORT=3000
+      - NEUROCLAW_WEB_HOST=0.0.0.0
+      - NEUROCLAW_WEB_PASSWORD=${NEUROCLAW_WEB_PASSWORD:-}
+      - NEUROCLAW_AUTO_UPDATE=0
     restart: unless-stopped

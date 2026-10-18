@@ -180,9 +180,33 @@ export class ChatHistoryStore {
     return thread;
   }
 
+  /**
+   * Add a whole thread that came from somewhere else (an exported zip). Never
+   * overwrites: a thread with this id already here is left exactly as it is
+   * and false comes back. The caller has already checked the shape.
+   */
+  importThread(thread: ChatThread): boolean {
+    this.ensureDir();
+    const p = this.path(thread.id);
+    if (existsSync(p)) return false;
+    writeFileSync(p, JSON.stringify(thread), "utf8");
+    this.organizer.assign(thread);
+    return true;
+  }
+
   /** Every persisted group, most recently active first. */
   listGroups(): ChatGroupRecord[] {
     return this.organizer.listGroups();
+  }
+
+  /** Groups the agent still has to name (agent-organizer.ts). */
+  groupsNeedingTitle(minGapMs: number, now?: number): ChatGroupRecord[] {
+    return this.organizer.groupsNeedingTitle(minGapMs, now);
+  }
+
+  /** Store the agent's title for a group; null records that it was asked and gave nothing usable. */
+  setGroupTitle(groupId: string, title: string | null, now?: number): boolean {
+    return this.organizer.setTitle(groupId, title, now);
   }
 
   /** The group a given thread was automatically filed into, if any. */

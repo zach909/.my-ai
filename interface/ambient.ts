@@ -64,6 +64,12 @@ body { background: transparent !important; }
 @keyframes nc-drift-b { to { transform: translate(-12vmax, -9vmax) scale(1.15); } }
 @keyframes nc-drift-c { to { transform: translate(-16vmax, -12vmax) scale(0.85); } }
 @media (prefers-reduced-motion: reduce) { #nc-ambient .nc-a { animation: none; } }
+/* Settings > Appearance > Ring and glow background: off leaves a plain dark page. */
+html.nc-ambient-off #nc-ambient { display: none; }
+html.nc-ambient-off { background: var(--nc-bg) !important; }
+/* Phones and small windows: nothing may be wider than the screen, and tap targets stay comfortable. */
+html, body { max-width: 100%; }
+@media (max-width: 640px) { .nc-btn, .nc-input { min-height: 44px; } }
 `;
 
 export const AMBIENT_JS = String.raw`(function () {
@@ -79,6 +85,7 @@ export const AMBIENT_JS = String.raw`(function () {
   var canvas = root.querySelector('canvas');
   var ctx = canvas.getContext('2d');
   if (!ctx) return;
+  /* (the 2D canvas is the only drawing API used) */
 
   /* ---- The cord: one smooth closed wave, six rises and six dips, tips tucked in and the middle eased out ---- */
   var SCALE = 0.023, PITCH = 22, STEP = (2 * Math.PI) / 24;
@@ -88,6 +95,10 @@ export const AMBIENT_JS = String.raw`(function () {
   var BEAD = 3.3 * SCALE * FIT, SPHERE = 0.92;
 
   var N = 2304;
+  /* Cheap devices draw every STRIDE-th bead. The beads overlap about sixteen times over, so a quarter of them
+     still reads as one continuous cord. The frame-time governor below raises it if the device cannot keep up. */
+  var coarse = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || (navigator.hardwareConcurrency || 8) <= 4;
+  var STRIDE = coarse ? 2 : 1, M = N / STRIDE;
   var px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
   for (var n = 0; n < N; n++) {
     var th = (n / N) * Math.PI * 2;
@@ -117,7 +128,7 @@ export const AMBIENT_JS = String.raw`(function () {
   /* ---- Size and fit ---- */
   var W = 0, H = 0, DPR = 1, DIST = 6, FOCAL = 1;
   function resize() {
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    DPR = Math.min(window.devicePixelRatio || 1, STRIDE > 1 ? 1.5 : 2);
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
     var tanHalf = Math.tan((40 * Math.PI) / 360), need = 1.75;
@@ -128,24 +139,36 @@ export const AMBIENT_JS = String.raw`(function () {
   resize();
 
   /* ---- Motion: the ring flips end over end through the sphere, with a slow wobble ---- */
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var osReduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var reduce = osReduce, looping = false, hidden = false;
   var ptr = { x: 0, y: 0, sx: 0, sy: 0 };
   window.addEventListener('pointermove', function (e) { ptr.x = (e.clientX / W) * 2 - 1; ptr.y = (e.clientY / H) * 2 - 1; });
   var energy = 0, energyTarget = 0;
   function excite(a) { energyTarget = Math.min(1, energyTarget + a); }
+  var frames = 0, drawMs = 0;
+  window.ncAmbient = { excite: excite, stats: function () { return { stride: STRIDE, beads: M, dpr: DPR, frames: frames, avgDrawMs: frames ? drawMs / frames : 0, paused: hidden || reduce }; } };
   document.addEventListener('input', function () { excite(0.12); }, true);
   document.addEventListener('submit', function () { excite(1); }, true);
   document.addEventListener('click', function () { excite(0.25); }, true);
 
   var sx = new Float32Array(N), sy = new Float32Array(N), sz = new Float32Array(N), sd = new Float32Array(N);
   var order = new Uint16Array(N);
-  for (var o = 0; o < N; o++) order[o] = o;
+  function setStride(st) {
+    STRIDE = st; M = N / st;
+    for (var o = 0; o < M; o++) order[o] = o * st;
+    resize();
+  }
+  setStride(STRIDE);
+  var slow = 0;
 
   var angle = 0.6, last = performance.now(), visible = true;
   document.addEventListener('visibilitychange', function () { visible = !document.hidden; last = performance.now(); });
 
   function draw(now) {
-    var dt = Math.min(0.05, (now - last) / 1000); last = now;
+    var raw = now - last;
+    var dt = Math.min(0.05, raw / 1000); last = now;
+    /* Governor: about a second of frames slower than 30 per second means this device cannot afford the full cord. */
+    if (!reduce) { slow = raw > 34 ? slow + 1 : Math.max(0, slow - 1); if (slow > 30 && STRIDE < 4) { slow = 0; setStride(STRIDE * 2); } }
     energyTarget *= Math.exp(-dt * 1.1);
     energy += (energyTarget - energy) * (1 - Math.exp(-dt * 3));
     var follow = 1 - Math.exp(-dt * 5);
@@ -164,14 +187,15 @@ export const AMBIENT_JS = String.raw`(function () {
     ctx.clearRect(0, 0, W, H);
     var cx = W / 2, cy = H / 2;
 
-    for (var i = 0; i < N; i++) {
+    for (var j = 0; j < M; j++) {
+      var i = order[j];
       var x = px[i], y = py[i], z = pz[i];
       var X = m00 * x + m01 * y + m02 * z, Y = m10 * x + m11 * y + m12 * z, Z = m20 * x + m21 * y + m22 * z;
       var d = DIST - Z, k = FOCAL / d;
       sx[i] = cx + X * k; sy[i] = cy - Y * k; sz[i] = Z; sd[i] = k;
     }
     /* Insertion sort, far to near: the order barely changes between frames, so this is close to linear. */
-    for (var u = 1; u < N; u++) {
+    for (var u = 1; u < M; u++) {
       var key = order[u], kz = sz[key], v = u - 1;
       while (v >= 0 && sz[order[v]] > kz) { order[v + 1] = order[v]; v--; }
       order[v + 1] = key;
@@ -191,7 +215,7 @@ export const AMBIENT_JS = String.raw`(function () {
       var pr = BEAD * sd[n];
       ctx.drawImage(sprites[Math.round(t * (SHADES - 1))], sx[n] - pr, sy[n] - pr, pr * 2, pr * 2);
     };
-    for (; idx < N && sz[order[idx]] <= 0; idx++) drawBead(order[idx]);
+    for (; idx < M && sz[order[idx]] <= 0; idx++) drawBead(order[idx]);
 
     var core = ctx.createRadialGradient(cx - sr * 0.28, cy - sr * 0.32, sr * 0.1, cx, cy, sr);
     core.addColorStop(0, 'rgb(96,50,52)');
@@ -200,21 +224,67 @@ export const AMBIENT_JS = String.raw`(function () {
     ctx.fillStyle = core;
     ctx.beginPath(); ctx.arc(cx, cy, sr, 0, Math.PI * 2); ctx.fill();
 
-    for (; idx < N; idx++) drawBead(order[idx]);
+    for (; idx < M; idx++) drawBead(order[idx]);
   }
 
   function frame(now) {
+    if (reduce || hidden) { looping = false; return; }
     requestAnimationFrame(frame);
-    if (visible) draw(now);
+    if (visible) { var t0 = performance.now(); draw(now); drawMs += performance.now() - t0; frames++; }
   }
-  if (reduce) { draw(performance.now()); window.addEventListener('resize', function () { draw(performance.now()); }); }
-  else requestAnimationFrame(frame);
+  function startLoop() {
+    if (looping || hidden) return;
+    if (reduce) { draw(performance.now()); return; }
+    looping = true; last = performance.now(); requestAnimationFrame(frame);
+  }
+  window.addEventListener('resize', function () { if (reduce && !hidden) draw(performance.now()); });
+
+  /* ---- Settings > Appearance, shared with every device that talks to this server ---- */
+  var html = document.documentElement;
+  function applyAppearance(a) {
+    if (!a) return;
+    hidden = a.ambient === false;
+    html.classList.toggle('nc-ambient-off', hidden);
+    reduce = a.reduceMotion === 'on' ? true : a.reduceMotion === 'off' ? false : osReduce;
+    startLoop();
+  }
+  var cached = null;
+  try { cached = JSON.parse(localStorage.getItem('nc_appearance') || 'null'); } catch (e) { cached = null; }
+  applyAppearance(cached);
+  if (!cached) startLoop();
+  if (/^https?:$/.test(location.protocol) && window.fetch) {
+    fetch('/api/app-settings', { headers: { accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var a = j && j.settings && j.settings.appearance;
+        if (!a) return;
+        try { localStorage.setItem('nc_appearance', JSON.stringify(a)); } catch (e) { /* storage blocked: still applied for this page */ }
+        applyAppearance(a);
+      })
+      .catch(function () { /* offline or not logged in: keep what we have */ });
+  }
+  window.ncApplyAppearance = applyAppearance;
+
+  /* ---- Installable app: the offline shell, only where browsers allow it (https, or this machine) ---- */
+  var secure = location.protocol === 'https:' || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  if (secure && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.register('/sw.js').catch(function () { /* not installable here; the page works without it */ });
+  }
 })();
 `;
 
 /** The two asset paths, served without a login: they are only the look of the page, and the login page needs them. */
 export function isAmbientRoute(pathname: string, method: string): boolean {
   return (method === "GET" || method === "HEAD") && (pathname === "/ambient.css" || pathname === "/ambient.js");
+}
+
+/**
+ * Files a browser asks for before anyone has logged in, with no cookie: the
+ * install manifest, the offline shell script and the app icons. They hold no
+ * private data, and an install prompt cannot work if they sit behind a login.
+ */
+export function isPwaRoute(pathname: string, method: string): boolean {
+  return (method === "GET" || method === "HEAD") && (pathname === "/manifest.webmanifest" || pathname === "/sw.js" || /^\/app-icon-(192|512)\.png$/.test(pathname));
 }
 
 const MARK = 'data-nc-ambient="1"';
@@ -228,8 +298,16 @@ export function injectAmbient(html: string): string {
   const link = `<link rel="stylesheet" href="/ambient.css" ${MARK}>`;
   const script = `<script src="/ambient.js" defer ${MARK}></script>`;
   let out = html;
-  if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `${link}</head>`);
-  else if (/<body[\s>]/i.test(out)) out = out.replace(/<body/i, `${link}<body`);
+  // Installable app, phone-sized layout and the house colour for the browser bar, where the page did not say.
+  // The built dashboard still carries its old blue theme colour; it is replaced here rather than shipped.
+  const extra: string[] = [];
+  if (!/<link[^>]+rel=["']manifest["']/i.test(out)) extra.push('<link rel="manifest" href="/manifest.webmanifest">');
+  if (!/<meta[^>]+name=["']viewport["']/i.test(out)) extra.push('<meta name="viewport" content="width=device-width, initial-scale=1">');
+  if (/<meta[^>]+name=["']theme-color["']/i.test(out)) out = out.replace(/(<meta[^>]+name=["']theme-color["'][^>]*content=["'])#[0-9a-fA-F]{6}(["'])/i, '$1#110c0e$2');
+  else extra.push('<meta name="theme-color" content="#110c0e">');
+  const head = link + extra.join('');
+  if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `${head}</head>`);
+  else if (/<body[\s>]/i.test(out)) out = out.replace(/<body/i, `${head}<body`);
   else return html;
   return /<\/body>/i.test(out) ? out.replace(/<\/body>/i, `${script}</body>`) : out + script;
 }

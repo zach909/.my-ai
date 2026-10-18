@@ -415,6 +415,11 @@ export class TerminalPlugin extends ToolPlugin {
    * (skill-maker/wiki/etc for "make a skill"-shaped messages) instead of
    * this plugin trivially "succeeding" on everything routed to it.
    */
+  override wouldAct(message: unknown): boolean {
+    const input = typeof message === "string" ? message : String(message ?? "");
+    return /^(run|exec|execute|shell|terminal)\s*:?\s+([\s\S]+)$/i.test(input);
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = typeof message === "string" ? message : String(message ?? "");
     const m = input.match(/^(run|exec|execute|shell|terminal)\s*:?\s+([\s\S]+)$/i);

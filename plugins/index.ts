@@ -33,6 +33,8 @@ import { StorePlugin } from "./store.js";
 import { GithubPublishPlugin } from "./github-publish.js";
 import { ComputerAccessPlugin } from "./computer-access.js";
 import { HivePlugin } from "./hive.js";
+import { SchedulePlugin } from "./schedule.js";
+import { LinuxPermissionToolsPlugin } from "./linux-permission-plugin.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -68,6 +70,8 @@ export { StorePlugin } from "./store.js";
 export { GithubPublishPlugin } from "./github-publish.js";
 export { ComputerAccessPlugin } from "./computer-access.js";
 export { HivePlugin } from "./hive.js";
+export { SchedulePlugin } from "./schedule.js";
+export { LinuxPermissionToolsPlugin } from "./linux-permission-plugin.js";
 
 export function createPluginInstance(
   name: string,
@@ -119,6 +123,8 @@ export function createPluginInstance(
   if (lower === "github" || lower === "github-publish" || lower === "github publish") return new GithubPublishPlugin(definition);
   if (lower === "computer access" || lower === "computer-access") return new ComputerAccessPlugin(definition);
   if (lower === "hive") return new HivePlugin(definition);
+  if (lower === "schedule") return new SchedulePlugin(definition);
+  if (lower === "linux permission tools" || lower === "linux-permission-tools") return new LinuxPermissionToolsPlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -180,6 +186,11 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   // already wired into NeuroclawSystem via collaborate()/solve()/
   // autonomousTask() but previously unreachable by name from a plain message.
   hive: { id: "hive", name: "Hive", type: "api-connection", capabilities: ["hive", "delegate", "summon"] },
+  // "schedule so it can schedule actions": the chat front door to the scheduler
+  // (models && skills/core/scheduler.ts). It only records the schedule; the
+  // action runs later by the normal path, so risky tools still ask first.
+  schedule: { id: "schedule", name: "Schedule", type: "api-connection", capabilities: ["schedule", "timer"] },
+  "linux-permission-tools": { id: "linux-permission-tools", name: "Linux Permission Tools", type: "api-connection", capabilities: ["linux-permissions", "linux-file-read", "linux-file-write", "linux-chmod", "linux-acl-read", "linux-acl-write", "linux-service-control", "linux-selinux-context-read", "linux-apparmor-status-read", "lennox-admin-controls", "lennox-ordering", "lennox-inventory", "lennox-pricing-visibility", "lennox-warranty-returns"] },
 };
 
 const allExtensions: ExtensionManifest[] = Object.entries(pluginExtensions).map(([key, def]) => ({

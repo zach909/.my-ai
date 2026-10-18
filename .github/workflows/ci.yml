@@ -1,0 +1,400 @@
+name: Build and release
+
+# One pipeline for every platform. A change to shared code (the engine, the interface) rebuilds the desktop
+# packages; a change to the extension rebuilds only the extension; a change to the Android or iOS code rebuilds
+# only that app; documentation and tests rebuild nothing. scripts/release/changed-targets.mjs holds that map.
+# Every build records the same source commit and the one application version from package.json, and the final
+# summary reports what really happened: a build that did not run, or failed, is never shown as built.
+#
+# Only GitHub's own actions are used (actions/checkout, actions/upload-artifact); everything else is the runner's
+# own tools and this repository's scripts. See AGENTS.md: no third-party code.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel recorded in the artifacts
+        type: choice
+        options: [dev, beta, stable]
+        default: dev
+      publish:
+        description: Create a draft GitHub release from this run's artifacts
+        type: boolean
+        default: false
+      linux_arm64:
+        description: Also build the Linux arm64 packages (ARM Chromebooks, Raspberry Pi). Needs a GitHub-hosted ARM runner.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || (startsWith(github.ref, 'refs/tags/v') && (contains(github.ref_name, '-') && 'beta' || 'stable')) || 'dev' }}
+
+jobs:
+  plan:
+    name: Plan (which builds does this change affect?)
+    runs-on: ubuntu-latest
+    outputs:
+      extension: ${{ steps.plan.outputs.extension }}
+      linux: ${{ steps.plan.outputs.linux }}
+      windows: ${{ steps.plan.outputs.windows }}
+      macos: ${{ steps.plan.outputs.macos }}
+      android: ${{ steps.plan.outputs.android }}
+      ios: ${{ steps.plan.outputs.ios }}
+      tests: ${{ steps.plan.outputs.tests }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            node scripts/release/changed-targets.mjs --all
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
+            node scripts/release/changed-targets.mjs --base "${{ github.event.pull_request.base.sha }}" --head "${{ github.sha }}"
+          else
+            node scripts/release/changed-targets.mjs --base "${{ github.event.before }}" --head "${{ github.sha }}"
+          fi
+
+  verify:
+    name: Lint, type check, tests
+    needs: plan
+    if: needs.plan.outputs.tests == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      vitest: ${{ steps.vitest.outputs.note }}
+    env:
+      NEUROCLAW_REQUIRE_BROWSER: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - name: One version everywhere
+        run: node scripts/release/version.mjs check
+      - name: Type check
+        run: node node_modules/typescript/bin/tsc -p tsconfig.backend.json --noEmit
+      - name: Build the backend
+        run: node scripts/build-backend.mjs
+      - name: Shared look and icons are in step with their sources
+        run: |
+          node scripts/sync-ambient.mjs
+          node scripts/release/make-icons.mjs --check
+          git diff --exit-code -- browser-extension interface/static desktop-app/src/renderer
+      - name: Browser for the interface tests
+        run: |
+          for b in chromium chromium-browser google-chrome; do command -v "$b" && "$b" --version && break; done || true
+      - name: Platform tests (settings, mobile layouts, extension, updates, packaging)
+        run: node --test --test-concurrency=2 "test/platform/*.test.mjs"
+      - name: Engine smoke test
+        run: node test/smoke.mjs
+      - name: Existing vitest suite
+        id: vitest
+        run: |
+          if [ -f node_modules/vitest/dist/cli.js ]; then
+            node node_modules/vitest/vitest.mjs run
+            echo "note=ran" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::vitest is not installed in this checkout (node_modules/vitest/dist is missing), so test/core/*.test.ts did not run."
+            echo "note=NOT RUN: vitest is not installed in this checkout" >> "$GITHUB_OUTPUT"
+          fi
+
+  extension:
+    name: Chrome extension
+    needs: [plan, verify]
+    if: ${{ !cancelled() && needs.plan.outputs.extension == 'true' && needs.verify.result != 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/release/version.mjs check
+      - run: node scripts/build-backend.mjs
+      - run: node scripts/release/make-icons.mjs --check
+      - name: Package
+        run: node scripts/release/build-extension.mjs release-artifacts
+      - name: The zip is a valid archive
+        run: unzip -tq release-artifacts/neuroclaw-chrome-extension-*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-extension
+          path: release-artifacts/*.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux (.deb, .tar.gz)
+    needs: [plan, verify]
+    if: ${{ !cancelled() && needs.plan.outputs.linux == 'true' && needs.verify.result != 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/build-backend.mjs
+      - name: Stage the app payload
+        run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
+      - name: Package
+        run: node scripts/release/package-linux.mjs build/stage release-artifacts
+      - name: Smoke test the installed layout (starts the packaged engine, saves a setting, restarts)
+        run: |
+          mkdir -p build/rootfs && dpkg-deb -x release-artifacts/neuroclaw-*-linux-x64.deb build/rootfs
+          node scripts/release/smoke-package.mjs build/rootfs/opt/neuroclaw/app build/rootfs/opt/neuroclaw/runtime/node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            release-artifacts/*.deb
+            release-artifacts/*.tar.gz
+          if-no-files-found: error
+
+  linux-arm64:
+    name: Linux arm64 (.deb, .tar.gz), optional
+    needs: [plan, verify]
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.linux_arm64 && needs.verify.result != 'failure' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/build-backend.mjs
+      - name: Stage the app payload
+        run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
+      - name: Package
+        run: node scripts/release/package-linux.mjs build/stage release-artifacts
+      - name: Smoke test the installed layout
+        run: |
+          mkdir -p build/rootfs && dpkg-deb -x release-artifacts/neuroclaw-*-linux-arm64.deb build/rootfs
+          node scripts/release/smoke-package.mjs build/rootfs/opt/neuroclaw/app build/rootfs/opt/neuroclaw/runtime/node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-arm64
+          path: |
+            release-artifacts/*.deb
+            release-artifacts/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows (.exe, .zip)
+    needs: [plan, verify]
+    if: ${{ !cancelled() && needs.plan.outputs.windows == 'true' && needs.verify.result != 'failure' }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/build-backend.mjs
+      - name: Stage the app payload
+        run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
+      - name: Package (zip, and the installer with IExpress)
+        run: node scripts/release/package-windows.mjs build/stage release-artifacts
+      - name: Smoke test the portable zip
+        shell: pwsh
+        run: |
+          Expand-Archive release-artifacts/neuroclaw-*-windows-x64.zip -DestinationPath build/unzipped
+          node scripts/release/smoke-package.mjs build/unzipped/NeuroClaw/app build/unzipped/NeuroClaw/runtime/node.exe
+      - name: Install test (per-user, silent), then uninstall
+        shell: pwsh
+        env:
+          NEUROCLAW_INSTALL_SILENT: "1"
+        run: |
+          $exe = Get-ChildItem release-artifacts/neuroclaw-*-windows-x64.exe | Select-Object -First 1
+          if (-not $exe) { throw 'the installer was not built' }
+          Start-Process -FilePath $exe.FullName -Wait
+          $dest = Join-Path $env:LOCALAPPDATA 'Programs\NeuroClaw'
+          if (-not (Test-Path (Join-Path $dest 'NeuroClaw.vbs'))) { throw 'installer did not install NeuroClaw.vbs' }
+          if (-not (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'NeuroClaw.lnk'))) { throw 'no Start menu entry was created' }
+          node scripts/release/smoke-package.mjs (Join-Path $dest 'app') (Join-Path $dest 'runtime\node.exe')
+          Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $dest 'uninstall.ps1') -Wait
+          Start-Sleep -Seconds 6
+          if (Test-Path (Join-Path ([Environment]::GetFolderPath('Programs')) 'NeuroClaw.lnk')) { throw 'uninstall left the Start menu entry' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            release-artifacts/*.exe
+            release-artifacts/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS (.app, .dmg)
+    needs: [plan, verify]
+    if: ${{ !cancelled() && needs.plan.outputs.macos == 'true' && needs.verify.result != 'failure' }}
+    runs-on: macos-latest
+    outputs:
+      signing: ${{ steps.package.outputs.signing }}
+    env:
+      # Set these repository secrets to sign and notarise. Without them the app is ad-hoc signed and says so.
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_SIGN_IDENTITY_NAME: ${{ secrets.MACOS_SIGN_IDENTITY_NAME }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/build-backend.mjs
+      - name: Stage the app payload
+        run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
+      - name: Import the signing certificate (only when configured)
+        if: ${{ env.MACOS_CERTIFICATE_P12 != '' }}
+        run: |
+          keychain="$RUNNER_TEMP/build.keychain"
+          pass="$(uuidgen)"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pass" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "MACOS_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY_NAME" >> "$GITHUB_ENV"
+      - name: Package
+        id: package
+        run: |
+          node scripts/release/package-macos.mjs build/stage release-artifacts
+          if [ -n "$MACOS_SIGN_IDENTITY" ]; then echo "signing=developer-id" >> "$GITHUB_OUTPUT"; else echo "signing=ad-hoc" >> "$GITHUB_OUTPUT"; fi
+      - name: Notarise and staple (only when Apple credentials are configured)
+        if: ${{ env.APPLE_ID != '' && env.MACOS_SIGN_IDENTITY != '' }}
+        run: |
+          dmg="$(ls release-artifacts/*.dmg)"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple "$dmg"
+      - name: Smoke test the bundle (starts the packaged engine, saves a setting, restarts)
+        run: |
+          app="$(mktemp -d)"
+          ditto -x -k release-artifacts/neuroclaw-*-macos-*.zip "$app"
+          res="$app/NeuroClaw.app/Contents/Resources"
+          node scripts/release/smoke-package.mjs "$res/app" "$res/runtime/node"
+          codesign --verify --deep --strict "$app/NeuroClaw.app"
+          hdiutil verify release-artifacts/neuroclaw-*-macos-*.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: |
+            release-artifacts/*.dmg
+            release-artifacts/*.zip
+          if-no-files-found: error
+
+  android:
+    name: Android (APK)
+    needs: [plan, verify]
+    if: ${{ !cancelled() && needs.plan.outputs.android == 'true' && needs.verify.result != 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/release/version.mjs check
+      # The runner image already carries JDK 17, the Android SDK and Gradle, so no setup actions are used.
+      - name: Build the debug APK
+        working-directory: mobile/android
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          gradle assembleDebug --no-daemon
+      - name: Name the artifact for this version
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          mkdir -p release-artifacts
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "release-artifacts/neuroclaw-${v}-android-any.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: release-artifacts/*.apk
+          if-no-files-found: error
+
+  ios:
+    name: iOS (simulator build)
+    needs: [plan, verify]
+    if: ${{ !cancelled() && needs.plan.outputs.ios == 'true' && needs.verify.result != 'failure' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/release/version.mjs check
+      - name: Generate the Xcode project
+        working-directory: mobile/ios
+        run: |
+          brew install xcodegen
+          xcodegen
+      - name: Build for the simulator (unsigned)
+        working-directory: mobile/ios
+        run: |
+          xcodebuild -project NeuroClaw.xcodeproj -scheme NeuroClaw \
+            -sdk iphonesimulator -configuration Debug \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Check the built app carries this version
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          plist="mobile/ios/build/Build/Products/Debug-iphonesimulator/NeuroClaw.app/Info.plist"
+          got="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"
+          [ "$got" = "$v" ] || { echo "app says $got, package.json says $v"; exit 1; }
+      - name: Zip the app
+        run: |
+          mkdir -p release-artifacts
+          ditto -c -k --keepParent mobile/ios/build/Build/Products/Debug-iphonesimulator/NeuroClaw.app release-artifacts/neuroclaw-ios-simulator.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-ios
+          path: release-artifacts/neuroclaw-ios-simulator.zip
+          if-no-files-found: error
+
+  summary:
+    name: Build summary
+    needs: [plan, verify, extension, linux, windows, macos, android, ios]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - name: Report what actually happened
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          PLAN_JSON: ${{ toJSON(needs.plan.outputs) }}
+          MACOS_SIGNING: ${{ needs.macos.outputs.signing }}
+          VITEST_NOTE: ${{ needs.verify.outputs.vitest }}
+        run: node scripts/release/summary.mjs
+
+  release:
+    name: Draft release (manifest, checksums)
+    needs: [plan, summary, extension, linux, linux-arm64, windows, macos, android]
+    if: ${{ !cancelled() && needs.summary.result == 'success' && needs.linux-arm64.result != 'failure' && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/release/use-node.mjs 22
+      - run: node scripts/build-backend.mjs
+      - name: The tag matches the application version
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          [ "${GITHUB_REF_NAME}" = "v${v}" ] || { echo "tag ${GITHUB_REF_NAME} does not match package.json version ${v}"; exit 1; }
+      - name: Collect this run's artifacts
+        run: |
+          mkdir -p dl release-artifacts
+          gh run download "${{ github.run_id }}" --repo "${{ github.repository }}" --pattern 'release-*' --dir dl
+          find dl -type f -exec cp {} release-artifacts/ \;
+          ls -la release-artifacts
+      - name: Release manifest and checksums
+        run: |
+          signed=""
+          if [ "${{ needs.macos.outputs.signing }}" = "developer-id" ]; then signed="macos-dmg,macos-app-zip"; fi
+          node scripts/release/manifest.mjs release-artifacts --commit "${{ github.sha }}" --channel "$CHANNEL" --signed "$signed"
+      - name: Create the draft release
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then tag="v${v}-build.${{ github.run_number }}"; fi
+          notes="NeuroClaw ${v} from commit ${GITHUB_SHA}. Channel: ${CHANNEL}. Verify downloads against SHA256SUMS. Unsigned builds are marked unsigned in release-manifest.json."
+          gh release create "$tag" release-artifacts/* --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "NeuroClaw ${v}" --notes "$notes" --draft $( [ "$CHANNEL" = "stable" ] || echo --prerelease )

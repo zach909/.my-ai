@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeuroClaw options</title>
+<link rel="stylesheet" href="ambient.css">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; background: #110c0e; color: #f8ede9; display: grid; place-items: center; padding: 16px; box-sizing: border-box; overflow-x: hidden; }
+  main { position: relative; z-index: 1; width: 100%; max-width: 520px; padding: 28px 26px; box-sizing: border-box; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p { font-size: 14px; line-height: 1.5; }
+  label { font-size: 13px; display: block; margin-top: 16px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .row .nc-input { flex: 1 1 220px; min-width: 0; }
+  .nc-btn { text-decoration: none; display: inline-flex; align-items: center; min-height: 44px; }
+  #msg { min-height: 20px; font-size: 14px; margin-top: 12px; } #msg.err { color: #ff9aa8; } #msg.ok { color: #8fe3a8; }
+</style>
+</head>
+<body class="nc-soft">
+<main class="nc-glass">
+  <h1>NeuroClaw options</h1>
+  <p class="nc-dim">Which NeuroClaw server this extension opens. The default is this computer.</p>
+  <label for="server">Server address</label>
+  <div class="row">
+    <input id="server" class="nc-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:7861">
+    <button id="save" class="nc-btn primary" type="button">Save and test</button>
+    <button id="reset" class="nc-btn" type="button">Use default</button>
+  </div>
+  <div id="msg" role="status" aria-live="polite"></div>
+  <div class="row"><a class="nc-btn" href="app.html">Open NeuroClaw</a></div>
+</main>
+<script src="ambient.js"></script>
+<script type="module" src="options.js"></script>
+</body>
+</html>

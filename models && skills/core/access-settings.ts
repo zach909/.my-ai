@@ -17,6 +17,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { configFile } from "../../interface/platform/app-paths.js";
 import {
   ACCESS_SWITCHES,
   AccessManager,
@@ -32,11 +33,19 @@ import {
   type Capability,
 } from "./access-manager.js";
 
+/**
+ * Where switches are saved: the user's own data folder (~/.neuroclaw/config),
+ * not the working directory. A launch from a desktop entry, an installed app or
+ * a service has no writable cwd, which is what used to make saving throw.
+ * CORONA_ACCESS_FILE overrides it so tests never touch the real one.
+ */
 export function accessSettingsPath(): string {
-  // Overridable so tests never touch the real one.
-  return process.env.CORONA_ACCESS_FILE
-    ? path.resolve(process.env.CORONA_ACCESS_FILE)
-    : path.resolve(process.cwd(), "config", "access.json");
+  return configFile("access.json", process.env.CORONA_ACCESS_FILE).write;
+}
+
+/** Where to read from: the saved file, or the older checkout copy if nothing was saved yet. */
+function accessSettingsReadPath(): string {
+  return configFile("access.json", process.env.CORONA_ACCESS_FILE).read;
 }
 
 export interface AccessSettings {
@@ -53,7 +62,7 @@ export function defaultSettings(): AccessSettings {
 }
 
 /** Never throws. A settings file we cannot understand means defaults, not a crash at boot. */
-export function loadSettings(file = accessSettingsPath()): AccessSettings {
+export function loadSettings(file = accessSettingsReadPath()): AccessSettings {
   if (!existsSync(file)) return defaultSettings();
   try {
     const raw = JSON.parse(readFileSync(file, "utf8")) as Partial<AccessSettings>;
@@ -87,7 +96,7 @@ export function saveSettings(settings: AccessSettings, file = accessSettingsPath
  * writes back whenever a switch flips.
  */
 export function loadAccessManager(file = accessSettingsPath()): AccessManager {
-  const settings = loadSettings(file);
+  const settings = loadSettings(file === accessSettingsPath() ? accessSettingsReadPath() : file);
   const manager = new AccessManager([], settings.switches);
   for (const grant of settings.grants) {
     // A grant below its capability's minimum throws; skip it rather than
@@ -98,8 +107,40 @@ export function loadAccessManager(file = accessSettingsPath()): AccessManager {
       /* ignore an invalid stored grant */
     }
   }
-  manager.onSwitchChange(switches => saveSettings({ switches, grants: manager.list() }, file));
+  // A switch that cannot be saved must not take the request down with it: the
+  // change still applies for this run, and the failure is kept so the settings
+  // screen can say "not saved: <reason>" instead of failing silently.
+  manager.onSwitchChange(switches => persistSettings({ switches, grants: manager.list() }, file));
   return manager;
+}
+
+export interface SaveStatus {
+  ok: boolean;
+  /** Plain-language reason when the last save failed. */
+  error: string | null;
+  file: string;
+}
+
+let lastSave: SaveStatus = { ok: true, error: null, file: "" };
+
+/** Like saveSettings, but reports instead of throwing. */
+export function persistSettings(settings: AccessSettings, file = accessSettingsPath()): SaveStatus {
+  try {
+    saveSettings(settings, file);
+    lastSave = { ok: true, error: null, file };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    const why = code === "EACCES" || code === "EROFS" || code === "EPERM"
+      ? `${path.dirname(file)} is read-only for this user`
+      : err instanceof Error ? err.message : String(err);
+    lastSave = { ok: false, error: `Could not save to ${file}: ${why}`, file };
+  }
+  return lastSave;
+}
+
+/** The outcome of the most recent save, for the settings screen. */
+export function lastSaveStatus(): SaveStatus {
+  return lastSave.file ? lastSave : { ok: true, error: null, file: accessSettingsPath() };
 }
 
 let shared: AccessManager | null = null;
@@ -136,7 +177,7 @@ export interface SwitchView {
 }
 
 /** Everything a settings screen needs, in one shape. */
-export function describeAccess(manager: AccessManager): { switches: SwitchView[]; capabilities: CapabilityView[] } {
+export function describeAccess(manager: AccessManager): { switches: SwitchView[]; capabilities: CapabilityView[]; persistence: SaveStatus } {
   const state = manager.switchState();
   const switches: SwitchView[] = ACCESS_SWITCHES.map(name => ({
     name,
@@ -159,5 +200,5 @@ export function describeAccess(manager: AccessManager): { switches: SwitchView[]
     };
   });
 
-  return { switches, capabilities };
+  return { switches, capabilities, persistence: lastSaveStatus() };
 }

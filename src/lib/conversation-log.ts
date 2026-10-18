@@ -22,6 +22,7 @@
  * either broadcast path. See wiki/Privacy-Policy.md.
  */
 
+import { sharedBrainOpen } from '../../models && skills/core/user-context.js'
 import { appendFileSync, readFileSync, mkdirSync, existsSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { writeFileAtomic } from '../../models && skills/core/atomic-write.js'
@@ -45,6 +46,8 @@ const MAX_LINES = 4000
  *  never breaks the actual chat response, it just means this one turn
  *  doesn't get learned from later. */
 export function appendConversationTurn(userMessage: string, response: string, logPath = DEFAULT_LOG_PATH): void {
+  // The log is training material for the shared brain: only what it may learn from.
+  if (!sharedBrainOpen()) return
   try {
     mkdirSync(path.dirname(logPath), { recursive: true })
     const turn: ConversationTurn = { at: Date.now(), userMessage, response }
@@ -83,6 +86,7 @@ function maybeTrim(logPath: string): void {
  *  Malformed lines are skipped, never thrown -- a corrupt tail from an
  *  interrupted write shouldn't take down whatever's reading this. */
 export function readRecentConversationTurns(limit = 200, logPath = DEFAULT_LOG_PATH): ConversationTurn[] {
+  if (!sharedBrainOpen()) return []
   if (!existsSync(logPath)) return []
   let raw: string
   try {

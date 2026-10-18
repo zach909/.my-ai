@@ -1,0 +1,162 @@
+[
+ {
+  "variant": "full",
+  "retentionMeanAcc": [
+   0.9376666666666668,
+   0.007039570693980916
+  ],
+  "retentionAtAge8": 0.8496666666666667,
+  "recallTaughtExact": [
+   0.9444444444444445,
+   0.0785674201318386
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.39266666666666666,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.9333333333333332,
+  "msPerBit": 2.569571625000002,
+  "seeds": 3
+ },
+ {
+  "variant": "no-wave",
+  "retentionMeanAcc": [
+   0.8109999999999999,
+   0.011575836902790185
+  ],
+  "retentionAtAge8": 0.6583333333333333,
+  "recallTaughtExact": [
+   0.7777777777777777,
+   0.0785674201318386
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.3733333333333333,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.8666666666666667,
+  "msPerBit": 2.4669113750000022,
+  "seeds": 3
+ },
+ {
+  "variant": "no-hyper-term",
+  "retentionMeanAcc": [
+   0.9246666666666666,
+   0.007586537784494036
+  ],
+  "retentionAtAge8": 0.85,
+  "recallTaughtExact": [
+   0.9629629629629629,
+   0.05237828008789243
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.39233333333333337,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.9333333333333332,
+  "msPerBit": 1.971900250000001,
+  "seeds": 3
+ },
+ {
+  "variant": "no-conn-bias",
+  "retentionMeanAcc": [
+   0.9376666666666668,
+   0.007039570693980916
+  ],
+  "retentionAtAge8": 0.8496666666666667,
+  "recallTaughtExact": [
+   0.9444444444444445,
+   0.0785674201318386
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.39266666666666666,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.9333333333333332,
+  "msPerBit": 2.765359750000002,
+  "seeds": 3
+ },
+ {
+  "variant": "no-shift",
+  "retentionMeanAcc": [
+   0.9380000000000001,
+   0.006531972647421769
+  ],
+  "retentionAtAge8": 0.8496666666666667,
+  "recallTaughtExact": [
+   0.9629629629629629,
+   0.05237828008789243
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.39399999999999996,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.9333333333333332,
+  "msPerBit": 2.6839164375000024,
+  "seeds": 3
+ },
+ {
+  "variant": "plain",
+  "retentionMeanAcc": [
+   0.802,
+   0.014988884770611392
+  ],
+  "retentionAtAge8": 0.6666666666666666,
+  "recallTaughtExact": [
+   0.7592592592592592,
+   0.05237828008789243
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.37666666666666665,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.8666666666666667,
+  "msPerBit": 2.7328437500000007,
+  "seeds": 3
+ },
+ {
+  "variant": "density-0.5",
+  "retentionMeanAcc": [
+   0.8970000000000001,
+   0.006976149845485456
+  ],
+  "retentionAtAge8": 0.8003333333333332,
+  "recallTaughtExact": [
+   0.9074074074074074,
+   0.026189140043946214
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.40266666666666673,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.9333333333333332,
+  "msPerBit": 2.8685868124999985,
+  "seeds": 3
+ },
+ {
+  "variant": "density-0.1",
+  "retentionMeanAcc": [
+   0.83,
+   0.01283225103661345
+  ],
+  "retentionAtAge8": 0.6796666666666665,
+  "recallTaughtExact": [
+   0.7037037037037037,
+   0.026189140043946214
+  ],
+  "recallParaphraseExact": 0,
+  "nextUnseenLoss": [
+   0.36766666666666664,
+   0.38199999999999995
+  ],
+  "nextReplayExact": 0.8889999999999999,
+  "msPerBit": 2.631953749999994,
+  "seeds": 3
+ }
+]

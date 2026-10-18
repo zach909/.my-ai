@@ -10,6 +10,23 @@ NeuroClaw is a comprehensive, local-first AI agent. It's powered by **OneBrain**
 
 A comprehensive AI/ASI system with modular architecture implementing neural mesh computing, mixture of experts, hyperdimensional thinking, and self-improvement capabilities.
 
+## Install it (no terminal)
+
+One app on every platform: the same engine and the same two pages (home chat and Settings) everywhere.
+Downloads are attached to each GitHub release, with `release-manifest.json` and `SHA256SUMS` to verify them.
+
+| Platform | What you get | How |
+| --- | --- | --- |
+| Windows | `neuroclaw-<version>-windows-x64.exe` (or the portable `.zip`) | Run it; it installs for your user only and adds a Start menu entry (and, if you say yes, a desktop shortcut). |
+| Linux | `.deb` (Debian, Ubuntu, Chromebook Linux) or `.tar.gz` | Install the `.deb`, then open NeuroClaw from the application menu. |
+| macOS | `NeuroClaw.app` in a `.dmg` (or `.zip`) | Drag it to Applications and open it. Until it is signed with a Developer ID, macOS asks you to confirm opening it the first time. |
+| Chromebook / Chrome | the Chrome extension | One click opens your NeuroClaw server. The engine cannot live inside an extension, so it needs a server: see `browser-extension/README.md`. |
+| Android | `.apk` (debug-signed; Play Store later) | Sideload it, enter your PC's address. |
+| iPhone / iPad | not yet distributable | CI proves the app compiles; a device build needs an Apple developer team. |
+
+Everything about the platforms, what is shared, what is limited and what is unfinished is in
+[`docs/PLATFORMS.md`](docs/PLATFORMS.md).
+
 ## Quick Start
 
 ```bash
@@ -876,7 +893,7 @@ TypeScript plugins (`*.ts`) run in the Node backend. Python plugins (`plugin_*.p
 
 | File | What it does |
 |---|---|
-| `scripts/dev.mjs` | `npm run dev`: builds the backend, starts it on 7861, and starts Vite on 3000. |
+| `scripts/dev.mjs` | `npm run dev`: builds the backend and runs it in the foreground on 7861 (`NEUROCLAW_WEB_PORT` / `NEUROCLAW_WEB_HOST` override). |
 | `scripts/server.mjs` | `npm run server`: production backend plus diagnostics, an update check, and the five autonomous agents. |
 | `scripts/launcher.mjs` | `npm run launch`: starts the server automatically when you open the web app, or shows a page with the command to run. |
 | `scripts/build-backend.mjs` | Compiles the TypeScript backend into `dist/` and copies the hand-written `.js` files. |
