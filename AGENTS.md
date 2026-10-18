@@ -36,13 +36,13 @@ NeuroClaw — a local-first AI agent. The backend is a Node/TypeScript HTTP serv
 docker compose -f docker-compose.dev.yml up -d
 ```
 - Single `web` service on `node:22-slim`, repo bind-mounted at `/app`.
-- `npm run dev` (scripts/dev.mjs) does: tsc backend build → starts backend on 127.0.0.1:7861 and stays up until it exits. It no longer starts Vite.
+- `npm run dev` (scripts/dev.mjs) does: tsc backend build → starts the backend and stays up until it exits. It no longer starts Vite. Port and bind address come from `NEUROCLAW_WEB_PORT` (default 7861) and `NEUROCLAW_WEB_HOST` (default 127.0.0.1).
 - The only npm packages left are the build and test tools: `typescript`, `@types/node`, `vitest`.
 - `NEUROCLAW_AUTO_UPDATE=0` disables the startup git fetch/pull so it never touches the working tree.
-- The compose file still publishes port 3000 for the old frontend (nothing listens there now) and does not publish 7861. The backend binds 127.0.0.1 inside the container, so reach it from inside, e.g. `docker compose -f docker-compose.dev.yml exec web curl -s http://127.0.0.1:7861/api/status`. `CHOKIDAR_USEPOLLING` is also unused now.
+- The compose file runs the backend itself on port 3000 (`NEUROCLAW_WEB_PORT=3000`, `NEUROCLAW_WEB_HOST=0.0.0.0`) and publishes it as `127.0.0.1:3000`, so http://localhost:3000 is the real backend: `/` terminal page, `/app` dashboard, `/api/*`. No proxy sits in front, because a proxy would make remote clients look like loopback and bypass the backend's password gate. Because the bind is non-loopback, the backend wants a password: set `NEUROCLAW_WEB_PASSWORD`, or open `/login` and enter the setup code printed in `docker compose -f docker-compose.dev.yml logs web`.
 
 ## Verifying it works
-- Inside the container, `GET http://127.0.0.1:7861/` and `/api/status` return 200 (checked with `npm run dev`).
+- With a password set, `GET http://localhost:3000/` and `/api/status` (Basic auth) return 200 through compose; `/login` answers without one.
 - `npm run lint:types` typechecks the backend; `npx vitest run` runs the tests.
 
 ## Secrets

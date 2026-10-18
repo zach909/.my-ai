@@ -893,7 +893,7 @@ TypeScript plugins (`*.ts`) run in the Node backend. Python plugins (`plugin_*.p
 
 | File | What it does |
 |---|---|
-| `scripts/dev.mjs` | `npm run dev`: builds the backend, starts it on 7861, and starts Vite on 3000. |
+| `scripts/dev.mjs` | `npm run dev`: builds the backend and runs it in the foreground on 7861 (`NEUROCLAW_WEB_PORT` / `NEUROCLAW_WEB_HOST` override). |
 | `scripts/server.mjs` | `npm run server`: production backend plus diagnostics, an update check, and the five autonomous agents. |
 | `scripts/launcher.mjs` | `npm run launch`: starts the server automatically when you open the web app, or shows a page with the command to run. |
 | `scripts/build-backend.mjs` | Compiles the TypeScript backend into `dist/` and copies the hand-written `.js` files. |
