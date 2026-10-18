@@ -11,7 +11,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, st
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { ROOT, dist, ensureBuilt, tempDir, removeDir, startServer, freePort } from './helpers.mjs';
-import { stageApp, assertNoPackages } from '../../scripts/release/stage-app.mjs';
+import { stageApp, assertNoPackages, assertSelfContainedRuntime } from '../../scripts/release/stage-app.mjs';
 import { syncAppHome, CODE_ENTRIES, STATE_DIRS } from '../../scripts/release/app-home.mjs';
 import { appHomeDir, browserCandidates, findBrowser, windowCommand } from '../../scripts/desktop-launcher.mjs';
 import { createZip, readZip } from '../../scripts/release/zip.mjs';
@@ -324,4 +324,13 @@ test('macOS: the bundle is laid out as a standard .app with a valid Info.plist, 
   assert.deepEqual(imports, ['Foundation', 'SwiftUI', 'WebKit'], 'Apple frameworks only');
   assert.match(swift, /--no-window/); assert.match(swift, /READY /); assert.match(swift, /applicationWillTerminate/); assert.match(swift, /runOpenPanelWith/);
   assert.doesNotMatch(swift, /AVCaptureDevice|CNContactStore|CLLocationManager|AXIsProcessTrusted|CGWindowListCreateImage|NSAppleScript/, 'asks for no camera, contacts, location, accessibility or screen capture');
+});
+
+test('a Node that is only a launcher for a system library is refused, so a package never depends on the builder having Node', () => {
+  const dir = tempDir();
+  try {
+    const small = path.join(dir, 'node'); writeFileSync(small, 'x'.repeat(1000));
+    assert.throws(() => assertSelfContainedRuntime(small), /not a self-contained Node/);
+    assert.doesNotThrow(() => assertSelfContainedRuntime(process.execPath), 'the Node running these tests is a real one (CI uses the official build)');
+  } finally { removeDir(dir); }
 });
