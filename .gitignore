@@ -2,3 +2,7 @@
 .tanstack/start/build/
 .nitro/
 node_modules/
+release-artifacts/
+.neuroclaw/
+# Runtime state the engine writes into its working directory when run from a checkout.
+store/

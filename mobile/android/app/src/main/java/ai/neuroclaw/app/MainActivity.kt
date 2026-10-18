@@ -33,6 +33,18 @@ class MainActivity : Activity() {
             }
         }
 
+    /** Buttons side by side, each taking an equal share of the width, so none runs off the edge of a phone screen. */
+    private fun row(vararg views: android.view.View): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        views.forEach { addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
+    }
+
+    private fun openWeb(path: String) {
+        val configured = Shared.brain(this).settings.serverUrl
+        if (configured.isEmpty()) status.text = "Enter your PC address and tap Save first."
+        else startActivity(Intent(this, WebActivity::class.java).putExtra(WebActivity.EXTRA_PATH, path))
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val brain = Shared.brain(this)
@@ -40,7 +52,7 @@ class MainActivity : Activity() {
         val pad = (16 * resources.displayMetrics.density).toInt()
 
         val url = EditText(this).apply {
-            hint = "PC address, e.g. http://192.168.1.20:3000"
+            hint = "PC address, e.g. http://192.168.1.20:7861"
             setText(settings.serverUrl)
             inputType = InputType.TYPE_TEXT_VARIATION_URI
         }
@@ -54,6 +66,7 @@ class MainActivity : Activity() {
             text = "Save"
             setOnClickListener {
                 settings.serverUrl = url.text.toString()
+                url.setText(settings.serverUrl)
                 settings.password = password.text.toString()
                 refreshStatus()
                 brain.syncInBackground()
@@ -61,10 +74,11 @@ class MainActivity : Activity() {
         }
         val webApp = Button(this).apply {
             text = "Open web app"
-            setOnClickListener {
-                if (settings.serverUrl.isEmpty()) status.text = "Enter your PC address and tap Save first."
-                else startActivity(Intent(this@MainActivity, WebActivity::class.java))
-            }
+            setOnClickListener { openWeb("/") }
+        }
+        val webSettings = Button(this).apply {
+            text = "Web settings"
+            setOnClickListener { openWeb("/settings") }
         }
         val overlay = Button(this).apply {
             text = "Allow over other apps"
@@ -242,17 +256,19 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
             addView(url); addView(password)
-            addView(LinearLayout(context).apply { addView(save); addView(webApp); addView(overlay) })
-            addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
+            addView(row(save, webApp, webSettings))
+            addView(row(overlay, start, stop))
+            addView(row(sync))
             addView(grant)
             addView(audit)
             addView(backgroundLocation)
             addView(backgroundSensors)
             addView(rootControls)
-            addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
+            addView(row(bridge, bridgeLan))
             addView(specialAccess)
             addView(status)
-            addView(ChatPanel(context), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            // A weight of 1 inside a ScrollView gets no height at all, so the chat used to be invisible. Give it a real one.
+            addView(ChatPanel(context), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (420 * resources.displayMetrics.density).toInt()))
         }
         setContentView(ScrollView(this).apply { addView(content) })
 

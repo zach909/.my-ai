@@ -2,14 +2,26 @@ package ai.neuroclaw.app
 
 import android.content.Context
 
+/**
+ * What was typed in the address box, made into an address: "192.168.1.20:7861" gets its http://, spaces and a
+ * trailing slash go. An empty box stays empty. (Without this a missing scheme made every page fail to load and
+ * the buttons looked dead.)
+ */
+fun normalizeServerUrl(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty()) return ""
+    val withScheme = if (trimmed.contains("://")) trimmed else "http://$trimmed"
+    return withScheme.trimEnd('/')
+}
+
 /** Where NeuroClaw runs on your PC, and the password set in its Remote Access settings. */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("neuroclaw", Context.MODE_PRIVATE)
 
-    /** e.g. http://192.168.1.20:3000 -- the port the web app is served on. */
+    /** e.g. http://192.168.1.20:7861 -- the port the NeuroClaw server (and its web app) is on. */
     var serverUrl: String
         get() = prefs.getString("serverUrl", "") ?: ""
-        set(value) = prefs.edit().putString("serverUrl", value.trim().trimEnd('/')).apply()
+        set(value) = prefs.edit().putString("serverUrl", normalizeServerUrl(value)).apply()
 
     var password: String
         get() = prefs.getString("password", "") ?: ""

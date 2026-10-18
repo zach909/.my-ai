@@ -191,6 +191,20 @@ export class FileSystemPlugin extends BasePlugin {
     };
   }
 
+  /** Every shape onMessage() acts on, in one place so wouldAct() cannot drift from it. */
+  private static readonly ACTION_PATTERNS: readonly RegExp[] = [
+    /\bread\s+(\S+)/i,
+    /\blist\s+(\S+)/i,
+    /\bexists?\s+(\S+)/i,
+    /\bopen\s+(\S+)/i,
+    /\b(?:send|download)\s+(\S+)/i,
+  ];
+
+  override wouldAct(message: unknown): boolean {
+    const input = String(message ?? "").trim();
+    return FileSystemPlugin.ACTION_PATTERNS.some((p) => p.test(input));
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     // Case-insensitive on the command keyword only -- lowercasing the whole
     // input previously mangled the extracted path too (`MyDir/MyFile.TXT`

@@ -71,3 +71,14 @@ reasoning. This is a standing rule, not a one-time answer to one request.
 - There is no tokenizer anywhere in this repo (`tokenizer.js` was deleted,
   not disabled) and it must stay that way: text is raw bits through
   the Zip Loop everywhere, always.
+
+# PLATFORMS AND RELEASES (one app, many builds; map in `docs/PLATFORMS.md`)
+
+- **One shared UI.** The home chat (`HTML_TEMPLATE` in `interface/web-server.ts`) and Settings (`interface/platform/settings-page.ts`) are served by the engine and shown by every platform (desktop app window, Chrome extension, phone web views). Change them once. Never add a per-platform copy of a page or a feature.
+- **Platform differences live in one table:** `interface/platform/adapters.ts` (what each OS can really do, with reasons) and `interface/platform/feature-contract.ts` (every feature, its files, routes and tests; support per platform is derived). A new feature gets an entry; `node --test "test/platform/*.test.mjs"` fails if the entry points at something that is not there. The parity matrix in `docs/PLATFORMS.md` is generated: `node scripts/build-backend.mjs && node scripts/release/parity-matrix.mjs --write`.
+- **Settings and config never use `process.cwd()`.** Use `interface/platform/app-paths.ts` (`configFile`, `dataRoot`): a desktop entry, an installed app and a service all start somewhere unwritable. Saves must report failure, never throw into a request and never claim success.
+- **One version:** `package.json`. After changing it run `node scripts/release/version.mjs sync` (or `set 1.2.3`); a test fails on drift. Every artifact name, `build-info.json` and the release manifest carry that version and the source commit.
+- **Tests:** `node --test "test/platform/*.test.mjs"` (Node's built-in runner; needs `node scripts/build-backend.mjs` first, and a Chrome/Chromium for the browser tests). The older vitest suite needs `vitest` installed and is not run by CI when it is missing; say so rather than counting it.
+- **CI** (`.github/workflows/ci.yml`) rebuilds only what a change affects (`scripts/release/changed-targets.mjs`) and its summary reports real job results. Do not make a skipped or failed build look like a pass. Only `actions/checkout` and `actions/upload-artifact` may be used.
+- **Signing credentials are never in the repo.** macOS signing and notarisation, Windows signing, Play and App Store publishing run only when the owner configures repository secrets; without them the artifacts are labelled unsigned.
+- **Pre-existing violations this work did not fix** (the owner decides): `package.json` and `package-lock.json` still list the React/Vite/three stack; `src/`, `dist/app`, `dist/assets` and a tracked `node_modules/` contain third-party code; `desktop-app/` is an Electron project (the packaged desktop path no longer uses it); `mobile/android/gradle/wrapper` holds a Gradle wrapper jar; the iOS CI job installs `xcodegen` with Homebrew.

@@ -432,7 +432,7 @@ const ADMIN_ONLY: RegExp[] = [
 ];
 
 const USER_EXACT = new Set<string>([
-  "/", "/commons", "/login", "/accounts", "/ambient.css", "/ambient.js",
+  "/", "/commons", "/login", "/accounts", "/ambient.css", "/ambient.js", "/settings", "/api/app-info", "/api/app-settings",
   "/api/status", "/api/commons", "/api/chat", "/api/chat/messages", "/api/chat/correct",
   "/api/chat-history/save", "/api/chat-history/search", "/api/chat-history/groups", "/api/chat-history/threads",
   "/api/chat-history/export", "/api/chat-history/import",

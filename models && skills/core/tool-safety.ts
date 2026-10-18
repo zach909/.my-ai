@@ -47,6 +47,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { configFile } from "../../interface/platform/app-paths.js";
 import { ACCESS_SWITCHES, CAPABILITIES, type AccessManager } from "./access-manager.js";
 import { defaultSettings, saveSettings } from "./access-settings.js";
 import { USER_PLUGINS } from "./accounts.js";
@@ -120,12 +121,17 @@ export interface SafetySettings {
 
 export const defaultSafety = (): SafetySettings => ({ fullAccess: false, ask: {}, autoContinue: { enabled: true, maxSteps: DEFAULT_CONTINUE_STEPS } });
 
+/** Saved in the user's data folder (see interface/platform/app-paths.ts), not the working directory. */
 export function safetyFile(): string {
-  return process.env.CORONA_SAFETY_FILE ? path.resolve(process.env.CORONA_SAFETY_FILE) : path.resolve(process.cwd(), "config", "tool-safety.json");
+  return configFile("tool-safety.json", process.env.CORONA_SAFETY_FILE).write;
+}
+
+function safetyReadFile(): string {
+  return configFile("tool-safety.json", process.env.CORONA_SAFETY_FILE).read;
 }
 
 /** Never throws. A file we cannot read means the safe defaults (everything on the list asks), never "ask nothing". */
-export function loadSafety(file = safetyFile()): SafetySettings {
+export function loadSafety(file = safetyReadFile()): SafetySettings {
   const d = defaultSafety();
   if (!existsSync(file)) return d;
   try {
@@ -200,7 +206,12 @@ export type GateDecision = { allow: true } | { allow: false; message: string; ap
 
 /** What the plugin registry asks before it runs a tool. */
 export interface ToolGateLike {
-  check(pluginId: string, input: string, score: number): GateDecision;
+  /**
+   * `acts` is the plugin's own answer to "would you act on this message?"
+   * (BasePlugin.wouldAct), or undefined when it cannot say. When it is known it
+   * decides; the score only decides when it is not.
+   */
+  check(pluginId: string, input: string, score: number, acts?: boolean): GateDecision;
 }
 
 export class ToolGate implements ToolGateLike {
@@ -228,17 +239,21 @@ export class ToolGate implements ToolGateLike {
    * Decides before the tool runs. A message that does not clearly point at the
    * tool (low score) is not held: it would not have been this tool's to do.
    */
-  check(pluginId: string, input: string, score: number): GateDecision {
+  check(pluginId: string, input: string, score: number, acts?: boolean): GateDecision {
+    // The plugin knows whether it will act; the router's score is only a ranking.
+    // A plugin that says it will act is held however weakly the router scored it,
+    // and one that says it will not is not held however strongly it scored.
+    const pointed = acts === undefined ? score >= HOLD_SCORE : acts;
     // Plugins act as the machine's owner. Anyone who is not the admin may use only
     // the ones that touch neither the owner's computer nor the owner's data
     // (accounts.ts USER_PLUGINS); the rest are not even offered an approval.
     // Weak matches are let through only so ordinary chat is not refused for
     // sounding a little like a tool.
-    if (!isOwnerOrAdmin() && score >= HOLD_SCORE && !USER_PLUGINS.includes(normalizeToolId(pluginId))) {
+    if (!isOwnerOrAdmin() && pointed && !USER_PLUGINS.includes(normalizeToolId(pluginId))) {
       return { allow: false, approvalId: "", message: `[Not allowed] ${RISK_BY_ID.get(normalizeToolId(pluginId))?.label ?? pluginId} is for the admin only.` };
     }
     const s = this.settings();
-    if (!needsApproval(pluginId, s) || score < HOLD_SCORE) return { allow: true };
+    if (!needsApproval(pluginId, s) || !pointed) return { allow: true };
     this.sweep();
     const id = normalizeToolId(pluginId);
     const request = String(input ?? "").slice(0, MAX_REQUEST_CHARS);

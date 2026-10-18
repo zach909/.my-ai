@@ -1,8 +1,7 @@
 // NeuroClaw Chance popup: random idea picker. Built-in ideas live in
 // ideas.json (a copy of src/lib/chance-ideas.json); custom ones in
-// chrome.storage.local. "Try it in chat" copies the idea and opens the
-// local app's Chats page.
-const APP_URL = 'http://localhost:3000/app/chat'
+// chrome.storage.local. "Try it in chat" copies the idea and opens your
+// NeuroClaw server's chat (the address chosen in the extension's options).
 const api = globalThis.browser ?? globalThis.chrome
 
 const ideaEl = document.getElementById('idea')
@@ -35,7 +34,8 @@ rollBtn.addEventListener('click', roll)
 tryBtn.addEventListener('click', async () => {
   if (!current) return
   try { await navigator.clipboard.writeText(current) } catch {}
-  api.tabs.create({ url: APP_URL })
+  const { server } = await api.storage.local.get('server')
+  api.tabs.create({ url: `${typeof server === 'string' && server ? server : 'http://localhost:7861'}/` })
 })
 document.getElementById('add').addEventListener('submit', async (e) => {
   e.preventDefault()

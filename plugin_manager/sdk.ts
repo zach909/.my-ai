@@ -34,6 +34,21 @@ export abstract class BasePlugin implements PluginLifecycle {
     return this.definition;
   }
 
+  /**
+   * Would onMessage() ACT on this message, rather than decline it? Pure: it
+   * must not do the thing, only say whether onMessage would.
+   *
+   * The risky-tool gate used to decide whether to ask from how strongly the
+   * router scored the message against the plugin. That score is a fuzzy ranking
+   * and the plugin's own parser is exact, so the two disagree: with default
+   * settings "read secret.txt" scored 3 (the hold line is 4) and the file
+   * system plugin read the file without asking, while the longer "please read
+   * secret.txt for me" was held. A plugin that parses commands should implement
+   * this so the gate can ask the plugin instead of guessing. Undefined means
+   * "unknown", and the gate falls back to the score.
+   */
+  wouldAct?(message: unknown): boolean;
+
   isActive(): boolean {
     return this.active;
   }

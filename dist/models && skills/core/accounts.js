@@ -392,7 +392,7 @@ const ADMIN_ONLY = [
     /^\/api\/commons\/projects\/[^/]+\/publish$/, // pushes to the repository with the machine's credentials
 ];
 const USER_EXACT = new Set([
-    "/", "/commons", "/login", "/accounts", "/ambient.css", "/ambient.js",
+    "/", "/commons", "/login", "/accounts", "/ambient.css", "/ambient.js", "/settings", "/api/app-info", "/api/app-settings",
     "/api/status", "/api/commons", "/api/chat", "/api/chat/messages", "/api/chat/correct",
     "/api/chat-history/save", "/api/chat-history/search", "/api/chat-history/groups", "/api/chat-history/threads",
     "/api/chat-history/export", "/api/chat-history/import",

@@ -218,6 +218,16 @@ export interface ToolNeuronOptions {
    * which passes the shared AccessManager.
    */
   access?: ToolAccessCheck;
+  /**
+   * The risky-tool gate (tool-safety.ts ToolGate). A tool neuron firing is an
+   * activation of a network, not a person's decision: for a tool the gate lists
+   * as risky it is never enough. With a gate, a network firing of such a tool
+   * is NOT run; it is held as a pending approval and refused, and the refusal
+   * goes back in as the result. Before this the network could run a risky tool
+   * on the Access check alone, which is skipped entirely for any tool that
+   * declares no capability.
+   */
+  gate?: { check(pluginId: string, input: string, score: number, acts?: boolean): { allow: true } | { allow: false; message: string } };
 }
 
 export interface ToolNeuronStats {
@@ -296,6 +306,7 @@ export class ToolNeuronLayer {
   private readonly maxResultChars: number;
   private readonly maxPending: number;
   private readonly access?: ToolAccessCheck;
+  private readonly gate?: ToolNeuronOptions["gate"];
 
   constructor(private readonly engine: HyperDimensionalEngine, options: ToolNeuronOptions = {}) {
     this.fireRatio = options.fireRatio ?? DEFAULT_FIRE_RATIO;
@@ -305,6 +316,7 @@ export class ToolNeuronLayer {
     this.lock = options.lock ?? new DoorwayLock();
     this.yieldTo = options.yieldTo ?? (() => new Promise(resolve => setImmediate(resolve)));
     this.access = options.access;
+    this.gate = options.gate;
     this.stopWatching = engine.onTick(() => this.observeTick());
   }
 
@@ -498,6 +510,14 @@ export class ToolNeuronLayer {
       if (typeof args === "string") {
         events.push(this.refuse(firing, args));
         continue;
+      }
+      if (this.gate) {
+        // acts = true: the network firing IS the action, so the question is only whether this tool asks first.
+        const verdict = this.gate.check(firing.plugin, `network fired ${firing.plugin}.${firing.tool} ${JSON.stringify(args)}`, Number.MAX_SAFE_INTEGER, true);
+        if (verdict.allow === false) {
+          events.push(this.refuse(firing, verdict.message, args));
+          continue;
+        }
       }
       if (this.access && neuron.spec.capability) {
         try {

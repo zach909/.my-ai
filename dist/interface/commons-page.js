@@ -18,7 +18,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
 <style>
   :root { color-scheme: dark; }
   body { margin:0; min-height:100vh; background:#110c0e; color:#f8ede9; }
-  main { position:relative; z-index:1; max-width:820px; margin:0 auto; padding:28px 16px 90px; display:grid; gap:18px; }
+  main { position:relative; z-index:1; max-width:820px; margin:0 auto; padding:28px 16px 90px; display:grid; grid-template-columns:minmax(0,1fr); gap:18px; }
   h1 { font-size:22px; margin:6px 6px 0; }
   h2 { font-size:17px; margin:0 0 4px; }
   h3 { font-size:15px; margin:18px 0 6px; }
