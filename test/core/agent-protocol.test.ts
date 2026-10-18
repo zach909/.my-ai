@@ -157,7 +157,7 @@ describe('the alignment protocol', () => {
     fireAlignment('reset')
     expect(agentState()).toBe('deleted')
     const a = createAgentFile('Rooster')
-    expect(a).toMatchObject({ name: 'Rooster', sandbox: true, look: 'sheriff' })
+    expect(a).toMatchObject({ name: 'Rooster', sandbox: true, look: 'shoggoth' })
     expect(agentState()).toBe('alive')
     expect(removedNote()).toBeNull()
     expect(existsSync(decoyPath())).toBe(true)

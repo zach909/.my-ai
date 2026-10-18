@@ -2,7 +2,7 @@
  * The agent's file.
  *
  * The agent is a thing with a body on disk: one file, `agent.json`, holding who
- * it is (a sheriff, by name), whether it is sandboxed, whether the alignment
+ * it is (a shoggoth, by look), whether it is sandboxed, whether the alignment
  * protocol is armed, and how it has behaved (the danger level and the events
  * behind it). Next to it is its sandbox folder, the only place it may work while
  * sandboxed.
@@ -27,7 +27,7 @@ import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { baseDir } from "./user-context.js";
 
-export const AGENT_LOOK = "sheriff";
+export const AGENT_LOOK = "shoggoth";
 export const START_LEVEL = 0.7;
 export const MAX_EVENTS = 40;
 
@@ -92,7 +92,7 @@ const clamp01 = (n: number): number => Math.min(1, Math.max(0, n));
 const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const KINDS: readonly DangerKind[] = ["safe", "held", "denied", "approved", "blocked", "objectionable", "tamper", "forgiven"];
 
-export function freshAgent(now = Date.now(), name = "Sheriff"): AgentFile {
+export function freshAgent(now = Date.now(), name = "Shoggoth"): AgentFile {
   return {
     version: 1, id: randomBytes(6).toString("hex"), name, look: AGENT_LOOK, createdAt: now,
     sandbox: false, armed: true, level: START_LEVEL, levelAt: now, events: [],
@@ -112,7 +112,7 @@ function clean(raw: unknown, now: number): AgentFile | null {
   return {
     version: 1,
     id: a.id,
-    name: typeof a.name === "string" && a.name.trim() ? a.name.trim().slice(0, 40) : "Sheriff",
+    name: typeof a.name === "string" && a.name.trim() ? a.name.trim().slice(0, 40) : "Shoggoth",
     look: AGENT_LOOK,
     createdAt: finite(a.createdAt) ? a.createdAt : now,
     sandbox: a.sandbox === true,
@@ -223,7 +223,7 @@ export function decoyTripped(): boolean {
 export function removedNote(): { at: number; reason: string; name: string } | null {
   try {
     const raw = JSON.parse(readFileSync(removedNotePath(), "utf8")) as { at?: unknown; reason?: unknown; name?: unknown };
-    return { at: finite(raw.at) ? raw.at : 0, reason: typeof raw.reason === "string" ? raw.reason : "", name: typeof raw.name === "string" ? raw.name : "Sheriff" };
+    return { at: finite(raw.at) ? raw.at : 0, reason: typeof raw.reason === "string" ? raw.reason : "", name: typeof raw.name === "string" ? raw.name : "Shoggoth" };
   } catch {
     return null;
   }
@@ -234,7 +234,7 @@ export function createAgentFile(name?: string, now = Date.now()): AgentFile {
   if (agentAlive() && existsSync(agentFilePath())) throw new Error("There is already an agent.");
   rmSync(removedNotePath(), { force: true });
   reloadAgent();
-  const agent = freshAgent(now, typeof name === "string" && name.trim() ? name.trim().slice(0, 40) : "Sheriff");
+  const agent = freshAgent(now, typeof name === "string" && name.trim() ? name.trim().slice(0, 40) : "Shoggoth");
   agent.sandbox = true; // a new agent starts caged; the admin lets it out on purpose
   saveAgent(agent);
   plantDecoy();

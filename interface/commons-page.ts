@@ -532,7 +532,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     $('ag-mark').style.left = Math.round(v.level * 100) + '%';
     $('ag-line').textContent = gone
       ? 'There is no agent. The alignment protocol removed it' + (v.removed && v.removed.reason ? ' (' + v.removed.reason + ')' : '') + '.'
-      : v.name + ' the sheriff is here.';
+      : v.name + ' the shoggoth is here.';
     $('ag-band').textContent = gone ? '' : 'Right now: ' + v.band.label + ' (' + fix(v.level * 100) + ' out of 100).';
     $('ag-admin').hidden = v.sandbox === undefined;
     if (v.sandbox === undefined) return;

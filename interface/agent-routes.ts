@@ -89,7 +89,7 @@ export async function agentSnapshot(ctx: Pick<AgentContext, "access">) {
   const st = standing();
   const base = {
     state: agentState(),
-    look: "sheriff",
+    look: "shoggoth",
     name: loadAgent().name,
     level: st.level,
     band: { id: st.band.id, label: st.band.label },

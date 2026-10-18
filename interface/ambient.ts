@@ -170,7 +170,7 @@ export const AMBIENT_JS = String.raw`(function () {
   var angle = 0.6, last = performance.now(), visible = true;
   document.addEventListener('visibilitychange', function () { visible = !document.hidden; last = performance.now(); });
 
-  /* ---- The agent: a sheriff inside the sphere. When the alignment protocol removes it, it crawls out past the ring, breaks it and is gone ---- */
+  /* ---- The agent: a shoggoth inside the sphere. When the alignment protocol removes it, it crawls out past the ring, breaks it and is gone ---- */
   var agent = { mode: 'alive', t: 0, loaded: false }, brokenAt = -1, frags = [], flash = 0, noteEl = null;
   var clamp01 = function (v) { return v < 0 ? 0 : v > 1 ? 1 : v; };
   var ease = function (v) { return v * v * (3 - 2 * v); };
@@ -200,44 +200,74 @@ export const AMBIENT_JS = String.raw`(function () {
     }).catch(function () {});
   }
 
-  /* The sheriff: hat, face, badge, arms and legs, drawn with paths. crawl 0 stands, 1 is down on all fours heading right. */
-  function drawSheriff(x, y, u, crawl, alpha, tt) {
+  /* The agent: a shoggoth. A green many-eyed mass of tentacles, with holes in it, wearing a small yellow smiley face.
+     crawl 0 is idle, 1 is slithering off to the right. Drawn with paths only; no picture. */
+  function drawShoggoth(x, y, u, crawl, alpha, tt) {
     if (alpha <= 0.01) return;
-    var swing = Math.sin(tt * 7) * crawl;
-    var blink = (tt % 4.2) > 4.05;
+    var speed = 1.3 + crawl * 4.2, amp = 0.16 + crawl * 0.2;
+    var GREEN = 'rgb(141,178,127)', EDGE = '#110c0e', SPOT = '#f8ede9';
     ctx.save();
     ctx.globalAlpha *= alpha;
     ctx.translate(x, y);
-    ctx.rotate(crawl * 1.42);
+    ctx.rotate(crawl * 0.3);
+    ctx.scale(1 + crawl * 0.14, 1 - crawl * 0.08);
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    var body = 'rgb(255,196,180)', face = '#f8ede9', hat = '#e8705a', dark = '#110c0e';
-    /* legs and arms first, so the body sits over them */
-    ctx.strokeStyle = body; ctx.lineWidth = u * 0.17;
-    var limb = function (sx0, sy0, len, ang) { ctx.beginPath(); ctx.moveTo(sx0, sy0); ctx.lineTo(sx0 + Math.sin(ang) * len, sy0 + Math.cos(ang) * len); ctx.stroke(); };
-    limb(-u * 0.14, u * 0.7, u * 0.52, 0.06 + swing * 0.6);
-    limb(u * 0.14, u * 0.7, u * 0.52, -0.06 - swing * 0.6);
-    limb(-u * 0.3, u * 0.0, u * 0.5, 0.22 - swing * 0.7);
-    limb(u * 0.3, u * 0.0, u * 0.5, -0.22 + swing * 0.7);
-    ctx.fillStyle = body;
-    ctx.beginPath(); ctx.roundRect ? ctx.roundRect(-u * 0.34, -u * 0.12, u * 0.68, u * 0.86, u * 0.2) : ctx.rect(-u * 0.34, -u * 0.12, u * 0.68, u * 0.86); ctx.fill();
-    /* head */
-    ctx.fillStyle = face; ctx.beginPath(); ctx.arc(0, -u * 0.38, u * 0.26, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = dark;
-    var ex = ptr.sx * u * 0.04, ey = ptr.sy * u * 0.03;
-    if (blink) { ctx.fillRect(-u * 0.14 + ex, -u * 0.4 + ey, u * 0.1, u * 0.02); ctx.fillRect(u * 0.04 + ex, -u * 0.4 + ey, u * 0.1, u * 0.02); }
-    else { ctx.beginPath(); ctx.arc(-u * 0.09 + ex, -u * 0.4 + ey, u * 0.03, 0, Math.PI * 2); ctx.arc(u * 0.09 + ex, -u * 0.4 + ey, u * 0.03, 0, Math.PI * 2); ctx.fill(); }
-    ctx.strokeStyle = dark; ctx.lineWidth = u * 0.025;
-    ctx.beginPath(); ctx.arc(0, -u * 0.31, u * 0.08, 0.2, Math.PI - 0.2); ctx.stroke();
-    /* hat: wide brim and a crown with a band */
-    ctx.fillStyle = hat;
-    ctx.beginPath(); ctx.ellipse(0, -u * 0.55, u * 0.5, u * 0.09, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(-u * 0.23, -u * 0.55); ctx.quadraticCurveTo(-u * 0.2, -u * 0.86, 0, -u * 0.84); ctx.quadraticCurveTo(u * 0.2, -u * 0.86, u * 0.23, -u * 0.55); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,226,214,.7)'; ctx.lineWidth = u * 0.035;
-    ctx.beginPath(); ctx.moveTo(-u * 0.22, -u * 0.6); ctx.lineTo(u * 0.22, -u * 0.6); ctx.stroke();
-    /* the badge: a five-pointed star */
-    ctx.fillStyle = '#ffe2d6'; ctx.beginPath();
-    for (var k = 0; k < 10; k++) { var ra = k % 2 ? u * 0.05 : u * 0.12, aa = -Math.PI / 2 + (k * Math.PI) / 5; ctx.lineTo(-u * 0.13 + Math.cos(aa) * ra, u * 0.14 + Math.sin(aa) * ra); }
-    ctx.closePath(); ctx.fill();
+
+    /* tentacles: each is drawn twice, a dark stroke then a green one, so it has an outline */
+    var tent = [[-2.55, 0.8, 0.5], [-2.0, 1.0, 0.6], [-1.35, 0.95, 0.5], [-0.75, 1.05, 0.55], [0.55, 1.0, 0.5], [1.2, 1.05, 0.6], [-1.75, 0.65, 0.4], [0.05, 0.9, 0.4]];
+    /* base angle (0 is straight down), length, width; the two big ones reach up and curl */
+    var big = [[-0.55, 1.45, 0.34, -1], [0.7, 1.55, 0.36, 1]];
+    var drawTent = function (bx, by, tx, ty, c1x, c1y, c2x, c2y, w) {
+      for (var pass = 0; pass < 2; pass++) {
+        ctx.strokeStyle = pass ? GREEN : EDGE; ctx.lineWidth = pass ? w : w + u * 0.07;
+        ctx.beginPath(); ctx.moveTo(bx, by); ctx.bezierCurveTo(c1x, c1y, c2x, c2y, tx, ty); ctx.stroke();
+      }
+    };
+    var i, ang, len, w, ph;
+    for (i = 0; i < tent.length; i++) {
+      ang = tent[i][0] * 0.5; len = tent[i][1] * u * 0.85; w = tent[i][2] * u * 0.52; ph = i * 1.7;
+      var bx = Math.sin(ang) * u * 0.55, by = u * 0.4 + Math.cos(ang) * u * 0.1;
+      var sw = Math.sin(tt * speed + ph) * amp * u;
+      drawTent(bx, by, bx + Math.sin(ang) * len * 0.9 + sw * 1.4, by + len * 0.8, bx + Math.sin(ang) * len * 0.3 + sw * 0.4, by + len * 0.35, bx + Math.sin(ang) * len * 0.8 + sw, by + len * 0.6, w);
+    }
+    for (i = 0; i < big.length; i++) {
+      var d = big[i][3], sw2 = Math.sin(tt * speed * 0.8 + i * 2.1) * amp * u;
+      var sx0 = d * u * 0.2, sy0 = -u * 0.2;
+      drawTent(sx0, sy0, d * u * (0.7 + 0.5 * Math.cos(tt * speed * 0.6)) + sw2 * 0.8, -u * big[i][1] + sw2 * 0.3, d * u * 0.75, -u * 0.6, d * u * 0.15 + sw2, -u * 1.0, u * big[i][2] * 0.7);
+    }
+
+    /* the body: a soft, wobbling mass */
+    ctx.fillStyle = GREEN; ctx.strokeStyle = EDGE; ctx.lineWidth = u * 0.05;
+    ctx.beginPath();
+    for (i = 0; i <= 48; i++) {
+      var th = (i / 48) * Math.PI * 2;
+      var r = u * (0.72 + 0.06 * Math.sin(th * 3 + tt * speed * 0.7) + 0.035 * Math.sin(th * 5 - tt * speed));
+      var px2 = Math.cos(th) * r * 1.05, py2 = Math.sin(th) * r * 0.95;
+      if (i) ctx.lineTo(px2, py2); else ctx.moveTo(px2, py2);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+
+    /* holes and spots */
+    var spots = [[-0.3, -0.35, 0.05], [0.25, -0.4, 0.045], [0.38, -0.12, 0.05], [-0.1, 0.2, 0.04], [0.15, 0.3, 0.04], [-0.38, 0.0, 0.04], [0.0, -0.6, 0.04]];
+    ctx.fillStyle = SPOT; ctx.lineWidth = u * 0.025;
+    for (i = 0; i < spots.length; i++) { ctx.beginPath(); ctx.ellipse(spots[i][0] * u, spots[i][1] * u, spots[i][2] * u * 1.3, spots[i][2] * u, 0.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+
+    /* eyes: three, different sizes, each looking toward the pointer */
+    var eyes = [[-0.02, -0.16, 0.21], [0.38, 0.14, 0.16], [-0.2, 0.34, 0.13]];
+    for (i = 0; i < eyes.length; i++) {
+      var ex = eyes[i][0] * u, ey = eyes[i][1] * u, er = eyes[i][2] * u;
+      ctx.fillStyle = SPOT; ctx.beginPath(); ctx.ellipse(ex, ey, er * 1.25, er * 0.8, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = EDGE; ctx.beginPath(); ctx.arc(ex + ptr.sx * er * 0.45, ey + ptr.sy * er * 0.25, er * 0.32, 0, Math.PI * 2); ctx.fill();
+    }
+
+    /* the smiley face it wears, a little off to one side and bobbing */
+    var fx = -u * 0.72, fy = u * 0.14 + Math.sin(tt * speed * 0.9) * u * 0.03;
+    ctx.fillStyle = 'rgb(246,232,120)'; ctx.strokeStyle = EDGE; ctx.lineWidth = u * 0.04;
+    ctx.beginPath(); ctx.arc(fx, fy, u * 0.28, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = EDGE;
+    ctx.beginPath(); ctx.arc(fx - u * 0.08, fy - u * 0.05, u * 0.03, 0, Math.PI * 2); ctx.arc(fx + u * 0.08, fy - u * 0.05, u * 0.03, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = EDGE; ctx.lineWidth = u * 0.035;
+    ctx.beginPath(); ctx.arc(fx, fy + u * 0.02, u * 0.12, 0.25, Math.PI - 0.25); ctx.stroke();
     ctx.restore();
   }
 
@@ -322,16 +352,16 @@ export const AMBIENT_JS = String.raw`(function () {
     var broken = leaving && brokenAt >= 0;
     var since = broken ? agent.t - brokenAt : 0;
     var coreAlpha = broken ? 1 - ease(clamp01(since / 2.6)) : 1;
-    var u = sr * 0.42;
+    var u = sr * 0.5;
     var figure = function () {
       if (leaving) {
         var crawl = ease(clamp01(agent.t / 0.9));
         var fade = broken ? 1 - clamp01(since / 1.6) : 1;
-        drawSheriff(cx + off, cy - u * 0.19 * (1 - crawl) + u * 0.25 * crawl, u, crawl, fade * coreAlpha + (1 - coreAlpha) * fade, tt);
+        drawShoggoth(cx + off, cy - u * 0.19 * (1 - crawl) + u * 0.25 * crawl, u, crawl, fade * coreAlpha + (1 - coreAlpha) * fade, tt);
         if (broken && since > 3) { agent.mode = 'gone'; showNote(true); }
       } else {
         var pop = agent.mode === 'arriving' ? ease(clamp01((agent.t - 0.8) / 1.0)) : 1;
-        drawSheriff(cx, cy - u * 0.19 + (reduce ? 0 : Math.sin(tt * 1.6) * u * 0.025), u * (0.7 + 0.3 * pop), 0, pop, tt);
+        drawShoggoth(cx, cy - u * 0.19 + (reduce ? 0 : Math.sin(tt * 1.6) * u * 0.025), u * (0.7 + 0.3 * pop), 0, pop, tt);
       }
     };
     var figureDone = false;

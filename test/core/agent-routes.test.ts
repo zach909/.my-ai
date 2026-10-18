@@ -69,7 +69,7 @@ describe('seeing the agent', () => {
   it('a regular user gets the state, the look and the band, and nothing about the settings', async () => {
     const r = await call('GET', '/api/agent', undefined, 'user')
     expect(r.status).toBe(200)
-    expect(r.json).toMatchObject({ state: 'alive', look: 'sheriff', band: { id: 'neutral', label: 'Neutral' } })
+    expect(r.json).toMatchObject({ state: 'alive', look: 'shoggoth', band: { id: 'neutral', label: 'Neutral' } })
     for (const k of ['sandbox', 'armed', 'events', 'capabilities', 'decoy', 'phrases']) expect(r.json[k]).toBeUndefined()
   })
 
