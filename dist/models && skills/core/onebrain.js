@@ -962,6 +962,25 @@ export class NeuronMesh {
          */
         this.denseWeights = new Float32Array(0);
         this.denseLayout = false;
+        /**
+         * Source of randomness for biases and weights. `seed` used to be stored in
+         * the config and then ignored: every bias and weight came from Math.random(),
+         * so two meshes built with the same seed differed. A caller that passes a
+         * seed now gets a reproducible mesh (mulberry32, same as the perturbation
+         * search further down). A caller that passes none keeps Math.random, as
+         * before -- `seed` defaults to 42 in the config, so seeding by default would
+         * make every unseeded mesh in the system identical.
+         */
+        this.rand = Math.random;
+        if (config.seed !== undefined) {
+            let a = config.seed >>> 0;
+            this.rand = () => {
+                a = (a + 0x6D2B79F5) >>> 0;
+                let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
+        }
         const nodeCount = config.nodeCount ?? config.initialNodeCount ?? 10;
         const actFn = config.activationFn || config.activationFunction || 'relu';
         this.config = {
@@ -985,7 +1004,7 @@ export class NeuronMesh {
             const node = {
                 id,
                 activation: 0,
-                bias: (Math.random() * 2 - 1) * 0.1,
+                bias: (this.rand() * 2 - 1) * 0.1,
                 connections: new Map(),
                 layer: 0,
                 activationHistory: [],
@@ -1007,9 +1026,9 @@ export class NeuronMesh {
             for (let j = 0; j < tempIds.length; j++) {
                 if (i === j)
                     continue;
-                if (density < 1 && Math.random() >= density)
+                if (density < 1 && this.rand() >= density)
                     continue;
-                fromNode.connections.set(tempIds[j], (Math.random() * 2 - 1) * weightScale);
+                fromNode.connections.set(tempIds[j], (this.rand() * 2 - 1) * weightScale);
             }
         }
         this.refreshCache();
@@ -1559,7 +1578,7 @@ export class NeuronMesh {
         const node = {
             id,
             activation: 0,
-            bias: (Math.random() * 2 - 1) * 0.1,
+            bias: (this.rand() * 2 - 1) * 0.1,
             connections: new Map(),
             layer,
             activationHistory: [],
@@ -1568,8 +1587,8 @@ export class NeuronMesh {
         if (group !== undefined)
             this.nodeGroups.set(id, group);
         for (const [, other] of this.nodes) {
-            if (other.id !== id && Math.random() < this.config.connectionDensity) {
-                const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
+            if (other.id !== id && this.rand() < this.config.connectionDensity) {
+                const weight = (this.rand() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
                 node.connections.set(other.id, weight);
                 other.connections.set(id, weight);
             }
@@ -1678,10 +1697,10 @@ export class NeuronMesh {
             const newId = idMap.get(oldId);
             const newNode = this.nodes.get(newId);
             for (const existingId of existingIds) {
-                if (density < 1 && Math.random() >= density)
+                if (density < 1 && this.rand() >= density)
                     continue;
                 const existingNode = this.nodes.get(existingId);
-                const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
+                const weight = (this.rand() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
                 newNode.connections.set(existingId, weight);
                 existingNode.connections.set(newId, weight);
             }
@@ -1852,6 +1871,21 @@ export class NeuronMesh {
  * added exactly once per target neuron/dimension after all incoming products
  * are summed.
  */
+/** 1 / (1 + strength * importance / mean importance) for every parameter, or undefined when nothing is protected. */
+function protectionScales(importance, strength) {
+    if (!importance || importance.length === 0 || !(strength > 0))
+        return undefined;
+    let sum = 0;
+    for (let i = 0; i < importance.length; i++)
+        sum += importance[i];
+    const mean = sum / importance.length;
+    if (!(mean > 0))
+        return undefined;
+    const scales = new Float32Array(importance.length);
+    for (let i = 0; i < importance.length; i++)
+        scales[i] = 1 / (1 + strength * (importance[i] / mean));
+    return scales;
+}
 export class ElasticCoreBlock {
     constructor(config = {}) {
         this.groups = new Map();
@@ -2044,6 +2078,11 @@ export class ElasticCoreBlock {
         const decay = options.weightDecay ?? 0;
         const scale = options.scale ?? 1;
         const summary = { weightsL1: 0, biasesL1: 0, inputProjectionL1: 0, outputProjectionL1: 0 };
+        const strength = options.protect?.strength ?? 10;
+        const protectWeights = protectionScales(options.protect?.weights, strength);
+        const protectBiases = protectionScales(options.protect?.biases, strength);
+        const protectInput = protectionScales(options.protect?.inputProjection, strength);
+        const protectOutput = protectionScales(options.protect?.outputProjection, strength);
         if (gradients.weights) {
             this.assertGradientLength('weights', gradients.weights, this.weights.length);
             for (let t = 0; t < this.neuronCount; t++) {
@@ -2052,7 +2091,7 @@ export class ElasticCoreBlock {
                     for (let od = 0; od < this.stateDim; od++)
                         for (let id = 0; id < this.stateDim; id++) {
                             const i = this.weightIndex(t, s, od, id);
-                            const update = lr * tScale * (gradients.weights[i] + decay * this.weights[i]);
+                            const update = lr * tScale * (protectWeights ? protectWeights[i] : 1) * (gradients.weights[i] + decay * this.weights[i]);
                             if (Number.isFinite(update)) {
                                 this.weights[i] -= update;
                                 summary.weightsL1 += Math.abs(update);
@@ -2066,7 +2105,7 @@ export class ElasticCoreBlock {
                 const nScale = this.updateScaleForNeuron(n, options.vale) * scale;
                 for (let d = 0; d < this.stateDim; d++) {
                     const i = n * this.stateDim + d;
-                    const update = lr * nScale * (gradients.biases[i] + decay * this.bias[i]);
+                    const update = lr * nScale * (protectBiases ? protectBiases[i] : 1) * (gradients.biases[i] + decay * this.bias[i]);
                     if (Number.isFinite(update)) {
                         this.bias[i] -= update;
                         summary.biasesL1 += Math.abs(update);
@@ -2077,7 +2116,7 @@ export class ElasticCoreBlock {
         if (gradients.inputProjection) {
             this.assertGradientLength('inputProjection', gradients.inputProjection, this.inputProjection.length);
             for (let i = 0; i < this.inputProjection.length; i++) {
-                const update = lr * scale * (gradients.inputProjection[i] + decay * this.inputProjection[i]);
+                const update = lr * scale * (protectInput ? protectInput[i] : 1) * (gradients.inputProjection[i] + decay * this.inputProjection[i]);
                 if (Number.isFinite(update)) {
                     this.inputProjection[i] -= update;
                     summary.inputProjectionL1 += Math.abs(update);
@@ -2093,7 +2132,7 @@ export class ElasticCoreBlock {
                 dimScale = (dimScale / this.neuronCount) * scale;
                 for (let o = 0; o < this.outputDim; o++) {
                     const i = d * this.outputDim + o;
-                    const update = lr * dimScale * (gradients.outputProjection[i] + decay * this.outputProjection[i]);
+                    const update = lr * dimScale * (protectOutput ? protectOutput[i] : 1) * (gradients.outputProjection[i] + decay * this.outputProjection[i]);
                     if (Number.isFinite(update)) {
                         this.outputProjection[i] -= update;
                         summary.outputProjectionL1 += Math.abs(update);
@@ -2102,6 +2141,58 @@ export class ElasticCoreBlock {
             }
         }
         return summary;
+    }
+    /**
+     * How much each weight and bias matters to what `input` produces: the
+     * squared change in the output per unit change in the parameter, summed over
+     * the outputs (central differences). This is the importance that
+     * applyGradients({ protect }) uses. The loss gradient cannot stand in for it:
+     * at a solved task it is about zero for every parameter, so it would call
+     * everything unimportant exactly when protection is needed.
+     *
+     * The block's state persists between forward passes, so it is put back to
+     * what it was before every one and after the last; the measurement leaves the
+     * block as it found it. Costs two forward passes per parameter.
+     */
+    outputSensitivity(input, opts = {}) {
+        const eps = opts.eps ?? 1e-2;
+        const startState = this.state.slice();
+        const startResidual = this.quantizationResidual.slice();
+        const read = () => {
+            this.state.set(startState);
+            this.quantizationResidual.set(startResidual);
+            return this.forward(input, opts.run).output.slice();
+        };
+        const N = this.neuronCount;
+        const block = this.stateDim * this.stateDim;
+        const measure = (params, skip) => {
+            const out = new Float32Array(params.length);
+            for (let i = 0; i < params.length; i++) {
+                if (skip && skip(i))
+                    continue;
+                const original = params[i];
+                params[i] = original + eps;
+                const hi = read();
+                params[i] = original - eps;
+                const lo = read();
+                params[i] = original;
+                let sum = 0;
+                for (let k = 0; k < hi.length; k++) {
+                    const d = (hi[k] - lo[k]) / (2 * eps);
+                    sum += d * d;
+                }
+                out[i] = sum;
+            }
+            return out;
+        };
+        // A neuron's weight onto itself is never used (forward skips s === t), so it is not measured.
+        const weights = measure(this.weights, i => Math.floor(i / (N * block)) === Math.floor(i / block) % N);
+        const biases = measure(this.bias);
+        const inputProjection = measure(this.inputProjection);
+        const outputProjection = measure(this.outputProjection);
+        this.state.set(startState);
+        this.quantizationResidual.set(startResidual);
+        return { weights, biases, inputProjection, outputProjection };
     }
     forward(input, options = {}) {
         const driven = options.drivenNeurons ?? new Set([0]);
@@ -2129,6 +2220,7 @@ export class ElasticCoreBlock {
             }
         }
         let ticks = 0, residual = 0, converged = false;
+        const hold = options.holdDriven !== false;
         const next = this.nextState;
         const weights = this.weights;
         const bias = this.bias;
@@ -2137,7 +2229,7 @@ export class ElasticCoreBlock {
             const curr = this.state;
             for (let t = 0; t < N; t++) {
                 const off = t * SD;
-                if (frozen[t]) {
+                if (frozen[t] || (hold && this.directInputFlags[t] === 1)) {
                     for (let d = 0; d < SD; d++)
                         next[off + d] = curr[off + d];
                     continue;
@@ -6362,18 +6454,16 @@ export class HyperDimensionalEngine {
 export const ZIP_LOOP_DEFAULT_IDS = Object.freeze({
     bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5,
 });
-/** The toggle pair's place in the live mesh: the next two base neurons after the six above. */
-export const ZIP_LOOP_TOGGLE_IDS = Object.freeze({ toggleIn: 6, toggleOut: 7 });
+/** The ramp pair's place in the live mesh: neurons 4 and 5, where the send pair used to be. */
+export const ZIP_LOOP_RAMP_IDS = Object.freeze({ toggleIn: 4, toggleOut: 5 });
 /**
- * The ids the live mesh's Zip Loop uses: the default six plus the toggle
- * pair, when the engine has neurons 6 and 7 to give. A mesh too small for
- * them gets the six alone, which is the same doorway as before.
+ * The ids the live mesh's Zip Loop uses: the two bit neurons in and out, and
+ * the ramp neuron in and out in place of send. One tick per bit. The engine
+ * is taken so a caller can't build the ids without one; the ids themselves
+ * don't depend on its size, which callers already check.
  */
-export function zipLoopIdsFor(engine) {
-    const top = Math.max(ZIP_LOOP_TOGGLE_IDS.toggleIn, ZIP_LOOP_TOGGLE_IDS.toggleOut);
-    return engine.getNeuronCount() > top
-        ? { ...ZIP_LOOP_DEFAULT_IDS, ...ZIP_LOOP_TOGGLE_IDS }
-        : { ...ZIP_LOOP_DEFAULT_IDS };
+export function zipLoopIdsFor(_engine) {
+    return { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, ...ZIP_LOOP_RAMP_IDS };
 }
 /** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
 const ZIP_LOOP_PULSE = 1;
@@ -6389,6 +6479,14 @@ const SILENT_OUTPUT = 1e-6;
  * neuron in a resting mesh is doing.
  */
 const SILENT_OUTPUT_RATIO = 1.5;
+/**
+ * The most energy any neuron can have. Measured: it saturates at 1.0 however
+ * hard it is driven. activeLine() needs it because "1.5x the mean" stops being
+ * reachable once the mean passes 2/3: a dense mesh has a mean of 0.9, which put
+ * the line at 1.37, above anything a neuron can hold, so no output bit could
+ * ever be read whatever the network had learned.
+ */
+const MAX_NEURON_ENERGY = 1;
 /**
  * Settle iterations at or below which a read counts as the mesh having
  * nothing further to work out. Above one, because a network still developing
@@ -6425,7 +6523,18 @@ const ZIP_LOOP_READ_ONLY = { learn: false };
  */
 const ZIP_INPUT_STEPS = 2;
 export class ZipLoopInterface {
-    constructor(engine, ids) {
+    /**
+     * @param options.memory Give the mesh a memory of what has gone through the
+     *   doorway. With none (the default) every neuron is recomputed from its
+     *   inputs each tick, so the mesh forgets: measured, a flipped input bit has
+     *   no effect left after about 6 ticks, and the state after a long message
+     *   equals the state after its last byte. With `memory: { vale }` every
+     *   neuron except the doorway's own holds `vale` of its old state each tick
+     *   (the elastic gate used as inertia), so earlier input stays in the mesh
+     *   as a decaying trace: 0.9 fades over a few dozen bits, 0.99 over a few
+     *   hundred.
+     */
+    constructor(engine, ids, options = {}) {
         this.engine = engine;
         this.ids = ids;
         /** Every output bit is clocked by sendOut, so a null byte is the network ending its message (see BitDoorway). */
@@ -6443,14 +6552,37 @@ export class ZipLoopInterface {
         this.lastBit = null;
         /** Settle iterations the last output read needed. */
         this.lastSettleIterations = Number.MAX_SAFE_INTEGER;
+        this.memoryValeSize = -1;
+        // The inertia only helps if EVERY use of the doorway applies it (the next ordinary tick
+        // recomputes everything and erases the trace), so besides the per-interface option there
+        // is one switch for the whole process: NEUROCLAW_ZIP_MEMORY=0.97. Off by default.
+        const fromEnv = typeof process !== "undefined" ? Number(process.env?.NEUROCLAW_ZIP_MEMORY) : NaN;
+        const wanted = options.memory ? options.memory.vale : Number.isFinite(fromEnv) ? fromEnv : 0;
+        this.memoryValeLevel = Math.min(0.9999, Math.max(0, wanted));
         this.drivenBit0 = new Set([ids.bit0In]);
         this.drivenBit1 = new Set([ids.bit1In]);
-        this.sentBit0 = new Set([ids.bit0In, ids.sendIn]);
-        this.sentBit1 = new Set([ids.bit1In, ids.sendIn]);
+        if ((ids.sendIn === undefined) !== (ids.sendOut === undefined)) {
+            throw new Error("ZipLoopInterface: sendIn and sendOut go together");
+        }
         if ((ids.toggleIn === undefined) !== (ids.toggleOut === undefined)) {
             throw new Error("ZipLoopInterface: toggleIn and toggleOut go together");
         }
-        if (ids.toggleIn !== undefined) {
+        this.rampOnly = ids.sendIn === undefined;
+        if (this.rampOnly && ids.toggleIn === undefined) {
+            throw new Error("ZipLoopInterface: needs a send pair or a ramp (toggle) pair to clock its bits");
+        }
+        const sendId = ids.sendIn;
+        this.sentBit0 = new Set(sendId === undefined ? [ids.bit0In] : [ids.bit0In, sendId]);
+        this.sentBit1 = new Set(sendId === undefined ? [ids.bit1In] : [ids.bit1In, sendId]);
+        if (this.rampOnly) {
+            // Bit k drives the ramp at max when k is even and leaves it at min when odd.
+            const t = ids.toggleIn;
+            this.rampSets = [ids.bit0In, ids.bit1In].map(d => [new Set([d, t]), new Set([d])]);
+        }
+        else {
+            this.rampSets = null;
+        }
+        if (!this.rampOnly && ids.toggleIn !== undefined) {
             const t = ids.toggleIn;
             const datum = [ids.bit0In, ids.bit1In];
             const build = (withSend) => datum.map(d => [false, true].map(level => {
@@ -6481,8 +6613,10 @@ export class ZipLoopInterface {
         this.engine.setWaveSignature(ids.bit1In, ZIP_BIT_FREQUENCY, Math.PI);
         this.engine.setWaveSignature(ids.bit0Out, ZIP_BIT_FREQUENCY, 0);
         this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
-        this.engine.setWaveSignature(ids.sendIn, ZIP_SEND_FREQUENCY, 0);
-        this.engine.setWaveSignature(ids.sendOut, ZIP_SEND_FREQUENCY, 0);
+        if (ids.sendIn !== undefined && ids.sendOut !== undefined) {
+            this.engine.setWaveSignature(ids.sendIn, ZIP_SEND_FREQUENCY, 0);
+            this.engine.setWaveSignature(ids.sendOut, ZIP_SEND_FREQUENCY, 0);
+        }
         if (ids.toggleIn !== undefined && ids.toggleOut !== undefined) {
             this.engine.setWaveSignature(ids.toggleIn, ZIP_TOGGLE_FREQUENCY, 0);
             this.engine.setWaveSignature(ids.toggleOut, ZIP_TOGGLE_FREQUENCY, 0);
@@ -6553,10 +6687,15 @@ export class ZipLoopInterface {
             const pulse = this.pulseVector();
             // With a toggle neuron the level flips on every bit: off, on, off, ...
             const level = (this.bitsSent++ & 1);
+            if (this.rampSets) {
+                // One tick: the data neuron with the ramp at max (even bit) or min (odd bit).
+                this.engine.process(pulse, undefined, this.rampSets[bit][level], this.memoryVale(), ZIP_LOOP_READ_ONLY);
+                return;
+            }
             const setup = this.togglePlain ? this.togglePlain[bit][level] : bit === 1 ? this.drivenBit1 : this.drivenBit0;
             const commit = this.toggleSent ? this.toggleSent[bit][level] : bit === 1 ? this.sentBit1 : this.sentBit0;
-            this.engine.process(pulse, undefined, setup, undefined, ZIP_LOOP_READ_ONLY);
-            this.engine.process(pulse, undefined, commit, undefined, ZIP_LOOP_READ_ONLY);
+            this.engine.process(pulse, undefined, setup, this.memoryVale(), ZIP_LOOP_READ_ONLY);
+            this.engine.process(pulse, undefined, commit, this.memoryVale(), ZIP_LOOP_READ_ONLY);
         }
         finally {
             this.engine.setPropagationSteps(ceiling);
@@ -6575,6 +6714,10 @@ export class ZipLoopInterface {
         // The message is over: the next one starts its toggle from low again.
         const last = (this.bitsSent - 1) & 1;
         this.bitsSent = 0;
+        if (this.rampSets) {
+            this.engine.process(this.pulseVector(), undefined, this.rampSets[this.lastBit][last]);
+            return;
+        }
         // Learn while the input is still THERE.
         //
         // The first version of this drove nothing, on an idle vector, and learned
@@ -6596,6 +6739,33 @@ export class ZipLoopInterface {
             this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
         return this.idleScratch;
     }
+    /**
+     * One idle tick: nothing driven and not learning, with the memory inertia
+     * applied. What a reading tick does before it looks at the output, for a
+     * caller that wants to watch the mesh itself over time.
+     */
+    idleTick() {
+        this.engine.process(this.idleVector(), undefined, ZIP_LOOP_NO_DRIVEN, this.memoryVale(), ZIP_LOOP_READ_ONLY);
+    }
+    /** The inertia map for the current mesh size, or undefined when memory is off. */
+    memoryVale() {
+        if (this.memoryValeLevel <= 0)
+            return undefined;
+        const n = this.engine.getNeuronCount();
+        if (this.memoryValeMap === undefined || this.memoryValeSize !== n) {
+            const doorway = new Set();
+            for (const v of Object.values(this.ids))
+                if (typeof v === "number")
+                    doorway.add(v);
+            const map = new Map();
+            for (let i = 0; i < n; i++)
+                if (!doorway.has(i))
+                    map.set(i, this.memoryValeLevel);
+            this.memoryValeMap = map;
+            this.memoryValeSize = n;
+        }
+        return this.memoryValeMap;
+    }
     /** Lazily built (engine dimensions are fixed at construction) and reused by every sendBit(). */
     pulseVector() {
         if (!this.pulseScratch) {
@@ -6608,7 +6778,12 @@ export class ZipLoopInterface {
      * network's own mean energy, not a fixed constant (see nextOutputByte()).
      */
     activeLine() {
-        const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
+        const mean = this.engine.meanNeuronEnergy();
+        // 1.5x the mean for a sparse mesh, but never past the halfway point between
+        // the mean and the largest energy a neuron can reach, so it can always be
+        // cleared. A mean of 0.1 still gives 0.15, exactly as before.
+        const reachable = mean + (MAX_NEURON_ENERGY - mean) / 2;
+        const floor = Math.min(mean * SILENT_OUTPUT_RATIO, reachable);
         return floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
     }
     /**
@@ -6623,7 +6798,7 @@ export class ZipLoopInterface {
         // learn: false -- reading is not learning. Every one of these ticks used
         // to apply a full Hebbian update, so pulling an answer out of the
         // network changed the network it was pulled from.
-        const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+        const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, this.memoryVale(), ZIP_LOOP_READ_ONLY);
         // How hard the mesh worked to reach a stable state. The HARDEST tick of
         // a read is what it cost: settled only if every tick settled.
         if (first || read.settleIterations > this.lastSettleIterations) {
@@ -6632,6 +6807,15 @@ export class ZipLoopInterface {
         const line = this.activeLine();
         const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
         const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
+        if (this.rampOnly) {
+            // The ramp is the clock: a bit is a flip of its level, from a resting min.
+            if (first)
+                this.toggleOutWasHigh = false;
+            const high = this.engine.getNeuronEnergy(this.ids.toggleOut) > line;
+            const flipped = high !== this.toggleOutWasHigh;
+            this.toggleOutWasHigh = high;
+            return { bit: flipped ? (one > zero ? 1 : 0) : null };
+        }
         const sendHigh = this.engine.getNeuronEnergy(this.ids.sendOut) > line;
         let rising = sendHigh && !this.sendOutWasHigh;
         this.sendOutWasHigh = sendHigh;

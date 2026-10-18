@@ -43,3 +43,9 @@ body { background: transparent !important; }
 @keyframes nc-drift-b { to { transform: translate(-12vmax, -9vmax) scale(1.15); } }
 @keyframes nc-drift-c { to { transform: translate(-16vmax, -12vmax) scale(0.85); } }
 @media (prefers-reduced-motion: reduce) { #nc-ambient .nc-a { animation: none; } }
+/* Settings > Appearance > Ring and glow background: off leaves a plain dark page. */
+html.nc-ambient-off #nc-ambient { display: none; }
+html.nc-ambient-off { background: var(--nc-bg) !important; }
+/* Phones and small windows: nothing may be wider than the screen, and tap targets stay comfortable. */
+html, body { max-width: 100%; }
+@media (max-width: 640px) { .nc-btn, .nc-input { min-height: 44px; } }

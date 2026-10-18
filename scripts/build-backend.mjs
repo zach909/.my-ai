@@ -87,4 +87,18 @@ for (const dir of DIRS) {
   }
 }
 console.log(`› copied ${copied} JS-only module(s) into dist/`);
+
+// 2b. Copy the runtime-loaded .mjs helper(s) that interface/main.ts imports
+// dynamically (../scripts/learning-loader.mjs resolves to dist/scripts/...
+// once compiled). tsc never emits these and step 2 only walks DIRS, so they
+// used to be missing at runtime ("Could not load learning system: Cannot find
+// module .../dist/scripts/learning-loader.mjs").
+for (const rel of ['scripts/learning-loader.mjs']) {
+  const src = join(ROOT, rel);
+  if (!existsSync(src)) continue;
+  const dest = join(ROOT, 'dist', rel);
+  mkdirSync(dirname(dest), { recursive: true });
+  copyFileSync(src, dest);
+}
+
 console.log('✓ backend build complete');

@@ -10,6 +10,8 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+import { exportChats, importChats } from '../models && skills/core/chat-archive.js';
+import { ZipError } from '../models && skills/core/zip-archive.js';
 import { UserProfileStore, type ProfileList } from '../models && skills/core/user-profile-store.js';
 import type { NetworkStateSnapshot } from '../models && skills/core/onebrain.js';
 import {
@@ -29,7 +31,11 @@ import { getSharedChatStore, SharedChatError } from '../models && skills/core/sh
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AVATAR_HTML } from './avatar.js';
-import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
+import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute, isPwaRoute } from './ambient.js';
+import { configFile } from './platform/app-paths.js';
+import { handlePlatformRoutes, isPlatformRoute } from './platform/routes.js';
+import { SETTINGS_PAGE } from './platform/settings-page.js';
+import { appVersion } from './platform/version.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
@@ -39,7 +45,8 @@ import { startScheduler } from '../models && skills/core/scheduler.js';
 import { handleSafetyRoutes, isSafetyRoute } from './safety-routes.js';
 import { handleAccountsRoutes, isAccountsRoute, isAccountsPublicRoute } from './accounts-routes.js';
 import { ACCOUNTS_PAGE } from './accounts-page.js';
-import { getAccounts, resolveWho, userMayReach, USER_COOKIE } from '../models && skills/core/accounts.js';
+import { getAccounts, nameBelongsToAnotherAccount, resolveWho, userMayReach, USER_COOKIE } from '../models && skills/core/accounts.js';
+import { setNameGuard } from '../models && skills/core/points.js';
 import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, setLearnPolicy, who } from '../models && skills/core/user-context.js';
 import { sharedToolGate } from '../models && skills/core/tool-safety.js';
 import { startExperts } from '../models && skills/core/experts.js';
@@ -293,8 +300,10 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     color: var(--text);
     font-family: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
     height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
+    overflow-x: hidden;
   }
 
   #header {
@@ -526,6 +535,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 
   #input {
     flex: 1;
+    min-width: 0;
     background: rgba(11, 13, 16, 0.5);
     border: 1px solid var(--border);
     color: var(--text);
@@ -585,6 +595,42 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     opacity: 0.5;
     cursor: not-allowed;
     transform: none;
+  }
+
+  #settings-link {
+    background: rgba(255, 238, 230, 0.07);
+    color: var(--text);
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  #settings-link:hover {
+    background: rgba(255, 154, 132, 0.2);
+    border-color: var(--primary);
+    color: var(--primary);
+    transform: translateY(-1px);
+  }
+
+  #send-btn, #clear-btn, #settings-link { min-height: 44px; }
+
+  .message { overflow-wrap: anywhere; }
+
+  /* Phones and narrow windows: nothing wider than the screen, the input stays above the keyboard and the home bar. */
+  @media (max-width: 520px) {
+    #header { padding: 12px 16px; flex-wrap: wrap; gap: 8px; }
+    #header > div { flex-wrap: wrap; gap: 8px !important; }
+    #chat-container { padding: 16px; }
+    #input-area { padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); gap: 8px; }
+    #send-btn { padding: 12px 20px; }
+    .message { max-width: 94%; }
   }
 
   #clear-btn {
@@ -675,8 +721,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </head>
 <body>
 <div id="header">
-  <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
+  <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v__APP_VERSION__</h1>
   <div style="display:flex; align-items:center; gap:15px;">
+    <a id="settings-link" href="/settings" aria-label="Open settings">Settings</a>
     <button id="clear-btn" aria-label="Clear chat history">Clear</button>
     <div id="status-text" style="font-size:12px; color:var(--text); opacity:0.6;">Starting...</div>
   </div>
@@ -694,8 +741,18 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   const clearBtn = document.getElementById('clear-btn');
   const statusDot = document.getElementById('status-dot');
   const statusText = document.getElementById('status-text');
-  let chatHistory = JSON.parse(localStorage.getItem('nc_hist') || '[]');
-  const save = () => localStorage.setItem('nc_hist', JSON.stringify(chatHistory));
+  // Settings > Chat > "Remember the chat on this device". The choice is kept on the server (shared by every
+  // device) and mirrored here so the first paint after a reload already knows it.
+  let keepHistory = true;
+  try { keepHistory = localStorage.getItem('nc_keep_hist') !== '0'; } catch (e) { /* storage blocked */ }
+  const readHistory = () => { try { return keepHistory ? JSON.parse(localStorage.getItem('nc_hist') || '[]') : []; } catch (e) { return []; } };
+  let chatHistory = readHistory();
+  const save = () => { if (!keepHistory) return; try { localStorage.setItem('nc_hist', JSON.stringify(chatHistory)); } catch (e) { /* storage full or blocked: the chat still works */ } };
+  fetch('/api/app-settings').then(r => r.ok ? r.json() : null).then(j => {
+    if (!j || !j.settings) return;
+    keepHistory = j.settings.chat.keepLocalHistory !== false;
+    try { localStorage.setItem('nc_keep_hist', keepHistory ? '1' : '0'); if (!keepHistory) localStorage.removeItem('nc_hist'); } catch (e) { /* storage blocked */ }
+  }).catch(() => { /* offline or signed out: keep the local choice */ });
   /** One "label: value" row, skipped entirely when there is no value. */
   function row(dl, label, value) {
     if (value === null || value === undefined || value === '') return;
@@ -1395,7 +1452,7 @@ export class WebServer {
    * was turned off.
    */
   private networkStatePath(): string {
-    return path.resolve(process.cwd(), 'config', 'network-state.json');
+    return configFile('network-state.json').write;
   }
 
   /** Returns how many neurons' worth of state was written. */
@@ -1412,7 +1469,7 @@ export class WebServer {
    */
   private async readSavedNetworkState(): Promise<NetworkStateSnapshot | null> {
     try {
-      const file = this.networkStatePath();
+      const file = configFile('network-state.json').read;
       if (!existsSync(file)) return null;
       const parsed = JSON.parse(readFileSync(file, 'utf8')) as NetworkStateSnapshot | null;
       if (!parsed || typeof parsed !== 'object' || !parsed.shape) return null;
@@ -1475,6 +1532,8 @@ export class WebServer {
     }
     // The shared brain learns from, and remembers, other people only if the admin says so.
     setLearnPolicy(() => getAccounts().learnFromUsers());
+    // Nobody can put another account's name on the points board and pass for them.
+    setNameGuard(name => nameBelongsToAnotherAccount(getAccounts(), name));
     try {
       if (!getAccounts().hasAdmin()) {
         console.log(
@@ -1679,7 +1738,7 @@ export class WebServer {
   body { margin:0; min-height:100vh; display:grid; place-items:center;
          background:#110c0e; color:#f8ede9;
          font:15px/1.5 ui-rounded,"SF Pro Rounded",system-ui,-apple-system,"Segoe UI",sans-serif; }
-  form { width:min(360px,90vw); padding:30px; background:rgba(255,240,232,.08);
+  form { box-sizing:border-box; width:min(360px,90vw); padding:30px; background:rgba(255,240,232,.08);
          border:1px solid rgba(255,228,218,.2); border-radius:32px;
          backdrop-filter:blur(26px) saturate(1.5); -webkit-backdrop-filter:blur(26px) saturate(1.5);
          box-shadow:0 1px 0 rgba(255,255,255,.18) inset, 0 30px 80px rgba(0,0,0,.5), 0 0 90px rgba(255,140,110,.12); }
@@ -2474,7 +2533,8 @@ export class WebServer {
       // Apps and borrowers carry a bearer token, not a login; corona-routes.ts
       // checks it on every request, so the password gate has nothing to add.
       isCoronaApiRoute(pathname) ||
-      isAmbientRoute(pathname, method);
+      isAmbientRoute(pathname, method) ||
+      isPwaRoute(pathname, method);
 
     // Bound remotely with no password set: only the login page answers, and
     // even the things that are normally public stay shut. An instance nobody
@@ -2500,6 +2560,23 @@ export class WebServer {
         this.sendJson(res, { error: 'Only the admin can do that.' }, 403);
         return;
       }
+    }
+
+    // ── Settings page, app info, shared settings, update status, install files ──
+    // See interface/platform/. /app/settings used to be a React route that could
+    // not be rebuilt and overflowed on phones; it now opens the same page.
+    if ((pathname === '/settings' || pathname === '/app/settings') && (method === 'GET' || method === 'HEAD')) {
+      this.sendHtml(res, SETTINGS_PAGE);
+      return;
+    }
+    if (isPlatformRoute(pathname)) {
+      const handled = await handlePlatformRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        isAdmin: () => isOwnerOrAdmin(),
+      });
+      if (handled) return;
     }
 
     // ── Accounts ────────────────────────────────────────────────────────
@@ -2695,7 +2772,7 @@ export class WebServer {
     }
 
     if (pathname === '/' && method === 'GET') {
-      this.sendHtml(res, HTML_TEMPLATE);
+      this.sendHtml(res, HTML_TEMPLATE.replace('__APP_VERSION__', appVersion()));
       return;
     }
 
@@ -3236,7 +3313,7 @@ export class WebServer {
       try {
         const body = await this.parseBody(req) as { capability?: string; level?: string | null; paths?: string[] } | null;
         const { CAPABILITIES, ACCESS_LEVELS } = await import('../models && skills/core/access-manager.js');
-        const { describeAccess, sharedAccessManager, saveSettings } = await import('../models && skills/core/access-settings.js');
+        const { describeAccess, sharedAccessManager, persistSettings } = await import('../models && skills/core/access-settings.js');
         if (!body || !(CAPABILITIES as readonly string[]).includes(String(body.capability))) {
           this.sendJson(res, { error: 'Expected { capability, level } where capability is a known capability.' }, 400);
           return;
@@ -3258,7 +3335,7 @@ export class WebServer {
         // Grants are only persisted on a switch flip otherwise, and a grant
         // that vanishes at restart is the same broken promise as a switch
         // that does.
-        saveSettings({ switches: manager.switchState(), grants: manager.list() });
+        persistSettings({ switches: manager.switchState(), grants: manager.list() });
         this.sendJson(res, describeAccess(manager));
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
@@ -4069,6 +4146,38 @@ export class WebServer {
           updatedAt: m.thread.updatedAt,
         })),
       });
+      return;
+    }
+
+    // GET /api/chat-history/export — every chat of the person asking, as one zip,
+    // to keep before resetting a machine. POST /api/chat-history/import brings a
+    // zip back ({ zip: <base64> }); chats already here are never overwritten.
+    if (pathname === '/api/chat-history/export' && method === 'GET') {
+      try {
+        const zip = exportChats(this.chatHistory);
+        this.setSecurityHeaders(res);
+        res.writeHead(200, {
+          'Content-Type': 'application/zip',
+          'Content-Disposition': `attachment; filename="neuroclaw-chats-${new Date().toISOString().slice(0, 10)}.zip"`,
+          'Content-Length': zip.length,
+        });
+        res.end(zip);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+    if (pathname === '/api/chat-history/import' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req, 40 * 1024 * 1024) as { zip?: unknown } | null;
+        if (!body || typeof body.zip !== 'string' || !/^[A-Za-z0-9+/=\s]+$/.test(body.zip)) {
+          this.sendJson(res, { error: 'Send { "zip": "<the file, base64>" }.' }, 400);
+          return;
+        }
+        this.sendJson(res, importChats(this.chatHistory, Buffer.from(body.zip, 'base64')));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, err instanceof ZipError ? 400 : 500);
+      }
       return;
     }
 

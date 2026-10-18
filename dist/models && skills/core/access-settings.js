@@ -16,12 +16,20 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
+import { configFile } from "../../interface/platform/app-paths.js";
 import { ACCESS_SWITCHES, AccessManager, CAPABILITIES, CAPABILITY_MINIMUM, CAPABILITY_SWITCH, SWITCH_DESCRIPTION, SWITCH_LABEL, defaultGrants, } from "./access-manager.js";
+/**
+ * Where switches are saved: the user's own data folder (~/.neuroclaw/config),
+ * not the working directory. A launch from a desktop entry, an installed app or
+ * a service has no writable cwd, which is what used to make saving throw.
+ * CORONA_ACCESS_FILE overrides it so tests never touch the real one.
+ */
 export function accessSettingsPath() {
-    // Overridable so tests never touch the real one.
-    return process.env.CORONA_ACCESS_FILE
-        ? path.resolve(process.env.CORONA_ACCESS_FILE)
-        : path.resolve(process.cwd(), "config", "access.json");
+    return configFile("access.json", process.env.CORONA_ACCESS_FILE).write;
+}
+/** Where to read from: the saved file, or the older checkout copy if nothing was saved yet. */
+function accessSettingsReadPath() {
+    return configFile("access.json", process.env.CORONA_ACCESS_FILE).read;
 }
 function defaultSwitches() {
     return { all: true, desktop: true, workspace: true };
@@ -30,7 +38,7 @@ export function defaultSettings() {
     return { switches: defaultSwitches(), grants: defaultGrants() };
 }
 /** Never throws. A settings file we cannot understand means defaults, not a crash at boot. */
-export function loadSettings(file = accessSettingsPath()) {
+export function loadSettings(file = accessSettingsReadPath()) {
     if (!existsSync(file))
         return defaultSettings();
     try {
@@ -62,7 +70,7 @@ export function saveSettings(settings, file = accessSettingsPath()) {
  * writes back whenever a switch flips.
  */
 export function loadAccessManager(file = accessSettingsPath()) {
-    const settings = loadSettings(file);
+    const settings = loadSettings(file === accessSettingsPath() ? accessSettingsReadPath() : file);
     const manager = new AccessManager([], settings.switches);
     for (const grant of settings.grants) {
         // A grant below its capability's minimum throws; skip it rather than
@@ -74,8 +82,31 @@ export function loadAccessManager(file = accessSettingsPath()) {
             /* ignore an invalid stored grant */
         }
     }
-    manager.onSwitchChange(switches => saveSettings({ switches, grants: manager.list() }, file));
+    // A switch that cannot be saved must not take the request down with it: the
+    // change still applies for this run, and the failure is kept so the settings
+    // screen can say "not saved: <reason>" instead of failing silently.
+    manager.onSwitchChange(switches => persistSettings({ switches, grants: manager.list() }, file));
     return manager;
+}
+let lastSave = { ok: true, error: null, file: "" };
+/** Like saveSettings, but reports instead of throwing. */
+export function persistSettings(settings, file = accessSettingsPath()) {
+    try {
+        saveSettings(settings, file);
+        lastSave = { ok: true, error: null, file };
+    }
+    catch (err) {
+        const code = err?.code;
+        const why = code === "EACCES" || code === "EROFS" || code === "EPERM"
+            ? `${path.dirname(file)} is read-only for this user`
+            : err instanceof Error ? err.message : String(err);
+        lastSave = { ok: false, error: `Could not save to ${file}: ${why}`, file };
+    }
+    return lastSave;
+}
+/** The outcome of the most recent save, for the settings screen. */
+export function lastSaveStatus() {
+    return lastSave.file ? lastSave : { ok: true, error: null, file: accessSettingsPath() };
 }
 let shared = null;
 /** The one the running system uses. */
@@ -110,5 +141,5 @@ export function describeAccess(manager) {
             blockedBySwitch,
         };
     });
-    return { switches, capabilities };
+    return { switches, capabilities, persistence: lastSaveStatus() };
 }

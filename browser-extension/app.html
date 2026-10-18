@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NeuroClaw</title>
+<!-- The look comes from ambient.css / ambient.js, generated from interface/ambient.ts (node scripts/sync-ambient.mjs). -->
+<link rel="stylesheet" href="ambient.css">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; background: #110c0e; color: #f8ede9; display: grid; place-items: center; padding: 16px; box-sizing: border-box; overflow-x: hidden; }
+  main { position: relative; z-index: 1; width: 100%; max-width: 520px; padding: 28px 26px; box-sizing: border-box; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  p { font-size: 14px; line-height: 1.5; margin: 8px 0; }
+  .state { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #ffc4b4; flex: 0 0 auto; }
+  .dot.ok { background: #8fe3a8; box-shadow: 0 0 12px #8fe3a8; } .dot.bad { background: #ff9aa8; box-shadow: 0 0 12px #ff9aa8; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .row .nc-input { flex: 1 1 220px; min-width: 0; }
+  .nc-btn { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; }
+  label { font-size: 13px; display: block; margin-top: 16px; }
+  details { margin-top: 16px; font-size: 14px; } summary { cursor: pointer; min-height: 32px; }
+  li { margin: 6px 0; line-height: 1.45; }
+  #err { color: #ff9aa8; min-height: 20px; font-size: 14px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body class="nc-soft">
+<main class="nc-glass">
+  <h1>NeuroClaw</h1>
+  <div class="state" role="status" aria-live="polite"><span id="dot" class="dot"></span><span id="title">Looking for your server...</span></div>
+  <p id="body" class="nc-dim"></p>
+  <div class="row" id="actions" hidden>
+    <a id="open" class="nc-btn primary" href="#">Open NeuroClaw</a>
+    <a id="open-settings" class="nc-btn" href="#">Settings</a>
+    <button id="retry" class="nc-btn" type="button">Try again</button>
+  </div>
+  <label for="server">Server address</label>
+  <div class="row">
+    <input id="server" class="nc-input" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="http://localhost:7861">
+    <button id="save" class="nc-btn primary" type="button">Save and test</button>
+  </div>
+  <div id="err" role="alert"></div>
+  <details id="help">
+    <summary>How do I get a server?</summary>
+    <ul>
+      <li><b>This computer (Windows, macOS, Linux):</b> install the NeuroClaw desktop app and open it. The address above is already right.</li>
+      <li><b>Chromebook:</b> the engine cannot run inside a Chrome extension. Turn on Linux (Settings, Developers), install the NeuroClaw Linux package there, and start it; Chrome reaches it at <code>http://localhost:7861</code>.</li>
+      <li><b>Another computer on your network:</b> run NeuroClaw there with a Remote Access password set, then type its address, for example <code>http://192.168.1.20:7861</code>, and sign in when asked.</li>
+    </ul>
+    <p class="nc-dim">Connecting to another computer asks Chrome for permission to talk to that one address. Nothing is sent anywhere else.</p>
+  </details>
+  <div class="row"><a class="nc-btn" href="popup.html">Random idea</a><a class="nc-btn" href="options.html">Options</a></div>
+  <p class="nc-dim" id="ver"></p>
+</main>
+<script src="ambient.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

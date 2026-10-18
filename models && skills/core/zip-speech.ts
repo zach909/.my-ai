@@ -81,6 +81,7 @@ const toBytes = (v: string | Uint8Array): Uint8Array => (typeof v === "string" ?
 
 /** Solve (A + lambda I) x = b for symmetric positive semi-definite A by Gaussian elimination with partial pivoting. */
 export function solveRidge(a: Float64Array, n: number, lambda: number, b: Float64Array[]): Float64Array[] {
+function solveRidge(a: Float64Array, n: number, lambda: number, b: Float64Array[]): Float64Array[] {
   const m = new Float64Array(n * n);
   for (let i = 0; i < n * n; i++) m[i] = a[i];
   for (let i = 0; i < n; i++) m[i * n + i] += lambda;
@@ -203,6 +204,22 @@ export class ZipSpeaker {
     }
     if (this.featureCache.size >= 4096) this.featureCache.clear();
     this.featureCache.set(key, f);
+  /** Feed the question from blank activity and read the mesh once: every neuron outside the doorway, content and energy. */
+  private features(question: Uint8Array): Float64Array {
+    thawActivity(this.engine, this.blank);
+    for (const byte of question) this.zip.sendByte(byte);
+    for (let t = 0; t < this.settleTicks; t++) this.zip.idleTick();
+    const n = this.engine.getNeuronCount();
+    const dims = this.engine.getDimensions();
+    const scratch = new Float32Array(dims);
+    const f = new Float64Array((n - this.doorway.size) * (dims + 1));
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+      if (this.doorway.has(i)) continue;
+      const wrote = this.engine.readNeuronContent(i, scratch);
+      for (let d = 0; d < dims; d++) f[k++] = d < wrote ? scratch[d] : 0;
+      f[k++] = this.engine.getNeuronEnergy(i);
+    }
     return f;
   }
 
@@ -254,6 +271,7 @@ export class ZipSpeaker {
       }
       this.featureStd = std;
       const Z = X.map(x => Float64Array.from(x, (v, j) => (v - mean[j]) / (std ? std[j] : scale)));
+      const Z = X.map(x => Float64Array.from(x, (v, j) => (v - mean[j]) / scale));
 
       // Dual ridge: predictions are sum_i alpha_i * (z_i . z), with alpha = (Z Zt + lambda I)^-1 Y.
       // Only an S x S system, whatever the number of features.
@@ -340,6 +358,7 @@ export class ZipSpeaker {
     try {
       const x = this.features(toBytes(question));
       const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
+      const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / this.featureScale);
       const dist = (a: Float64Array, b: Float64Array) => { let d = 0; for (let k = 0; k < a.length; k++) d += (a[k] - b[k]) ** 2; return Math.sqrt(d); };
       let nearest = Infinity;
       for (const m of this.memory) nearest = Math.min(nearest, dist(z, m));
@@ -380,6 +399,7 @@ export class ZipSpeaker {
     try {
       const x = this.features(toBytes(question));
       const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
+      const z = Float64Array.from(x, (v, j) => (v - this.featureMean![j]) / this.featureScale);
       const scores = this.scores(z);
       const bytes: number[] = [];
       for (let i = 0; i < this.maxAnswerBytes; i++) {

@@ -18,7 +18,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
 <style>
   :root { color-scheme: dark; }
   body { margin:0; min-height:100vh; background:#110c0e; color:#f8ede9; }
-  main { position:relative; z-index:1; max-width:820px; margin:0 auto; padding:28px 16px 90px; display:grid; gap:18px; }
+  main { position:relative; z-index:1; max-width:820px; margin:0 auto; padding:28px 16px 90px; display:grid; grid-template-columns:minmax(0,1fr); gap:18px; }
   h1 { font-size:22px; margin:6px 6px 0; }
   h2 { font-size:17px; margin:0 0 4px; }
   h3 { font-size:15px; margin:18px 0 6px; }
@@ -91,6 +91,10 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       <button class="nc-btn primary" id="m-add">Add</button>
     </div>
     <p class="nc-dim" id="ref-note"></p>
+    <div class="row">
+      <input class="nc-input" id="h-amount" type="number" min="1" step="1" value="10" style="width:110px" title="Points of wage">
+      <span class="nc-dim">points of wage for Hire and Pay on the people above</span>
+    </div>
   </section>
 
   <section class="nc-glass">
@@ -200,6 +204,12 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     <h2>Your chats, organised by the agent</h2>
     <p class="nc-dim">Chats are filed into groups as you go. The agent names each group once it has read what is in it.</p>
     <div id="chats"></div>
+    <div class="row">
+      <a class="nc-btn" id="c-export" href="/api/chat-history/export" download>Export my chats (.zip)</a>
+      <input class="nc-input grow" id="c-file" type="file" accept=".zip,application/zip">
+      <button class="nc-btn primary" id="c-import">Import chats</button>
+    </div>
+    <p class="nc-dim">Resetting a machine? Export first, then import the zip on the new one. Chats already there are left alone, so importing twice is safe.</p>
   </section>
 </main>
 <script>
@@ -231,18 +241,32 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   // ── The board and the rates ──────────────────────────────────────────
   function renderBoard(pts) {
     var B = $('board'); B.textContent = '';
+    var byId = {};
+    pts.board.forEach(function (m) { byId[m.id] = m; });
+    var wage = function () { return Number($('h-amount').value); };
     pts.board.forEach(function (m) {
       var kind = m.kind === 'agent' ? 'AI' : m.kind === 'peer' ? 'computer' : '';
+      var boss = m.hiredBy && byId[m.hiredBy] ? byId[m.hiredBy] : null;
+      var buttons = [chip(fix(m.points) + ' pts', m.isYou ? 'hot' : '')];
+      if (!m.isYou && m.kind !== 'peer') {
+        if (m.hiredBy === 'me') {
+          buttons.push(btn('Pay', function () { act(api('POST', '/api/commons/members/' + encodeURIComponent(m.id) + '/pay', { amount: wage() })).catch(function () {}); }));
+          buttons.push(btn('Let go', function () { act(api('POST', '/api/commons/members/' + encodeURIComponent(m.id) + '/let-go', {})).catch(function () {}); }));
+        } else if (!m.hiredBy) {
+          buttons.push(btn('Hire', function () { act(api('POST', '/api/commons/members/' + encodeURIComponent(m.id) + '/hire', { amount: wage() })).catch(function () {}); }));
+        }
+      }
       B.appendChild(item(
         m.rank + '.  ' + m.name + (m.isYou && m.name !== 'You' ? '  (you)' : ''),
-        fix(m.earned) + ' earned' + (kind ? ' · ' + kind : ''),
-        [chip(fix(m.points) + ' pts', m.isYou ? 'hot' : '')],
+        fix(m.earned) + ' earned' + (kind ? ' · ' + kind : '') + (boss ? ' · works for ' + (boss.isYou ? 'you' : boss.name) : ''),
+        buttons,
         m.isYou ? 'you' : ''
       ));
     });
     var r = pts.referral;
-    $('ref-note').textContent = 'You are paid ' + r.bonus + ' points for each person you add, once, after they do their first paid work (up to ' + r.cap + ' people). ' +
-      r.paid + ' paid so far, ' + r.waiting + ' waiting.';
+    $('ref-note').textContent = 'Adding a person takes ' + r.joinGrab + ' points from everyone else, split evenly, and gives them to you. Nothing is printed: what you gain, they lose. You are also paid ' +
+      r.bonus + ' points for each person you add, once, after they do their first paid work (up to ' + r.cap + ' people each). ' +
+      r.paid + ' paid so far, ' + r.waiting + ' waiting. Hire someone to put them under you; the wage comes out of your own points.';
     if (document.activeElement !== $('r-ask')) $('r-ask').value = pts.ask;
     if (document.activeElement !== $('r-bid')) $('r-bid').value = pts.bid;
     if (document.activeElement !== $('r-name')) $('r-name').value = pts.you.name;
@@ -551,6 +575,22 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     if (openId) loadDetail();
   }
 
+  $('c-import').addEventListener('click', function () {
+    var f = $('c-file').files && $('c-file').files[0];
+    if (!f) { say('Choose a zip first.', true); return; }
+    if (f.size > 25 * 1024 * 1024) { say('That zip is over 25 MB.', true); return; }
+    var reader = new FileReader();
+    reader.onerror = function () { say('Could not read that file.', true); };
+    reader.onload = function () {
+      var bytes = new Uint8Array(reader.result), bin = '';
+      for (var i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+      act(api('POST', '/api/chat-history/import', { zip: btoa(bin) })).then(function (r) {
+        $('c-file').value = '';
+        say('Added ' + r.added + ' chat' + (r.added === 1 ? '' : 's') + ', ' + r.skipped + ' already here' + (r.invalid ? ', ' + r.invalid + ' could not be read' : '') + '.');
+      }, function () {});
+    };
+    reader.readAsArrayBuffer(f);
+  });
   $('m-add').addEventListener('click', function () {
     act(api('POST', '/api/commons/members', { name: $('m-name').value })).then(function () { $('m-name').value = ''; });
   });

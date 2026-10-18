@@ -41,6 +41,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { assertSafeName, readItem, readItemFile } from "./store.js";
 import { fetchItemFile } from "./store-fetch.js";
+import { markUsed } from "./store-usage.js";
 import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
 export class ModApplyError extends Error {
 }
@@ -190,6 +191,7 @@ export async function applyMod(name) {
     };
     mkdirSync(dir, { recursive: true });
     writeJsonAtomic(path.join(dir, RECORD), record);
+    markUsed(MOD_KIND, item.name);
     return { record, changed, created, unchanged, downloaded, missing };
 }
 export function readApplied(name) {

@@ -180,6 +180,20 @@ export class ChatHistoryStore {
     return thread;
   }
 
+  /**
+   * Add a whole thread that came from somewhere else (an exported zip). Never
+   * overwrites: a thread with this id already here is left exactly as it is
+   * and false comes back. The caller has already checked the shape.
+   */
+  importThread(thread: ChatThread): boolean {
+    this.ensureDir();
+    const p = this.path(thread.id);
+    if (existsSync(p)) return false;
+    writeFileSync(p, JSON.stringify(thread), "utf8");
+    this.organizer.assign(thread);
+    return true;
+  }
+
   /** Every persisted group, most recently active first. */
   listGroups(): ChatGroupRecord[] {
     return this.organizer.listGroups();

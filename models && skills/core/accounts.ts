@@ -40,7 +40,7 @@ import crypto from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
-import { baseDir, userDir, type Who } from "./user-context.js";
+import { baseDir, isOwnerOrAdmin, userDir, who, type Who } from "./user-context.js";
 
 export class AccountError extends Error {
   constructor(
@@ -432,9 +432,10 @@ const ADMIN_ONLY: RegExp[] = [
 ];
 
 const USER_EXACT = new Set<string>([
-  "/", "/commons", "/login", "/accounts", "/ambient.css", "/ambient.js",
+  "/", "/commons", "/login", "/accounts", "/ambient.css", "/ambient.js", "/settings", "/api/app-info", "/api/app-settings",
   "/api/status", "/api/commons", "/api/chat", "/api/chat/messages", "/api/chat/correct",
   "/api/chat-history/save", "/api/chat-history/search", "/api/chat-history/groups", "/api/chat-history/threads",
+  "/api/chat-history/export", "/api/chat-history/import",
 ]);
 
 const USER_PATTERNS: RegExp[] = [
@@ -454,4 +455,22 @@ export function userMayReach(pathname: string, method: string): boolean {
   void method;
   if (ADMIN_ONLY.some(r => r.test(pathname))) return false;
   return USER_EXACT.has(pathname) || USER_PATTERNS.some(r => r.test(pathname));
+}
+
+/**
+ * Whether `name` is the name of someone else's account, so that nobody can put
+ * it on the points board (or take it for themselves) and pass for that person.
+ * A regular user may use their own account's name and any name that is not an
+ * account's. The owner and the admin are exempt: they run the machine and may
+ * list a friend who also has an account. Unreadable accounts block, not allow.
+ */
+export function nameBelongsToAnotherAccount(accounts: AccountsStore, name: string): boolean {
+  if (isOwnerOrAdmin()) return false;
+  try {
+    const w = who();
+    const lower = name.trim().toLowerCase();
+    return accounts.listUsers().some(u => u.name.toLowerCase() === lower && !(w.kind === "user" && w.id === u.id));
+  } catch {
+    return true;
+  }
 }

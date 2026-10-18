@@ -33,6 +33,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { readItem, storeRoot, assertKind, assertSafeName, assertSafeFilename, StoreError } from "./store.js";
 import { DEFAULT_STORE_BRANCH } from "./store-sync.js";
+import { markUsed } from "./store-usage.js";
 /** Bounded so a stalled download cannot wedge a request forever. */
 const FETCH_TIMEOUT_MS = 30000;
 const GIT_TIMEOUT_MS = 10000;
@@ -243,6 +244,7 @@ export async function fetchItemFile(kind, name, filename) {
     }
     if (entry.local) {
         const { readFileSync } = await import("node:fs");
+        markUsed(kind, name);
         return { buf: readFileSync(target), cached: true };
     }
     if (entry.bytes > MAX_FETCH_BYTES) {
@@ -289,5 +291,6 @@ export async function fetchItemFile(kind, name, filename) {
     }
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, buf);
+    markUsed(kind, name);
     return { buf, cached: false, url };
 }
