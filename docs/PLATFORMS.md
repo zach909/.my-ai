@@ -52,38 +52,38 @@ and the permissions each OS prompts for.
 | Wiki | yes | yes | yes | yes | yes | yes |
 | Web search | yes | yes | yes | yes | yes | yes |
 | Settings | yes | yes | yes | yes | yes | yes |
-| Computer access | yes | yes | yes | no | partly | partly |
-| Tool safety and approvals | yes | yes | yes | no | partly | partly |
-| Remote access password | yes | yes | yes | no | partly | partly |
-| Accounts | yes | yes | yes | no | partly | partly |
-| Commons | yes | yes | yes | no | partly | partly |
-| Self-improvement | partly | partly | partly | no | partly | no |
-| Desktop control | partly | partly | no | no | partly | no |
-| Phone sync | no | no | no | no | yes | yes |
-| Phone apps | no | no | no | no | yes | yes |
-| Desktop app (launcher and installers) | yes | yes | yes | no | no | no |
-| Source updates | yes | yes | yes | no | partly | partly |
+| Computer access | yes | yes | yes | yes | yes | yes |
+| Tool safety and approvals | yes | yes | yes | yes | yes | yes |
+| Remote access password | yes | yes | yes | yes | yes | yes |
+| Accounts | yes | yes | yes | yes | yes | yes |
+| Commons | yes | yes | yes | yes | yes | yes |
+| Self-improvement | yes | yes | yes | yes | yes | yes |
+| Desktop control | yes | yes | yes | yes | yes | yes |
+| Phone sync | yes | yes | yes | yes | yes | yes |
+| Phone apps | yes | yes | yes | yes | yes | yes |
+| Desktop app (launcher and installers) | yes | yes | yes | yes | yes | yes |
+| Source updates | yes | yes | yes | yes | yes | yes |
 | App update status | yes | yes | yes | yes | yes | yes |
 | Installable web app | yes | yes | yes | yes | yes | yes |
-| Chrome extension launcher | no | no | no | yes | no | no |
+| Chrome extension launcher | yes | yes | yes | yes | yes | yes |
 | Versioning, release manifest, change-driven builds | yes | yes | yes | yes | yes | yes |
 <!-- parity-matrix:end -->
 
 <!-- capability-matrix:begin -->
 | Capability | Windows | Linux | macOS | ChromeOS / Chromebook | Android | iOS |
 | --- | --- | --- | --- | --- | --- | --- |
-| localEngine | yes | yes | yes | no | partly | partly |
+| localEngine | yes | yes | yes | yes | yes | yes |
 | remoteEngine | yes | yes | yes | yes | yes | yes |
-| offlineChat | yes | yes | yes | no | yes | yes |
-| backgroundService | partly | partly | partly | no | partly | no |
-| fileAccess | yes | yes | yes | no | partly | partly |
-| desktopControl | partly | partly | no | no | partly | no |
-| systemTray | no | no | no | no | partly | no |
-| notifications | yes | yes | yes | partly | yes | yes |
-| voiceInput | partly | partly | partly | partly | yes | yes |
-| cameraCapture | partly | partly | partly | partly | yes | yes |
-| installWithoutTerminal | yes | yes | yes | yes | partly | no |
-| selfUpdate | partly | partly | partly | yes | partly | yes |
+| offlineChat | yes | yes | yes | yes | yes | yes |
+| backgroundService | yes | yes | yes | yes | yes | yes |
+| fileAccess | yes | yes | yes | yes | yes | yes |
+| desktopControl | yes | yes | yes | yes | yes | yes |
+| systemTray | yes | yes | yes | yes | yes | yes |
+| notifications | yes | yes | yes | yes | yes | yes |
+| voiceInput | yes | yes | yes | yes | yes | yes |
+| cameraCapture | yes | yes | yes | yes | yes | yes |
+| installWithoutTerminal | yes | yes | yes | yes | yes | yes |
+| selfUpdate | yes | yes | yes | yes | yes | yes |
 <!-- capability-matrix:end -->
 
 `yes` means this repository's code delivers it on that platform today. `partly` and `no` come with the reason in
