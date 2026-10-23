@@ -117,6 +117,41 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
     return pts;
   }
 
+  // The shoggoth: a green blob that lives inside the sphere, never outside it. It drifts, throws out
+  // pseudopods, and its many eyes follow the pointer and blink out of step.
+  var EYES = [[-0.35, -0.2, 1], [0.1, -0.38, 0.8], [0.38, -0.05, 1.1], [-0.12, 0.12, 0.9], [0.2, 0.34, 0.7], [-0.4, 0.28, 0.6]];
+  function shoggoth(cx, cy, R, time) {
+    var bx = cx + Math.sin(time * 0.5) * R * 0.08 + look.x * R * 0.08, by = cy + Math.cos(time * 0.43) * R * 0.08 + look.y * R * 0.08;
+    var r0 = R * 0.5, N = 72, i, a, rr;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.985, 0, 6.2832); ctx.clip();
+    var halo = ctx.createRadialGradient(bx, by, r0 * 0.3, bx, by, R);
+    halo.addColorStop(0, 'rgba(143,227,168,.28)'); halo.addColorStop(1, 'rgba(143,227,168,0)');
+    ctx.fillStyle = halo; ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+    ctx.beginPath();
+    for (i = 0; i <= N; i++) {
+      a = (i / N) * 6.2832;
+      rr = r0 * (1 + 0.12 * Math.sin(3 * a + time * 1.3) + 0.09 * Math.sin(5 * a - time * 1.7 + 1.1) + 0.05 * Math.sin(9 * a + time * 2.3)
+        + 0.22 * Math.max(0, Math.sin(2 * a - time * 0.8)) * Math.max(0, Math.sin(a * 1 + time * 0.35 + 0.5)));
+      var x = bx + Math.cos(a) * rr, y = by + Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    var fill = ctx.createRadialGradient(bx - r0 * 0.25, by - r0 * 0.3, r0 * 0.1, bx, by, r0 * 1.3);
+    fill.addColorStop(0, 'rgba(176,240,196,.95)'); fill.addColorStop(0.55, 'rgba(110,200,140,.92)'); fill.addColorStop(1, 'rgba(38,104,66,.9)');
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.strokeStyle = 'rgba(143,227,168,.55)'; ctx.lineWidth = 1.5; ctx.stroke();
+    var dir = Math.atan2(look.y, look.x), mag = Math.min(1, Math.hypot(look.x, look.y));
+    EYES.forEach(function (e, k) {
+      var ex = bx + e[0] * r0 * 1.05, ey = by + e[1] * r0 * 1.05, er = r0 * 0.13 * e[2];
+      var blink = reduce ? 1 : (Math.sin(time * 0.7 + k * 2.3) > 0.97 ? 0.1 : 1);
+      ctx.fillStyle = '#f8ede9'; ctx.beginPath(); ctx.ellipse(ex, ey, er, er * blink, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#110c0e'; ctx.beginPath();
+      ctx.ellipse(ex + Math.cos(dir) * er * 0.4 * mag, ey + Math.sin(dir) * er * 0.4 * mag * blink, er * 0.45, er * 0.45 * blink, 0, 0, 6.2832); ctx.fill();
+    });
+    ctx.restore();
+  }
+
   function frame(now) {
     var time = (now - t0) / 1000;
     look.x += (lookTo.x - look.x) * 0.06; look.y += (lookTo.y - look.y) * 0.06;
@@ -151,7 +186,8 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
     var body = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
     body.addColorStop(0, '#6b3a3e'); body.addColorStop(0.6, '#3a1d22'); body.addColorStop(1, '#1d0f13');
     ctx.fillStyle = body; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,196,180,.35)'; ctx.lineWidth = 1.2; ctx.stroke();
+    shoggoth(cx, cy, R, time);
+    ctx.strokeStyle = 'rgba(255,196,180,.35)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.stroke();
 
     requestAnimationFrame(frame);
   }
