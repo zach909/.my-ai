@@ -92,7 +92,7 @@ npm run bench            # OneBrain hyperdimensional and mesh benchmarks (needs 
 Health check for a running dev server (it must follow redirects):
 
 ```bash
-curl -sL http://localhost:7861/ -o /dev/null -w '%{http_code}\n'   # expect 200 (port 3000 under Docker, which asks for a password)
+curl -sL http://localhost:7861/ -o /dev/null -w '%{http_code}\n'   # expect 200 (under Docker also on :3000; it asks for a password)
 ```
 
 ## Troubleshooting

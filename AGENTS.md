@@ -39,10 +39,10 @@ docker compose -f docker-compose.dev.yml up -d
 - `npm run dev` (scripts/dev.mjs) does: tsc backend build → starts the backend and stays up until it exits. It no longer starts Vite. Port and bind address come from `NEUROCLAW_WEB_PORT` (default 7861) and `NEUROCLAW_WEB_HOST` (default 127.0.0.1).
 - The only npm packages left are the build and test tools: `typescript`, `@types/node`, `vitest`.
 - `NEUROCLAW_AUTO_UPDATE=0` disables the startup git fetch/pull so it never touches the working tree.
-- The compose file runs the backend itself on port 3000 (`NEUROCLAW_WEB_PORT=3000`, `NEUROCLAW_WEB_HOST=0.0.0.0`) and publishes it as `127.0.0.1:3000`, so http://localhost:3000 is the real backend: `/` terminal page, `/app` dashboard, `/api/*`. No proxy sits in front, because a proxy would make remote clients look like loopback and bypass the backend's password gate. Because the bind is non-loopback, the backend wants a password: set `NEUROCLAW_WEB_PASSWORD`, or open `/login` and enter the setup code printed in `docker compose -f docker-compose.dev.yml logs web`.
+- The compose file runs the backend itself on its one port, 7861 (`NEUROCLAW_WEB_HOST=0.0.0.0`), and publishes that same process on the host as both `127.0.0.1:7861` and `127.0.0.1:3000`, so http://localhost:3000 and http://localhost:7861 are the same real backend: `/` terminal page, `/app` dashboard, `/api/*`. No proxy sits in front, because a proxy would make remote clients look like loopback and bypass the backend's password gate. Because the bind is non-loopback, the backend wants a password: set `NEUROCLAW_WEB_PASSWORD`, or open `/login` and enter the setup code printed in `docker compose -f docker-compose.dev.yml logs web`.
 
 ## Verifying it works
-- With a password set, `GET http://localhost:3000/` and `/api/status` (Basic auth) return 200 through compose; `/login` answers without one.
+- With a password set, `GET http://localhost:3000/` (or `:7861`) and `/api/status` (Basic auth) return 200 through compose; `/login` answers without one.
 - `npm run lint:types` typechecks the backend; `npx vitest run` runs the tests.
 
 ## Secrets

@@ -6,8 +6,9 @@ services:
       - ./:/app
     # `npm run dev` (scripts/dev.mjs) builds the TS backend (tsc -> dist/) and
     # runs it in the foreground. The backend serves the terminal page (/), the
-    # dashboard (/app) and /api/* itself, all on port 3000 here, so the browser
-    # at http://localhost:3000 talks to the real backend directly. There is no
+    # dashboard (/app) and /api/* itself, on its one port, 7861. The host
+    # publishes that same backend as both :7861 and :3000, so http://localhost:3000
+    # and http://localhost:7861 are the same app, not two. There is no
     # Vite and no proxy: a proxy would make remote clients look like loopback
     # to the backend and bypass its password gate.
     #
@@ -21,9 +22,10 @@ services:
     # the bind-mounted working tree.
     command: sh -c "npm install && npm run dev"
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:3000:7861"
+      - "127.0.0.1:7861:7861"
     environment:
-      - NEUROCLAW_WEB_PORT=3000
+      - NEUROCLAW_WEB_PORT=7861
       - NEUROCLAW_WEB_HOST=0.0.0.0
       - NEUROCLAW_WEB_PASSWORD=${NEUROCLAW_WEB_PASSWORD:-}
       - NEUROCLAW_AUTO_UPDATE=0

@@ -165,7 +165,7 @@ Every tracked file in the repository is listed below, grouped by folder. Paths a
 | `TERMS.md` | Short pointer to the full terms of use in `wiki/Terms.md`. |
 | `bun.lock` | Bun lockfile for Node dependencies. |
 | `components.json` | shadcn/ui config: style, Tailwind CSS path, and the `@/` import aliases. |
-| `docker-compose.dev.yml` | One-service Docker Compose dev setup (`node:22-slim`). It runs `npm install && npm run dev` on ports 3000 and 7861. |
+| `docker-compose.dev.yml` | One-service Docker Compose dev setup (`node:22-slim`). It runs `npm install && npm run dev` with the backend on 7861, published on the host as both 7861 and 3000. |
 | `eslint.config.js` | ESLint flat config, scoped to `src/` (React hooks and react-refresh rules). |
 | `package.json` | Node package manifest. It defines the scripts (`dev`, `server`, `build`, `lint`, `test`, `bench:*`) and the dependencies. |
 | `package-lock.json` | npm lockfile. |
