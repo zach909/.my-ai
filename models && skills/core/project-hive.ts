@@ -477,6 +477,19 @@ const running = new Set<string>();
 const runKey = (projectId: string, file: string): string => `${file}|${projectId}`;
 export const isHiveRunning = (projectId: string, file = hivesFile()): boolean => running.has(runKey(projectId, file));
 
+/**
+ * Every agent on a team across all projects, for the background scene: one sphere per agent. Only who they are and
+ * whether their hive is working right now; nothing a hive wrote or learned leaves through here.
+ */
+export function hiveAgentsOverview(file = hivesFile()): Array<{ id: string; name: string; projectId: string; working: boolean }> {
+  const out: Array<{ id: string; name: string; projectId: string; working: boolean }> = [];
+  for (const h of loadHives(file)) {
+    const working = running.has(runKey(h.projectId, file));
+    for (const a of active(h)) out.push({ id: a.id, name: a.name, projectId: h.projectId, working });
+  }
+  return out;
+}
+
 /** The hive as the UI should see it: a run in progress reads "running" even though that is never saved. */
 export function hiveView(projectId: string, file = hivesFile()): HiveRecord | null {
   const h = getHive(projectId, file);

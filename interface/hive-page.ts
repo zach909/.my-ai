@@ -1,12 +1,10 @@
 /**
- * The Hive page (/hive): the network drawn as one sphere with a tentacle for
- * every net skill that is grafted into it.
+ * The Hive page (/hive): a legend for the background scene, with names on hover.
  *
- * Wears the house look (see AGENTS.md, VISUAL STYLE): the server adds the ring
- * and background, this page only uses the shared tokens and shapes. The
- * tentacles are drawn with the browser's own Canvas 2D, no library. Skill names
- * are drawn as text, never as markup. Nothing is fetched except this server's
- * own /api/net-skills.
+ * The scene itself is the page background everywhere (interface/ambient.ts): a green shoggoth lives in the
+ * big sphere, its tentacles are the net skills, held in by the crown, and every hive agent has a small
+ * sphere and shoggoth of its own. This page only reads the tip positions the background publishes and
+ * shows the name under the pointer, as text, never as markup. Nothing is fetched from anywhere.
  */
 export const HIVE_PAGE = String.raw`<!DOCTYPE html>
 <html lang="en">
@@ -17,200 +15,34 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
 <style>
   :root { color-scheme: dark; }
   body { margin:0; min-height:100vh; background:#110c0e; color:#f8ede9; }
-  main { position:relative; z-index:2; max-width:1100px; margin:0 auto; padding:28px 16px 60px; display:grid; grid-template-columns:minmax(0,1fr); gap:14px; pointer-events:none; }
+  main { position:relative; z-index:2; max-width:1100px; margin:0 auto; padding:28px 16px 60px; display:grid; grid-template-columns:minmax(0,1fr); gap:10px; pointer-events:none; }
   h1 { font-size:22px; margin:6px 6px 0; }
   .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin:0 8px; font-size:14px; }
-  #hive { position:fixed; inset:0; z-index:1; display:block; width:100%; height:100%; }
   #tip { position:fixed; z-index:3; pointer-events:none; opacity:0; transform:translate(-50%,-130%); padding:8px 14px; border-radius:999px; font-size:13px;
          background:rgba(20,12,14,.72); border:1px solid rgba(255,154,132,.5); color:#ffc4b4; white-space:nowrap; transition:opacity .2s ease; }
-  #note { min-height:20px; margin:0 8px; font-size:14px; }
 </style>
 </head>
 <body class="nc-soft">
 <main>
   <h1>Hive</h1>
   <div class="bar">
-    <span class="nc-dim">The shoggoth lives in the sphere and its tentacles are the net skills, one each, held in by the crown. Longer means more neurons.</span>
-    <span id="count" class="nc-dim"></span>
+    <span class="nc-dim">The shoggoth lives in the big sphere and its tentacles are the net skills, one each, held in by the crown. Every hive agent has a small sphere and shoggoth of its own.</span>
+    <span id="note" class="nc-dim"></span>
   </div>
-  <div id="note" class="nc-dim"></div>
 </main>
-<canvas id="hive"></canvas>
 <div id="tip"></div>
 <script>
 (function () {
-  var canvas = document.getElementById('hive');
   var tip = document.getElementById('tip');
   var note = document.getElementById('note');
-  var count = document.getElementById('count');
-  var ctx = canvas.getContext('2d');
-  if (!ctx) { note.textContent = 'This browser cannot draw the hive.'; return; }
-  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  var skills = [];      // { name, neurons, phase, reach, tipX, tipY, len }
-  var W = 0, H = 0, dpr = 1;
-  var look = { x: 0, y: 0 }, lookTo = { x: 0, y: 0 };
-  var hover = -1, spin = 0, t0 = performance.now();
-
-  function hash(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967295; }
-
-  function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    W = window.innerWidth; H = window.innerHeight;
-    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-
-  function load() {
-    fetch('/api/net-skills', { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
-      if (d && d.error) { note.textContent = 'The network said: ' + d.error; return; }
-      var list = (d && d.skills) || [];
-      var most = 1, seen = {}, next = [];
-      list.forEach(function (s) {
-        var n = Array.isArray(s.neurons) ? s.neurons.length : Object.keys(s.ids || {}).length;
-        most = Math.max(most, n); seen[s.skill] = 1;
-        next.push({ name: String(s.skill), neurons: n });
-      });
-      // Skill regions the network already has show up in its affinity pairs even when nothing has been grafted yet.
-      ((d && d.affinity) || []).forEach(function (p) {
-        [p.a, p.b].forEach(function (name) { if (name && !seen[name]) { seen[name] = 1; next.push({ name: String(name), neurons: 1 }); } });
-      });
-      skills = next.map(function (s) {
-        var old = skills.filter(function (o) { return o.name === s.name; })[0];
-        return { name: s.name, neurons: s.neurons, size: Math.sqrt(s.neurons / most),
-                 phase: old ? old.phase : hash(s.name) * 6.283, jit: hash(s.name + '#'), reach: old ? old.reach : 0, tipX: 0, tipY: 0 };
-      });
-      skills.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
-      count.textContent = skills.length + ' net skill' + (skills.length === 1 ? '' : 's') + ' · ' + (d.neuronCount || 0) + ' neurons';
-      note.textContent = skills.length ? '' : (d.note || 'The network has no skills yet.');
-    }).catch(function () { note.textContent = 'Could not reach the network.'; });
-  }
-
-  // Same camera as the ambient layer, so the sphere sits on the ring's own sphere and the crown's reach is known.
-  function crown() {
-    var tanHalf = Math.tan((40 * Math.PI) / 360), need = 1.75;
-    var dist = Math.max(need / tanHalf, need / (tanHalf * (W / H)));
-    var k = (H / 2) / tanHalf / dist;
-    return { sphere: 0.92 * k, hold: 1.27 * k };
-  }
-
-  function tentacle(cx, cy, R, ang, s, time, hold, bx, by, r0) {
-    var len = R * (0.75 + 0.75 * s.size) * (0.8 + 0.4 * s.jit) * s.reach;
-    var segs = 30, x = bx + Math.cos(ang) * r0 * 0.7, y = by + Math.sin(ang) * r0 * 0.7;
-    var heading = ang, pts = [[x, y]];
-    var dir = Math.atan2(look.y, look.x), lean = Math.min(1, Math.hypot(look.x, look.y)) * 0.35;
-    for (var i = 1; i <= segs; i++) {
-      var u = i / segs;
-      var sway = Math.sin(time * 1.1 + s.phase + u * 7.5) * 0.55 * u + Math.sin(time * 0.6 + s.phase * 2 + u * 3.1) * 0.3 * u;
-      var pull = Math.sin(dir - heading) * lean * u * 0.4;
-      heading += sway * 0.9 + pull;
-      x += Math.cos(heading) * len / segs; y += Math.sin(heading) * len / segs;
-      // The crown holds it in: past the ring a tentacle is pushed back onto it and slides along the inside.
-      var rx = x - cx, ry = y - cy, rd = Math.hypot(rx, ry);
-      if (rd > hold) {
-        var side = Math.cos(heading) * ry - Math.sin(heading) * rx > 0 ? 1 : -1;
-        x = cx + rx / rd * hold; y = cy + ry / rd * hold;
-        heading = Math.atan2(ry, rx) + side * Math.PI / 2;
-      }
-      pts.push([x, y]);
-    }
-    return pts;
-  }
-
-  // The shoggoth: a green blob that lives inside the sphere, never outside it. It drifts, throws out
-  // pseudopods, and its many eyes follow the pointer and blink out of step.
-  var EYES = [[-0.35, -0.2, 1], [0.1, -0.38, 0.8], [0.38, -0.05, 1.1], [-0.12, 0.12, 0.9], [0.2, 0.34, 0.7], [-0.4, 0.28, 0.6]];
-  function blobAt(cx, cy, R, time) {
-    return { x: cx + Math.sin(time * 0.5) * R * 0.06 + look.x * R * 0.06, y: cy + Math.cos(time * 0.43) * R * 0.06 + look.y * R * 0.06, r: R * 0.52 };
-  }
-  function shoggoth(cx, cy, R, time) {
-    var b = blobAt(cx, cy, R, time), bx = b.x, by = b.y, r0 = b.r, N = 72, i, a, rr;
-    ctx.save();
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.985, 0, 6.2832); ctx.clip();
-    var halo = ctx.createRadialGradient(bx, by, r0 * 0.3, bx, by, R);
-    halo.addColorStop(0, 'rgba(143,227,168,.28)'); halo.addColorStop(1, 'rgba(143,227,168,0)');
-    ctx.fillStyle = halo; ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
-    ctx.beginPath();
-    for (i = 0; i <= N; i++) {
-      a = (i / N) * 6.2832;
-      rr = r0 * (1 + 0.12 * Math.sin(3 * a + time * 1.3) + 0.09 * Math.sin(5 * a - time * 1.7 + 1.1) + 0.05 * Math.sin(9 * a + time * 2.3)
-        + 0.22 * Math.max(0, Math.sin(2 * a - time * 0.8)) * Math.max(0, Math.sin(a * 1 + time * 0.35 + 0.5)));
-      var x = bx + Math.cos(a) * rr, y = by + Math.sin(a) * rr;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    var fill = ctx.createRadialGradient(bx - r0 * 0.25, by - r0 * 0.3, r0 * 0.1, bx, by, r0 * 1.3);
-    fill.addColorStop(0, 'rgba(176,240,196,.95)'); fill.addColorStop(0.55, 'rgba(110,200,140,.92)'); fill.addColorStop(1, 'rgba(38,104,66,.9)');
-    ctx.fillStyle = fill; ctx.fill();
-    ctx.strokeStyle = 'rgba(143,227,168,.55)'; ctx.lineWidth = 1.5; ctx.stroke();
-    var dir = Math.atan2(look.y, look.x), mag = Math.min(1, Math.hypot(look.x, look.y));
-    EYES.forEach(function (e, k) {
-      var ex = bx + e[0] * r0 * 1.05, ey = by + e[1] * r0 * 1.05, er = r0 * 0.13 * e[2];
-      var blink = reduce ? 1 : (Math.sin(time * 0.7 + k * 2.3) > 0.97 ? 0.1 : 1);
-      ctx.fillStyle = '#f8ede9'; ctx.beginPath(); ctx.ellipse(ex, ey, er, er * blink, 0, 0, 6.2832); ctx.fill();
-      ctx.fillStyle = '#110c0e'; ctx.beginPath();
-      ctx.ellipse(ex + Math.cos(dir) * er * 0.4 * mag, ey + Math.sin(dir) * er * 0.4 * mag * blink, er * 0.45, er * 0.45 * blink, 0, 0, 6.2832); ctx.fill();
-    });
-    ctx.restore();
-  }
-
-  function frame(now) {
-    var time = (now - t0) / 1000;
-    look.x += (lookTo.x - look.x) * 0.06; look.y += (lookTo.y - look.y) * 0.06;
-    if (!reduce) spin += 0.0016;
-    ctx.clearRect(0, 0, W, H);
-    var cx = W / 2, cy = H / 2, cr = crown(), R = cr.sphere * (1 + (reduce ? 0 : Math.sin(time * 1.4) * 0.018));
-
-    var glow = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 1.5);
-    glow.addColorStop(0, 'rgba(255,154,132,.22)'); glow.addColorStop(1, 'rgba(255,154,132,0)');
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, R * 1.5, 0, 6.2832); ctx.fill();
-
-    var body = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
-    body.addColorStop(0, '#6b3a3e'); body.addColorStop(0.6, '#3a1d22'); body.addColorStop(1, '#1d0f13');
-    ctx.fillStyle = body; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.fill();
-    var bl = blobAt(cx, cy, R, time);
-    var n = skills.length;
-    for (var k = 0; k < n; k++) {
-      var s = skills[k];
-      s.reach += (1 - s.reach) * 0.04;
-      var ang = spin + (k / n) * 6.2832;
-      var pts = tentacle(cx, cy, R, ang, s, time, cr.hold, bl.x, bl.y, bl.r);
-      var thick = Math.min(R * (0.2 + 0.1 * s.size), (6.2832 * bl.r * 0.7 / Math.max(n, 1)) * 0.8);
-      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      for (var i = pts.length - 1; i > 0; i--) {
-        var u = i / (pts.length - 1);
-        ctx.strokeStyle = k === hover ? 'rgba(214,250,226,' + (0.97 - u * 0.2) + ')' : 'rgba(' + Math.round(38 + 138 * (1 - u)) + ',' + Math.round(104 + 136 * (1 - u)) + ',' + Math.round(66 + 130 * (1 - u)) + ',' + (0.93 - u * 0.3) + ')';
-        ctx.lineWidth = Math.max(1.5, thick * (1 - u * 0.88));
-        ctx.beginPath(); ctx.moveTo(pts[i - 1][0], pts[i - 1][1]); ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke();
-      }
-      var tp = pts[pts.length - 1]; s.tipX = tp[0]; s.tipY = tp[1];
-      var bead = ctx.createRadialGradient(tp[0], tp[1], 0, tp[0], tp[1], thick * 0.9);
-      bead.addColorStop(0, 'rgba(226,255,236,.95)'); bead.addColorStop(1, 'rgba(143,227,168,0)');
-      ctx.fillStyle = bead; ctx.beginPath(); ctx.arc(tp[0], tp[1], thick * 0.9, 0, 6.2832); ctx.fill();
-    }
-
-    shoggoth(cx, cy, R, time);
-    ctx.strokeStyle = 'rgba(255,196,180,.35)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.stroke();
-
-    requestAnimationFrame(frame);
-  }
-
-  canvas.addEventListener('pointermove', function (e) {
-    var r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
-    lookTo.x = (x - W / 2) / (W / 2); lookTo.y = (y - H / 2) / (H / 2);
-    var best = -1, bd = 26 * 26;
-    skills.forEach(function (s, i) { var d = (s.tipX - x) * (s.tipX - x) + (s.tipY - y) * (s.tipY - y); if (d < bd) { bd = d; best = i; } });
-    hover = best;
-    if (best >= 0) {
-      tip.textContent = skills[best].name + ' · ' + skills[best].neurons + ' neuron' + (skills[best].neurons === 1 ? '' : 's');
-      tip.style.left = skills[best].tipX + 'px'; tip.style.top = skills[best].tipY + 'px'; tip.style.opacity = '1';
-    } else tip.style.opacity = '0';
+  setTimeout(function () { if (!window.ncAmbient) note.textContent = 'The background is turned off in Settings > Appearance.'; }, 1500);
+  document.addEventListener('pointermove', function (e) {
+    var tips = window.ncAmbient && window.ncAmbient.tips ? window.ncAmbient.tips() : [];
+    var best = null, bd = 26 * 26;
+    tips.forEach(function (t) { var d = (t.x - e.clientX) * (t.x - e.clientX) + (t.y - e.clientY) * (t.y - e.clientY); if (d < bd) { bd = d; best = t; } });
+    if (best) { tip.textContent = best.label; tip.style.left = best.x + 'px'; tip.style.top = best.y + 'px'; tip.style.opacity = '1'; }
+    else tip.style.opacity = '0';
   });
-  canvas.addEventListener('pointerleave', function () { lookTo.x = 0; lookTo.y = 0; hover = -1; tip.style.opacity = '0'; });
-  window.addEventListener('resize', resize);
-
-  resize(); load(); setInterval(load, 15000);
-  requestAnimationFrame(frame);
 })();
 </script>
 </body>
