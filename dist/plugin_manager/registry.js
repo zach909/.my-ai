@@ -391,7 +391,14 @@ export class PluginRegistry {
             const plugin = this.plugins.get(pluginId);
             if (!plugin)
                 continue;
-            const verdict = this.gate?.check(pluginId, input, scoreOf.get(pluginId) ?? 0);
+            let acts;
+            try {
+                acts = plugin.wouldAct?.(input);
+            }
+            catch {
+                acts = true;
+            } // a predicate that throws is treated as "would act": fail closed
+            const verdict = this.gate?.check(pluginId, input, scoreOf.get(pluginId) ?? 0, acts);
             if (verdict && verdict.allow === false) {
                 // Held, not run. The tool never saw this message.
                 this.lastHandledBy = null;

@@ -47,9 +47,18 @@ export class ContinuousLearner {
      *              onUserMessage(). Defaults to zipLoopIdsFor(engine), the
      *              ids every other caller uses for the live mesh.
      */
-    constructor(lock, ids) {
+    constructor(lock, ids, 
+    /**
+     * A predictor that is trained on each (message -> next message) pair. Without
+     * one, the forecast is whatever an untrained mesh happens to send, nothing is
+     * ever learned from the comparison, and similarity on a repeating chat is 0.
+     * With one, the forecast comes from a readout fitted on the pairs seen so far
+     * (next-message.ts; benchmarks/next_message.mjs measures what it can do).
+     */
+    predictor) {
         this.lock = lock;
         this.ids = ids;
+        this.predictor = predictor;
         this.pending = null;
     }
     /** What the mesh currently expects the user to say next, if anything has been predicted yet. */
@@ -84,8 +93,18 @@ export class ContinuousLearner {
             }
         }
         try {
-            const context = `${contextBeforeThisMessage}\n${actualMessage}`.slice(-CONTEXT_CHARS);
-            const predicted = await this.predictNext(engine, context);
+            let predicted;
+            if (this.predictor) {
+                const predictor = this.predictor;
+                predicted = await this.lock.run(async () => {
+                    predictor.observe(actualMessage); // learn (previous -> this) first
+                    return predictor.predict(actualMessage); // then forecast what follows
+                });
+            }
+            else {
+                const context = `${contextBeforeThisMessage}\n${actualMessage}`.slice(-CONTEXT_CHARS);
+                predicted = await this.predictNext(engine, context);
+            }
             // An empty string is still a real prediction -- a fresh or quiet mesh
             // genuinely forecasting nothing -- and gets compared against the next
             // real message like any other guess (very likely a high-surprise one,

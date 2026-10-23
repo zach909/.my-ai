@@ -148,6 +148,7 @@ export class ToolNeuronLayer {
         this.lock = options.lock ?? new DoorwayLock();
         this.yieldTo = options.yieldTo ?? (() => new Promise(resolve => setImmediate(resolve)));
         this.access = options.access;
+        this.gate = options.gate;
         this.stopWatching = engine.onTick(() => this.observeTick());
     }
     // ─── Wiring ───────────────────────────────────────────────────────────
@@ -332,6 +333,14 @@ export class ToolNeuronLayer {
             if (typeof args === "string") {
                 events.push(this.refuse(firing, args));
                 continue;
+            }
+            if (this.gate) {
+                // acts = true: the network firing IS the action, so the question is only whether this tool asks first.
+                const verdict = this.gate.check(firing.plugin, `network fired ${firing.plugin}.${firing.tool} ${JSON.stringify(args)}`, Number.MAX_SAFE_INTEGER, true);
+                if (verdict.allow === false) {
+                    events.push(this.refuse(firing, verdict.message, args));
+                    continue;
+                }
             }
             if (this.access && neuron.spec.capability) {
                 try {

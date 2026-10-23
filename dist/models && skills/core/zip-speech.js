@@ -35,7 +35,7 @@ import { freezeActivity, thawActivity } from "./thread-context.js";
 const TARGETS_PER_BYTE = 9;
 const toBytes = (v) => (typeof v === "string" ? new Uint8Array(Buffer.from(v, "utf8")) : v);
 /** Solve (A + lambda I) x = b for symmetric positive semi-definite A by Gaussian elimination with partial pivoting. */
-function solveRidge(a, n, lambda, b) {
+export function solveRidge(a, n, lambda, b) {
     const m = new Float64Array(n * n);
     for (let i = 0; i < n * n; i++)
         m[i] = a[i];
@@ -91,6 +91,9 @@ function solveRidge(a, n, lambda, b) {
 export class ZipSpeaker {
     constructor(engine, opts = {}) {
         this.engine = engine;
+        this.featureStd = null;
+        /** The mesh is deterministic from blank activity, so a question read once never needs reading again. Cleared by forget(). */
+        this.featureCache = new Map();
         /** The fitted readout, in dual form: the taught questions' points and one coefficient per question for every output. */
         this.memory = null;
         this.alpha = null;
@@ -103,6 +106,8 @@ export class ZipSpeaker {
         this.ridge = opts.ridge ?? 1e-9;
         this.maxAnswerBytes = opts.maxAnswerBytes ?? 16;
         this.settleTicks = opts.settleTicks ?? 0;
+        this.pooling = opts.pooling ?? "last";
+        this.standardize = opts.standardize ?? false;
         const ids = zipLoopIdsFor(engine);
         this.zip = new ZipLoopInterface(engine, ids, this.memoryVale > 0 ? { memory: { vale: this.memoryVale } } : {});
         this.doorway = new Set(Object.values(ids).filter((v) => typeof v === "number"));
@@ -111,26 +116,59 @@ export class ZipSpeaker {
     get taught() {
         return this.alpha !== null;
     }
-    /** Feed the question from blank activity and read the mesh once: every neuron outside the doorway, content and energy. */
-    features(question) {
-        thawActivity(this.engine, this.blank);
-        for (const byte of question)
-            this.zip.sendByte(byte);
-        for (let t = 0; t < this.settleTicks; t++)
-            this.zip.idleTick();
+    /** The mesh outside the doorway, content and energy of every neuron, written into `into` starting at `at`. */
+    snapshot(into, at, scratch) {
         const n = this.engine.getNeuronCount();
         const dims = this.engine.getDimensions();
-        const scratch = new Float32Array(dims);
-        const f = new Float64Array((n - this.doorway.size) * (dims + 1));
-        let k = 0;
+        let k = at;
         for (let i = 0; i < n; i++) {
             if (this.doorway.has(i))
                 continue;
             const wrote = this.engine.readNeuronContent(i, scratch);
             for (let d = 0; d < dims; d++)
-                f[k++] = d < wrote ? scratch[d] : 0;
-            f[k++] = this.engine.getNeuronEnergy(i);
+                into[k++] = d < wrote ? scratch[d] : 0;
+            into[k++] = this.engine.getNeuronEnergy(i);
         }
+    }
+    /** Forget everything read so far (call it if the mesh's weights were changed after teaching). */
+    forget() {
+        this.featureCache.clear();
+    }
+    /** Feed the question from blank activity and read the mesh: once at the end, or (pooling "mean") after every byte too. */
+    features(question) {
+        const key = Buffer.from(question).toString("latin1");
+        const cached = this.featureCache.get(key);
+        if (cached)
+            return cached;
+        thawActivity(this.engine, this.blank);
+        const n = this.engine.getNeuronCount();
+        const dims = this.engine.getDimensions();
+        const width = (n - this.doorway.size) * (dims + 1);
+        const scratch = new Float32Array(dims);
+        const pooled = this.pooling === "mean" ? new Float64Array(width) : null;
+        const snap = pooled ? new Float64Array(width) : null;
+        let reads = 0;
+        for (const byte of question) {
+            this.zip.sendByte(byte);
+            if (pooled && snap) {
+                this.snapshot(snap, 0, scratch);
+                for (let j = 0; j < width; j++)
+                    pooled[j] += snap[j];
+                reads++;
+            }
+        }
+        for (let t = 0; t < this.settleTicks; t++)
+            this.zip.idleTick();
+        const f = new Float64Array(pooled ? width * 2 : width);
+        this.snapshot(f, 0, scratch);
+        if (pooled) {
+            const denom = Math.max(1, reads);
+            for (let j = 0; j < width; j++)
+                f[width + j] = pooled[j] / denom;
+        }
+        if (this.featureCache.size >= 4096)
+            this.featureCache.clear();
+        this.featureCache.set(key, f);
         return f;
     }
     /** Targets for an answer: for each of maxAnswerBytes bytes, 8 bits as +-1 and a flag (+1 real, -1 padding). */
@@ -178,7 +216,17 @@ export class ZipSpeaker {
                 for (let j = 0; j < F; j++)
                     energy += (x[j] - mean[j]) ** 2;
             const scale = Math.sqrt(energy / (S * F)) || 1;
-            const Z = X.map(x => Float64Array.from(x, (v, j) => (v - mean[j]) / scale));
+            let std = null;
+            if (this.standardize) {
+                std = new Float64Array(F);
+                for (const x of X)
+                    for (let j = 0; j < F; j++)
+                        std[j] += (x[j] - mean[j]) ** 2 / S;
+                for (let j = 0; j < F; j++)
+                    std[j] = Math.sqrt(std[j]) + scale * 1e-3; // floor: a feature that never moves must not blow up
+            }
+            this.featureStd = std;
+            const Z = X.map(x => Float64Array.from(x, (v, j) => (v - mean[j]) / (std ? std[j] : scale)));
             // Dual ridge: predictions are sum_i alpha_i * (z_i . z), with alpha = (Z Zt + lambda I)^-1 Y.
             // Only an S x S system, whatever the number of features.
             const gram = new Float64Array(S * S);
@@ -274,13 +322,39 @@ export class ZipSpeaker {
         const found = freezeActivity(this.engine);
         try {
             const x = this.features(toBytes(question));
-            const z = Float64Array.from(x, (v, j) => (v - this.featureMean[j]) / this.featureScale);
+            const z = Float64Array.from(x, (v, j) => (v - this.featureMean[j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
             const dist = (a, b) => { let d = 0; for (let k = 0; k < a.length; k++)
                 d += (a[k] - b[k]) ** 2; return Math.sqrt(d); };
             let nearest = Infinity;
             for (const m of this.memory)
                 nearest = Math.min(nearest, dist(z, m));
             return nearest / (this.typicalGap || 1);
+        }
+        finally {
+            thawActivity(this.engine, found);
+        }
+    }
+    /**
+     * How wrong the readout is about one question: mean squared distance between
+     * its scores and the +-1 targets for `answer`. 1 is what a readout that has
+     * learned nothing scores (every output 0); 0 is exact. Before anything is
+     * taught the answer is 1, which is the "before training" number.
+     */
+    loss(question, answer) {
+        const target = this.targets(toBytes(answer).subarray(0, this.maxAnswerBytes));
+        if (!this.alpha || !this.memory || !this.featureMean)
+            return 1;
+        const found = freezeActivity(this.engine);
+        try {
+            const x = this.features(toBytes(question));
+            const z = Float64Array.from(x, (v, j) => (v - this.featureMean[j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
+            const scores = this.scores(z);
+            let sum = 0;
+            // Clipped to [-1, 1]: only the sign of a score is ever spoken, and an unseen question can push a linear readout
+            // arbitrarily far, which would make this number meaningless. Worst case is then 4, chance is about 1.
+            for (let o = 0; o < target.length; o++)
+                sum += (Math.max(-1, Math.min(1, scores[o])) - target[o]) ** 2;
+            return sum / target.length;
         }
         finally {
             thawActivity(this.engine, found);
@@ -293,7 +367,7 @@ export class ZipSpeaker {
         const found = freezeActivity(this.engine);
         try {
             const x = this.features(toBytes(question));
-            const z = Float64Array.from(x, (v, j) => (v - this.featureMean[j]) / this.featureScale);
+            const z = Float64Array.from(x, (v, j) => (v - this.featureMean[j]) / (this.featureStd ? this.featureStd[j] : this.featureScale));
             const scores = this.scores(z);
             const bytes = [];
             for (let i = 0; i < this.maxAnswerBytes; i++) {

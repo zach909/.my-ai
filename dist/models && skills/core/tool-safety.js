@@ -172,17 +172,21 @@ export class ToolGate {
      * Decides before the tool runs. A message that does not clearly point at the
      * tool (low score) is not held: it would not have been this tool's to do.
      */
-    check(pluginId, input, score) {
+    check(pluginId, input, score, acts) {
+        // The plugin knows whether it will act; the router's score is only a ranking.
+        // A plugin that says it will act is held however weakly the router scored it,
+        // and one that says it will not is not held however strongly it scored.
+        const pointed = acts === undefined ? score >= HOLD_SCORE : acts;
         // Plugins act as the machine's owner. Anyone who is not the admin may use only
         // the ones that touch neither the owner's computer nor the owner's data
         // (accounts.ts USER_PLUGINS); the rest are not even offered an approval.
         // Weak matches are let through only so ordinary chat is not refused for
         // sounding a little like a tool.
-        if (!isOwnerOrAdmin() && score >= HOLD_SCORE && !USER_PLUGINS.includes(normalizeToolId(pluginId))) {
+        if (!isOwnerOrAdmin() && pointed && !USER_PLUGINS.includes(normalizeToolId(pluginId))) {
             return { allow: false, approvalId: "", message: `[Not allowed] ${RISK_BY_ID.get(normalizeToolId(pluginId))?.label ?? pluginId} is for the admin only.` };
         }
         const s = this.settings();
-        if (!needsApproval(pluginId, s) || score < HOLD_SCORE)
+        if (!needsApproval(pluginId, s) || !pointed)
             return { allow: true };
         this.sweep();
         const id = normalizeToolId(pluginId);
