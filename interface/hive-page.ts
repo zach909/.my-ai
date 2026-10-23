@@ -17,13 +17,11 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
 <style>
   :root { color-scheme: dark; }
   body { margin:0; min-height:100vh; background:#110c0e; color:#f8ede9; }
-  main { position:relative; z-index:1; max-width:1100px; margin:0 auto; padding:28px 16px 60px; display:grid; grid-template-columns:minmax(0,1fr); gap:14px; }
+  main { position:relative; z-index:2; max-width:1100px; margin:0 auto; padding:28px 16px 60px; display:grid; grid-template-columns:minmax(0,1fr); gap:14px; pointer-events:none; }
   h1 { font-size:22px; margin:6px 6px 0; }
   .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin:0 8px; font-size:14px; }
-  section { padding:10px; }
-  #stage { position:relative; width:100%; height:68vh; min-height:380px; border-radius:26px; overflow:hidden; }
-  #hive { display:block; width:100%; height:100%; }
-  #tip { position:absolute; pointer-events:none; opacity:0; transform:translate(-50%,-130%); padding:8px 14px; border-radius:999px; font-size:13px;
+  #hive { position:fixed; inset:0; z-index:1; display:block; width:100%; height:100%; }
+  #tip { position:fixed; z-index:3; pointer-events:none; opacity:0; transform:translate(-50%,-130%); padding:8px 14px; border-radius:999px; font-size:13px;
          background:rgba(20,12,14,.72); border:1px solid rgba(255,154,132,.5); color:#ffc4b4; white-space:nowrap; transition:opacity .2s ease; }
   #note { min-height:20px; margin:0 8px; font-size:14px; }
 </style>
@@ -32,18 +30,16 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
 <main>
   <h1>Hive</h1>
   <div class="bar">
-    <span class="nc-dim">One tentacle for every net skill in the network. Longer means more neurons.</span>
+    <span class="nc-dim">One tentacle for every net skill in the network, held in by the crown. Longer means more neurons.</span>
     <span id="count" class="nc-dim"></span>
   </div>
   <div id="note" class="nc-dim"></div>
-  <section class="nc-glass">
-    <div id="stage"><canvas id="hive"></canvas><div id="tip"></div></div>
-  </section>
 </main>
+<canvas id="hive"></canvas>
+<div id="tip"></div>
 <script>
 (function () {
   var canvas = document.getElementById('hive');
-  var stage = document.getElementById('stage');
   var tip = document.getElementById('tip');
   var note = document.getElementById('note');
   var count = document.getElementById('count');
@@ -60,7 +56,7 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
 
   function resize() {
     dpr = Math.min(window.devicePixelRatio || 1, 2);
-    W = stage.clientWidth; H = stage.clientHeight;
+    W = window.innerWidth; H = window.innerHeight;
     canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
@@ -90,17 +86,32 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
     }).catch(function () { note.textContent = 'Could not reach the network.'; });
   }
 
-  function tentacle(cx, cy, R, ang, s, time) {
-    var len = R * (1.5 + 1.9 * s.size) * (0.8 + 0.4 * s.jit) * s.reach;
+  // Same camera as the ambient layer, so the sphere sits on the ring's own sphere and the crown's reach is known.
+  function crown() {
+    var tanHalf = Math.tan((40 * Math.PI) / 360), need = 1.75;
+    var dist = Math.max(need / tanHalf, need / (tanHalf * (W / H)));
+    var k = (H / 2) / tanHalf / dist;
+    return { sphere: 0.92 * k, hold: 1.27 * k };
+  }
+
+  function tentacle(cx, cy, R, ang, s, time, hold) {
+    var len = R * (0.75 + 0.75 * s.size) * (0.8 + 0.4 * s.jit) * s.reach;
     var segs = 30, x = cx + Math.cos(ang) * R * 0.92, y = cy + Math.sin(ang) * R * 0.92;
     var heading = ang, pts = [[x, y]];
     var dir = Math.atan2(look.y, look.x), lean = Math.min(1, Math.hypot(look.x, look.y)) * 0.35;
     for (var i = 1; i <= segs; i++) {
       var u = i / segs;
-      var sway = Math.sin(time * 1.1 + s.phase + u * 5.2) * 0.34 * u + Math.sin(time * 0.6 + s.phase * 2 + u * 2.1) * 0.18 * u;
+      var sway = Math.sin(time * 1.1 + s.phase + u * 7.5) * 0.55 * u + Math.sin(time * 0.6 + s.phase * 2 + u * 3.1) * 0.3 * u;
       var pull = Math.sin(dir - heading) * lean * u * 0.4;
-      heading += (sway * 0.22 + pull) ;
+      heading += sway * 0.9 + pull;
       x += Math.cos(heading) * len / segs; y += Math.sin(heading) * len / segs;
+      // The crown holds it in: past the ring a tentacle is pushed back onto it and slides along the inside.
+      var rx = x - cx, ry = y - cy, rd = Math.hypot(rx, ry);
+      if (rd > hold) {
+        var side = Math.cos(heading) * ry - Math.sin(heading) * rx > 0 ? 1 : -1;
+        x = cx + rx / rd * hold; y = cy + ry / rd * hold;
+        heading = Math.atan2(ry, rx) + side * Math.PI / 2;
+      }
       pts.push([x, y]);
     }
     return pts;
@@ -111,18 +122,18 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
     look.x += (lookTo.x - look.x) * 0.06; look.y += (lookTo.y - look.y) * 0.06;
     if (!reduce) spin += 0.0016;
     ctx.clearRect(0, 0, W, H);
-    var cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.165 * (1 + Math.sin(time * 1.4) * 0.015);
+    var cx = W / 2, cy = H / 2, cr = crown(), R = cr.sphere * (1 + (reduce ? 0 : Math.sin(time * 1.4) * 0.018));
 
-    var glow = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 3.4);
+    var glow = ctx.createRadialGradient(cx, cy, R * 0.4, cx, cy, R * 1.5);
     glow.addColorStop(0, 'rgba(255,154,132,.22)'); glow.addColorStop(1, 'rgba(255,154,132,0)');
-    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, R * 3.4, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, R * 1.5, 0, 6.2832); ctx.fill();
 
     var n = skills.length;
     for (var k = 0; k < n; k++) {
       var s = skills[k];
       s.reach += (1 - s.reach) * 0.04;
       var ang = spin + (k / n) * 6.2832;
-      var pts = tentacle(cx, cy, R, ang, s, time);
+      var pts = tentacle(cx, cy, R, ang, s, time, cr.hold);
       var thick = Math.min(R * (0.2 + 0.1 * s.size), (6.2832 * R / Math.max(n, 1)) * 0.55);
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       for (var i = pts.length - 1; i > 0; i--) {
