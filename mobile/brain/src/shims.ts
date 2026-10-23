@@ -3,7 +3,7 @@
  * code runs inside a phone's JavaScript runtime (Android WebView, iOS
  * JavaScriptCore). Imported first by the bundle entry.
  */
-import { Buffer } from "buffer";
+import { Buffer } from "./buffer-shim.js";
 
 const g = globalThis as Record<string, unknown>;
 if (typeof g.Buffer === "undefined") g.Buffer = Buffer;

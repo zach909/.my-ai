@@ -18,7 +18,8 @@
     "test:platform": "node scripts/build-backend.mjs && node --test --test-concurrency=2 \"test/platform/*.test.mjs\"",
     "test": "npm run check:third-party && npm run test:smoke && npm run test:platform && npm run test:integration && npm run test:install",
     "release:version": "node scripts/release/version.mjs",
-    "release:extension": "node scripts/release/build-extension.mjs"
+    "release:extension": "node scripts/release/build-extension.mjs",
+    "build:phone-brain": "node scripts/release/build-mobile-brain.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
