@@ -1,35 +1,51 @@
 {
   "skill": "Conversation Learning",
-  "neuronCount": 7,
+  "neuronCount": 11,
   "neurons": [
     {
       "name": "respond_0",
-      "id": 89
+      "id": 88
     },
     {
       "name": "respond_1",
-      "id": 90
+      "id": 89
     },
     {
       "name": "anticipate_2",
-      "id": 91
+      "id": 90
     },
     {
       "name": "respond_3",
-      "id": 92
+      "id": 91
     },
     {
       "name": "anticipate_4",
-      "id": 93
+      "id": 92
     },
     {
       "name": "respond_5",
-      "id": 94
+      "id": 93
     },
     {
       "name": "anticipate_6",
+      "id": 94
+    },
+    {
+      "name": "respond_7",
       "id": 95
+    },
+    {
+      "name": "anticipate_8",
+      "id": 96
+    },
+    {
+      "name": "respond_9",
+      "id": 97
+    },
+    {
+      "name": "anticipate_10",
+      "id": 98
     }
   ],
-  "publishedAt": "2026-10-23T19:12:20.858Z"
+  "publishedAt": "2026-10-23T19:36:16.538Z"
 }
