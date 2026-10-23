@@ -35,6 +35,9 @@ import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute, isPwaRoute } fr
 import { configFile } from './platform/app-paths.js';
 import { handlePlatformRoutes, isPlatformRoute } from './platform/routes.js';
 import { SETTINGS_PAGE } from './platform/settings-page.js';
+import { storePage } from './platform/store-page.js';
+import { builderPage } from './platform/builder-page.js';
+import { selfImprovementPage } from './platform/self-improvement-page.js';
 import { appVersion } from './platform/version.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
@@ -2567,6 +2570,19 @@ export class WebServer {
     // not be rebuilt and overflowed on phones; it now opens the same page.
     if ((pathname === '/settings' || pathname === '/app/settings') && (method === 'GET' || method === 'HEAD')) {
       this.sendHtml(res, SETTINGS_PAGE);
+      return;
+    }
+    // Store, Builder, and Self-improvement pages (replaced React versions)
+    if ((pathname === '/store' || pathname === '/app/store') && (method === 'GET' || method === 'HEAD')) {
+      this.sendHtml(res, storePage());
+      return;
+    }
+    if ((pathname === '/builder' || pathname === '/app/builder') && (method === 'GET' || method === 'HEAD')) {
+      this.sendHtml(res, builderPage());
+      return;
+    }
+    if ((pathname === '/self-improvement' || pathname === '/app/self-improvement') && (method === 'GET' || method === 'HEAD')) {
+      this.sendHtml(res, selfImprovementPage());
       return;
     }
     if (isPlatformRoute(pathname)) {

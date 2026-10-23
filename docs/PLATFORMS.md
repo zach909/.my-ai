@@ -54,15 +54,15 @@ and the permissions each OS prompts for.
 | Settings | yes | yes | yes | yes | yes | yes |
 | Computer access | yes | yes | yes | no | partly | partly |
 | Tool safety and approvals | yes | yes | yes | no | partly | partly |
-| Remote access password | yes | yes | yes | no | partly | partly |
-| Accounts | yes | yes | yes | no | partly | partly |
-| Commons | yes | yes | yes | no | partly | partly |
-| Self-improvement | partly | partly | partly | no | partly | no |
+| Remote access password | yes | yes | yes | partly | partly | partly |
+| Accounts | yes | yes | yes | partly | partly | partly |
+| Commons | yes | yes | yes | partly | partly | partly |
+| Self-improvement | yes | yes | yes | no | partly | no |
 | Desktop control | partly | partly | no | no | partly | no |
 | Phone sync | no | no | no | no | yes | yes |
 | Phone apps | no | no | no | no | yes | yes |
 | Desktop app (launcher and installers) | yes | yes | yes | no | no | no |
-| Source updates | yes | yes | yes | no | partly | partly |
+| Source updates | yes | yes | yes | partly | partly | partly |
 | App update status | yes | yes | yes | yes | yes | yes |
 | Installable web app | yes | yes | yes | yes | yes | yes |
 | Chrome extension launcher | no | no | no | yes | no | no |
