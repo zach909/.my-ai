@@ -10,7 +10,8 @@
 // NEUROCLAW_WEB_PORT picks the port (default 7861) and NEUROCLAW_WEB_HOST the
 // bind address (default 127.0.0.1; anything else needs a password, or the
 // backend serves only its setup page until one is set -- see
-// WebServer.start()). docker-compose.dev.yml uses both to serve on :3000.
+// WebServer.start()). docker-compose.dev.yml sets the host to 0.0.0.0 and publishes the port as
+// both :7861 and :3000.
 
 import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
