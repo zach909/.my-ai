@@ -39,6 +39,7 @@ import { appVersion } from './platform/version.js';
 import { startScreenDonor } from '../models && skills/core/data-donor.js';
 import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
 import { SHARING_PAGE } from './sharing-page.js';
+import { HIVE_PAGE } from './hive-page.js';
 import { COMMONS_PAGE } from './commons-page.js';
 import { handleCommonsRoutes, withTimeout, runFolderSweep, expertDepsFor, schedulerDepsFor } from './commons-routes.js';
 import { startScheduler } from '../models && skills/core/scheduler.js';
@@ -2603,6 +2604,12 @@ export class WebServer {
     // Data donor, lending and borrowing compute, and apps: one page, behind the normal gate.
     if (pathname === '/sharing' && method === 'GET') {
       this.sendHtml(res, SHARING_PAGE);
+      return;
+    }
+
+    // The network as one sphere with a tentacle per net skill.
+    if (pathname === '/hive' && method === 'GET') {
+      this.sendHtml(res, HIVE_PAGE);
       return;
     }
 
