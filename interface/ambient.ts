@@ -275,12 +275,13 @@ export const AMBIENT_JS = String.raw`(function () {
   }
   /* One small sphere and shoggoth per hive agent, drifting round the big one. A working hive's agents glow. */
   function drawAgents(cx, cy, sr, t) {
-    var m = agents.length, ar = sr * 0.3;
+    /* They live inside the crown: in the band between the big sphere (1 sr) and the ring's reach (about 1.4 sr),
+       so each is sized to fit the band, and smaller still when there are many. */
+    var m = agents.length, ar = Math.min(sr * 0.15, (6.2832 * sr * 1.2 / Math.max(m, 1)) * 0.42);
     for (var k = 0; k < m; k++) {
-      var a = agents[k], th = (k / m) * 6.2832 + (reduce ? 0 : t * 0.04) + a.orbit * 0.6;
-      var rho = sr * (2.1 + (k % 3) * 0.5);
-      var x = Math.min(W - ar * 1.4, Math.max(ar * 1.4, cx + Math.cos(th) * rho * (W > H ? 1.35 : 0.8)));
-      var y = Math.min(H - ar * 1.4, Math.max(ar * 1.4, cy + Math.sin(th) * rho * (W > H ? 0.8 : 1.3)));
+      var a = agents[k], th = (k / m) * 6.2832 + (reduce ? 0 : t * 0.12);
+      var rho = sr * (1.2 + (reduce ? 0 : Math.sin(t * 0.7 + a.phase) * 0.04));
+      var x = cx + Math.cos(th) * rho, y = cy + Math.sin(th) * rho;
       var r = ar * (1 + (reduce ? 0 : Math.sin(t * 1.4 + a.phase) * 0.03));
       var glow = a.working ? 0.5 + (reduce ? 0 : Math.sin(t * 3 + a.phase) * 0.5) : 0;
       var halo = ctx.createRadialGradient(x, y, r * 0.8, x, y, r * 1.6);
@@ -290,7 +291,7 @@ export const AMBIENT_JS = String.raw`(function () {
       core.addColorStop(0, 'rgb(96,50,52)'); core.addColorStop(0.6, 'rgb(44,22,26)'); core.addColorStop(1, 'rgb(26,13,16)');
       ctx.fillStyle = core; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill();
       var bl = { x: x + Math.sin(t * 0.6 + a.phase) * r * 0.08, y: y + Math.cos(t * 0.5 + a.phase) * r * 0.08, r: r * 0.5 };
-      drawShoggoth(x, y, r, bl.x, bl.y, bl.r, t, a.phase, 3, glow);
+      drawShoggoth(x, y, r, bl.x, bl.y, bl.r, t, a.phase, 2, glow);
       ctx.strokeStyle = 'rgba(255,196,180,.3)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.stroke();
       tips.push({ x: x, y: y - r, label: 'Hive agent · ' + a.name + (a.working ? ' (working)' : ''), kind: 'agent' });
     }
@@ -345,7 +346,6 @@ export const AMBIENT_JS = String.raw`(function () {
     halo.addColorStop(1, 'rgba(255,138,112,0)');
     ctx.fillStyle = halo;
     ctx.beginPath(); ctx.arc(cx, cy, sr * 1.5, 0, Math.PI * 2); ctx.fill();
-    drawAgents(cx, cy, sr, sceneT);
 
     var idx = 0;
     var drawBead = function (n) {
@@ -364,6 +364,7 @@ export const AMBIENT_JS = String.raw`(function () {
     var bl = blobAt(cx, cy, sr, sceneT);
     drawTentacles(cx, cy, sr, bl, sceneT);
     drawShoggoth(cx, cy, sr, bl.x, bl.y, bl.r, sceneT, 0, 6, energy);
+    drawAgents(cx, cy, sr, sceneT);
 
     for (; idx < M; idx++) drawBead(order[idx]);
   }

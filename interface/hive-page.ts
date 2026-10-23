@@ -26,7 +26,7 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
 <main>
   <h1>Hive</h1>
   <div class="bar">
-    <span class="nc-dim">The shoggoth lives in the big sphere and its tentacles are the net skills, one each, held in by the crown. Every hive agent has a small sphere and shoggoth of its own.</span>
+    <span class="nc-dim">The shoggoth lives in the big sphere and its tentacles are the net skills, one each, held in by the crown. Every hive agent has a small sphere and shoggoth of its own, inside the crown too.</span>
     <span id="note" class="nc-dim"></span>
   </div>
 </main>
