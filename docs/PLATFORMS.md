@@ -71,6 +71,7 @@ and the permissions each OS prompts for.
 | Terminal | yes | yes | yes | no | partly | partly |
 | Agent sandbox, with a tamper trap | yes | yes | yes | no | partly | partly |
 | Self-healing | yes | yes | yes | no | partly | partly |
+| Hive mind | yes | yes | yes | no | partly | partly |
 | AI monitor (judge agent) | yes | yes | yes | no | partly | partly |
 | Alignment protocol (kill switch) | yes | yes | yes | no | partly | partly |
 <!-- parity-matrix:end -->

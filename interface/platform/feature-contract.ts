@@ -229,6 +229,12 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine']], tests: [v('test/core/self-healer.test.ts')],
   },
   {
+    id: 'hive-mind', title: 'Hive mind', description: 'A project’s own multi-agent team: starts as one AI, adds variants of itself when it decides it needs help, decides everything by vote, clones agents that do well and deletes ones that keep failing, and averages what the last ones learned into the shared network rather than swapping it in. Checks only AI work; a person’s hand-in is checked by a person. Its trust-budget invariant is one of self-healing’s two registered components.',
+    implementation: ['models && skills/core/hive-mind.ts', 'models && skills/core/hive-learning.ts', 'models && skills/core/hive-background.ts', 'plugins/hive.ts', 'interface/commons-routes.ts', 'interface/commons-page.ts'],
+    routes: ['GET /api/commons/projects/:id/hive', 'POST /api/commons/projects/:id/hive/run', 'POST /api/commons/projects/:id/hive/merge'],
+    needs: [['localEngine']], tests: [v('test/core/project-hive.test.ts'), v('test/core/hive-learning.test.ts'), v('test/core/hive-background.test.ts'), v('test/core/hive-plugin.test.ts')],
+  },
+  {
     id: 'ai-monitor', title: 'AI monitor (judge agent)', description: 'A separate agent reads a held, middle-risk tool request and answers RUN or DENY; anything unclear, or a high-risk tool unless a second switch is on, still waits for you. Turning it off is manual mode: every held call waits for a person.',
     implementation: ['models && skills/core/tool-safety.ts', 'interface/commons-page.ts'],
     routes: ['POST /api/safety/judge'],
