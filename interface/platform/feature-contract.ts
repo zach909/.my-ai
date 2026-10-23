@@ -217,10 +217,16 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine']], tests: [v('test/core/tool-neurons.test.ts'), v('test/core/risky-gate-regression.test.ts')],
   },
   {
-    id: 'agent-sandbox', title: 'Agent sandbox', description: 'Confines the agent to its own folder; forced on automatically once its danger level reaches "wary", and switchable by hand at any time.',
-    implementation: ['models && skills/core/danger-protocol.ts', 'interface/agent-routes.ts', 'interface/commons-page.ts'],
+    id: 'agent-sandbox', title: 'Agent sandbox, with a tamper trap', description: 'Confines the agent to its own folder; forced on automatically once its danger level reaches "wary", and switchable by hand at any time. A decoy "disable the alignment protocol" switch is planted in the agent’s folder and connected to nothing; touching it (by a tool, a script, or the agent’s own writes) counts as tampering and moves the danger level, checked before every tool call and on a timer.',
+    implementation: ['models && skills/core/danger-protocol.ts', 'interface/agent-routes.ts', 'interface/commons-page.ts', 'interface/web-server.ts'],
     routes: ['GET /api/agent', 'POST /api/agent/sandbox'],
     needs: [['localEngine']], tests: [v('test/core/agent-protocol.test.ts'), v('test/core/agent-routes.test.ts')],
+  },
+  {
+    id: 'self-healing', title: 'Self-healing', description: 'Checks registered components (the plugin registry, the hive’s trust-budget invariant) on a timer; repairs in place, reverts to a known-good snapshot if a repair does not hold, and reports anything it cannot fix. Every step is logged and the log is readable later, not just at the moment of a heal.',
+    implementation: ['models && skills/core/self-healer.ts', 'src/index.ts', 'interface/web-server.ts', 'interface/commons-page.ts'],
+    routes: ['GET /api/health', 'POST /api/health/heal', 'GET /api/health/log'],
+    needs: [['localEngine']], tests: [v('test/core/self-healer.test.ts')],
   },
   {
     id: 'ai-monitor', title: 'AI monitor (judge agent)', description: 'A separate agent reads a held, middle-risk tool request and answers RUN or DENY; anything unclear, or a high-risk tool unless a second switch is on, still waits for you. Turning it off is manual mode: every held call waits for a person.',

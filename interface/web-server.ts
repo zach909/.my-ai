@@ -1407,6 +1407,7 @@ export class WebServer {
   private stopExperts: (() => void) | null = null;
   private stopScheduler: (() => void) | null = null;
   private decoyTimer: ReturnType<typeof setInterval> | null = null;
+  private healTimer: ReturnType<typeof setInterval> | null = null;
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
@@ -1563,6 +1564,18 @@ export class WebServer {
         }
       }, 3000);
       this.decoyTimer.unref?.();
+      // Section 24's self-healer was registered and snapshotted at startup
+      // (src/index.ts) but nothing ever called heal() -- components could go
+      // unhealthy forever with no repair attempt and no way to even see it.
+      // This runs a real heal cycle periodically; GET /api/health and
+      // POST /api/health/heal below let a person check or trigger it directly.
+      this.healTimer = setInterval(() => {
+        import('../src/index.js')
+          .then(({ getNeuroclawSystem }) => getNeuroclawSystem())
+          .then((system) => system.selfHeal())
+          .catch(() => undefined);
+      }, 5 * 60 * 1000);
+      this.healTimer.unref?.();
     }
     try {
       if (!getAccounts().hasAdmin()) {
@@ -4021,6 +4034,47 @@ export class WebServer {
     if (pathname === '/api/self-improvement/server/stop' && method === 'POST') {
       const result = this.selfImprovementServer.stop();
       this.sendJson(res, result, result.ok ? 200 : 409);
+      return;
+    }
+
+    // Section 24 self-healing: detect unhealthy registered components and
+    // attempt repair or revert-to-known-good. Runs on a timer (see the
+    // constructor), and from here on demand. Read-only status is open to any
+    // session; triggering a heal cycle or reading the repair log is
+    // owner/admin only, since a heal attempt can itself change state.
+    if (pathname === '/api/health' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        this.sendJson(res, await (await getNeuroclawSystem()).healthReport());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+    if (pathname === '/api/health/heal' && method === 'POST') {
+      if (!isOwnerOrAdmin()) {
+        this.sendJson(res, { error: 'Only the owner or an admin may trigger a heal cycle.' }, 403);
+        return;
+      }
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        this.sendJson(res, await (await getNeuroclawSystem()).selfHeal());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+    if (pathname === '/api/health/log' && method === 'GET') {
+      if (!isOwnerOrAdmin()) {
+        this.sendJson(res, { error: 'Only the owner or an admin may read the repair log.' }, 403);
+        return;
+      }
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        this.sendJson(res, { log: (await getNeuroclawSystem()).healLog() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
       return;
     }
 
