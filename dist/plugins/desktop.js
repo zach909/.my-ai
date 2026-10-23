@@ -131,10 +131,6 @@ export class DesktopPlugin extends ToolPlugin {
      * arguments are reached by name (callTool) or by the network firing them,
      * not by guessing coordinates out of a sentence.
      */
-    wouldAct(message) {
-        const input = (typeof message === "string" ? message : String(message ?? "")).trim();
-        return /^desktop\s*:?\s+(probe|windows|list windows|screenshot)$/i.test(input);
-    }
     async onMessage(message) {
         const input = (typeof message === "string" ? message : String(message ?? "")).trim();
         const m = input.match(/^desktop\s*:?\s+(probe|windows|list windows|screenshot)$/i);

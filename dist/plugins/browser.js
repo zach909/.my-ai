@@ -224,15 +224,6 @@ export class BrowserPlugin extends BasePlugin {
         }
         return false;
     }
-    wouldAct(message) {
-        const input = String(message ?? "").trim();
-        const lower = input.toLowerCase();
-        if (/^https?:\/\//.test(input))
-            return true;
-        if (/\b(read|write|list|exists?|mkdir|delete)\b/.test(lower))
-            return false;
-        return /^(search|look\s?up|browse|google|web\s?search)\b/.test(lower) || /\b(search (for|the web)|on the web|online)\b/.test(lower);
-    }
     async onMessage(message) {
         const input = String(message).trim();
         if (/^https?:\/\//.test(input)) {

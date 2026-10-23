@@ -77,10 +77,6 @@ export class ComputerAccessPlugin extends BasePlugin {
             nouns: ["access", "permission", "capability", "desktop", "gnome", "window", "screen", "terminal", "switch"],
         };
     }
-    wouldAct(message) {
-        const input = (typeof message === "string" ? message : String(message ?? "")).trim();
-        return /^(?:turn off|turn on|disable|enable|stop|kill|allow|restore)\s/i.test(input);
-    }
     async onMessage(message) {
         const input = (typeof message === "string" ? message : String(message ?? "")).trim();
         if (!input)

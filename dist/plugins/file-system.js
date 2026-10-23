@@ -165,10 +165,6 @@ export class FileSystemPlugin extends BasePlugin {
             nouns: ["file", "folder", "directory", "disk", "document", "path"],
         };
     }
-    wouldAct(message) {
-        const input = String(message ?? "").trim();
-        return FileSystemPlugin.ACTION_PATTERNS.some((p) => p.test(input));
-    }
     async onMessage(message) {
         // Case-insensitive on the command keyword only -- lowercasing the whole
         // input previously mangled the extracted path too (`MyDir/MyFile.TXT`
@@ -226,11 +222,3 @@ export class FileSystemPlugin extends BasePlugin {
         return null;
     }
 }
-/** Every shape onMessage() acts on, in one place so wouldAct() cannot drift from it. */
-FileSystemPlugin.ACTION_PATTERNS = [
-    /\bread\s+(\S+)/i,
-    /\blist\s+(\S+)/i,
-    /\bexists?\s+(\S+)/i,
-    /\bopen\s+(\S+)/i,
-    /\b(?:send|download)\s+(\S+)/i,
-];

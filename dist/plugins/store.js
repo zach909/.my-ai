@@ -170,9 +170,6 @@ export class StorePlugin extends BasePlugin {
             nouns: ["store", "skill", "plugin", "package", "item", "marketplace"],
         };
     }
-    wouldAct(message) {
-        return /^store\b/i.test((typeof message === "string" ? message : String(message ?? "")).trim());
-    }
     async onMessage(message) {
         const input = (typeof message === "string" ? message : String(message ?? "")).trim();
         if (!input)

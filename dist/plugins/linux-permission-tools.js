@@ -180,44 +180,6 @@ const extendedLinuxSpecs = [
 const allSpecs = [...specs, ...extendedLinuxSpecs];
 const highRisk = new Set(allSpecs.filter(s => s.risk === "critical" || s.risk === "high").map(s => s.permission));
 /** All distinct tools, one per Linux/Lennox capability. */
-/**
- * Check arguments against the tool's declared schema. The schema used to be
- * documentation only: a missing required argument, an argument the tool does
- * not declare (additionalProperties: false) and a value outside an enum all
- * reached the adapter. Returns the first problem, or null.
- */
-export function validateToolArgs(properties, required, args) {
-    if (args === null || typeof args !== "object" || Array.isArray(args))
-        return "arguments must be an object";
-    const given = args;
-    for (const key of required)
-        if (given[key] === undefined || given[key] === null)
-            return `"${key}" is required`;
-    for (const [key, value] of Object.entries(given)) {
-        const spec = Object.prototype.hasOwnProperty.call(properties, key) ? properties[key] : undefined;
-        if (!spec)
-            return `"${key}" is not an argument of this tool`;
-        if (spec.type === "array") {
-            if (!Array.isArray(value))
-                return `"${key}" must be an array`;
-        }
-        else if (spec.type === "number") {
-            if (typeof value !== "number" || !Number.isFinite(value))
-                return `"${key}" must be a finite number`;
-            if (spec.minimum !== undefined && value < spec.minimum)
-                return `"${key}" must be at least ${spec.minimum}`;
-            if (spec.maximum !== undefined && value > spec.maximum)
-                return `"${key}" must be at most ${spec.maximum}`;
-        }
-        else if (spec.type === "string") {
-            if (typeof value !== "string")
-                return `"${key}" must be a string`;
-            if (spec.enum && !spec.enum.includes(value))
-                return `"${key}" must be one of ${spec.enum.join(", ")}`;
-        }
-    }
-    return null;
-}
 export const LINUX_PERMISSION_TOOLS = allSpecs.map((spec) => {
     const name = spec.permission.replace(/-/g, "_");
     const risk = spec.risk ?? "high";
@@ -234,18 +196,12 @@ export const LINUX_PERMISSION_TOOLS = allSpecs.map((spec) => {
             additionalProperties: false,
         },
         execute: async (args, context, extensionId = "linux-permission-tools") => {
-            // Platform and grant first, then the arguments, then the human: a person
-            // should only ever be asked about a call that is well formed, and what
-            // they approve is exactly what the adapter receives.
             if ((context.platform ?? process.platform) !== "linux") {
                 throw new Error(`${name} is Linux-only; current platform is ${context.platform ?? process.platform}.`);
             }
             if (!context.isGranted(extensionId, spec.permission)) {
                 throw new Error(`Permission denied: grant ${spec.permission} to ${extensionId} before calling ${name}.`);
             }
-            const problem = validateToolArgs(spec.properties ?? {}, spec.required ?? [], args);
-            if (problem)
-                throw new Error(`Invalid arguments for ${name}: ${problem}. No operation was performed.`);
             if (risk === "high" || risk === "critical" || highRisk.has(spec.permission)) {
                 const approved = await context.requestApproval({ tool: name, permission: spec.permission, args, risk });
                 if (!approved)
