@@ -30,7 +30,7 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
 <main>
   <h1>Hive</h1>
   <div class="bar">
-    <span class="nc-dim">One tentacle for every net skill in the network, held in by the crown. Longer means more neurons.</span>
+    <span class="nc-dim">The shoggoth lives in the sphere and its tentacles are the net skills, one each, held in by the crown. Longer means more neurons.</span>
     <span id="count" class="nc-dim"></span>
   </div>
   <div id="note" class="nc-dim"></div>
@@ -94,9 +94,9 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
     return { sphere: 0.92 * k, hold: 1.27 * k };
   }
 
-  function tentacle(cx, cy, R, ang, s, time, hold) {
+  function tentacle(cx, cy, R, ang, s, time, hold, bx, by, r0) {
     var len = R * (0.75 + 0.75 * s.size) * (0.8 + 0.4 * s.jit) * s.reach;
-    var segs = 30, x = cx + Math.cos(ang) * R * 0.92, y = cy + Math.sin(ang) * R * 0.92;
+    var segs = 30, x = bx + Math.cos(ang) * r0 * 0.7, y = by + Math.sin(ang) * r0 * 0.7;
     var heading = ang, pts = [[x, y]];
     var dir = Math.atan2(look.y, look.x), lean = Math.min(1, Math.hypot(look.x, look.y)) * 0.35;
     for (var i = 1; i <= segs; i++) {
@@ -120,9 +120,11 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
   // The shoggoth: a green blob that lives inside the sphere, never outside it. It drifts, throws out
   // pseudopods, and its many eyes follow the pointer and blink out of step.
   var EYES = [[-0.35, -0.2, 1], [0.1, -0.38, 0.8], [0.38, -0.05, 1.1], [-0.12, 0.12, 0.9], [0.2, 0.34, 0.7], [-0.4, 0.28, 0.6]];
+  function blobAt(cx, cy, R, time) {
+    return { x: cx + Math.sin(time * 0.5) * R * 0.06 + look.x * R * 0.06, y: cy + Math.cos(time * 0.43) * R * 0.06 + look.y * R * 0.06, r: R * 0.52 };
+  }
   function shoggoth(cx, cy, R, time) {
-    var bx = cx + Math.sin(time * 0.5) * R * 0.08 + look.x * R * 0.08, by = cy + Math.cos(time * 0.43) * R * 0.08 + look.y * R * 0.08;
-    var r0 = R * 0.5, N = 72, i, a, rr;
+    var b = blobAt(cx, cy, R, time), bx = b.x, by = b.y, r0 = b.r, N = 72, i, a, rr;
     ctx.save();
     ctx.beginPath(); ctx.arc(cx, cy, R * 0.985, 0, 6.2832); ctx.clip();
     var halo = ctx.createRadialGradient(bx, by, r0 * 0.3, bx, by, R);
@@ -163,29 +165,30 @@ export const HIVE_PAGE = String.raw`<!DOCTYPE html>
     glow.addColorStop(0, 'rgba(255,154,132,.22)'); glow.addColorStop(1, 'rgba(255,154,132,0)');
     ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(cx, cy, R * 1.5, 0, 6.2832); ctx.fill();
 
+    var body = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
+    body.addColorStop(0, '#6b3a3e'); body.addColorStop(0.6, '#3a1d22'); body.addColorStop(1, '#1d0f13');
+    ctx.fillStyle = body; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.fill();
+    var bl = blobAt(cx, cy, R, time);
     var n = skills.length;
     for (var k = 0; k < n; k++) {
       var s = skills[k];
       s.reach += (1 - s.reach) * 0.04;
       var ang = spin + (k / n) * 6.2832;
-      var pts = tentacle(cx, cy, R, ang, s, time, cr.hold);
-      var thick = Math.min(R * (0.2 + 0.1 * s.size), (6.2832 * R / Math.max(n, 1)) * 0.55);
+      var pts = tentacle(cx, cy, R, ang, s, time, cr.hold, bl.x, bl.y, bl.r);
+      var thick = Math.min(R * (0.2 + 0.1 * s.size), (6.2832 * bl.r * 0.7 / Math.max(n, 1)) * 0.8);
       ctx.lineCap = 'round'; ctx.lineJoin = 'round';
       for (var i = pts.length - 1; i > 0; i--) {
         var u = i / (pts.length - 1);
-        ctx.strokeStyle = k === hover ? 'rgba(255,196,180,' + (0.95 - u * 0.25) + ')' : 'rgba(' + Math.round(232 + 23 * (1 - u)) + ',' + Math.round(112 + 42 * (1 - u)) + ',' + Math.round(90 + 42 * (1 - u)) + ',' + (0.9 - u * 0.35) + ')';
+        ctx.strokeStyle = k === hover ? 'rgba(214,250,226,' + (0.97 - u * 0.2) + ')' : 'rgba(' + Math.round(38 + 138 * (1 - u)) + ',' + Math.round(104 + 136 * (1 - u)) + ',' + Math.round(66 + 130 * (1 - u)) + ',' + (0.93 - u * 0.3) + ')';
         ctx.lineWidth = Math.max(1.5, thick * (1 - u * 0.88));
         ctx.beginPath(); ctx.moveTo(pts[i - 1][0], pts[i - 1][1]); ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke();
       }
       var tp = pts[pts.length - 1]; s.tipX = tp[0]; s.tipY = tp[1];
       var bead = ctx.createRadialGradient(tp[0], tp[1], 0, tp[0], tp[1], thick * 0.9);
-      bead.addColorStop(0, 'rgba(255,230,220,.95)'); bead.addColorStop(1, 'rgba(255,154,132,0)');
+      bead.addColorStop(0, 'rgba(226,255,236,.95)'); bead.addColorStop(1, 'rgba(143,227,168,0)');
       ctx.fillStyle = bead; ctx.beginPath(); ctx.arc(tp[0], tp[1], thick * 0.9, 0, 6.2832); ctx.fill();
     }
 
-    var body = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R);
-    body.addColorStop(0, '#6b3a3e'); body.addColorStop(0.6, '#3a1d22'); body.addColorStop(1, '#1d0f13');
-    ctx.fillStyle = body; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.fill();
     shoggoth(cx, cy, R, time);
     ctx.strokeStyle = 'rgba(255,196,180,.35)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.2832); ctx.stroke();
 
