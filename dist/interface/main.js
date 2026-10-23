@@ -154,14 +154,14 @@ function isEntryPoint() {
 if (isEntryPoint()) {
     const [mode, portArg] = process.argv.slice(2);
     if (mode === 'web') {
-        const port = Number(portArg) || 7861;
+        const port = Number(portArg) || 3000;
         const host = process.env.NEUROCLAW_WEB_HOST || '127.0.0.1';
         startWeb(port)
             .then(() => console.log(`Neuroclaw HTTP backend listening on http://${host}:${port}`))
             .catch(err => {
             // EADDRINUSE is common and self-explanatory once you know the
             // cause: `npm run dev` and `npm run server` both default to the
-            // same backend port (7861), so leaving one running and starting
+            // same backend port (3000), so leaving one running and starting
             // the other collides -- a real report from running exactly that.
             // The raw Node stack trace this used to print didn't say why;
             // this does.

@@ -58,7 +58,7 @@ const capabilityFileWatchers = new Map();
  */
 const IS_PACKAGED = Boolean(app && app.isPackaged);
 const REPO_ROOT = IS_PACKAGED ? process.resourcesPath : path.join(__dirname, '..', '..', '..');
-const BACKEND_PORT = 7861;
+const BACKEND_PORT = 3000;
 const APP_PORT = 4173;
 // Set by test/ipc-handlers.test.js: that suite only exercises the IPC
 // handlers below via a fake Electron shell and must not spawn a real

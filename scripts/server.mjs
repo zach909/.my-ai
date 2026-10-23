@@ -33,7 +33,7 @@ import { DEFAULT_PEER_PORT } from './peer-sync.mjs'
 import { spawnAwait } from './spawn-utils.mjs'
 
 const ROOT = process.cwd()
-const PORT = Number(process.env.PORT) || 7861
+const PORT = Number(process.env.PORT) || 3000
 
 console.log('[server] read-only startup diagnostics...')
 printDiagnostics()

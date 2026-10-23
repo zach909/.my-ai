@@ -42,7 +42,7 @@ while true; do
     --disable-translate \
     --check-for-update-interval=31536000 \
     --user-data-dir=/tmp/neuroclaw-kiosk-profile \
-    'http://127.0.0.1:7861/' \
+    'http://127.0.0.1:3000/' \
     >/tmp/neuroclaw-kiosk.log 2>&1
   sleep 1
 done &

@@ -47,7 +47,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = Number(process.env.PORT) || 7861;
+const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.NEUROCLAW_WEB_HOST || '127.0.0.1';
 /** How long to wait for the real backend before giving up and falling back. */
 const LAUNCH_TIMEOUT_MS = 90_000;

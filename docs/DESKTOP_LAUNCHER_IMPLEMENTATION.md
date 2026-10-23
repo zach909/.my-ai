@@ -120,26 +120,26 @@ separate ports -- there is no single "the web server" that serves both. Build
 and start the backend first:
 ```bash
 node scripts/build-backend.mjs
-node dist/interface/main.js web 7861
+node dist/interface/main.js web 3000
 ```
-(7861 is `interface/main.ts`'s default port when none is given; adjust the
+(3000 is `interface/main.ts`'s default port when none is given; adjust the
 `curl` calls below if you pick another one.)
 
 The API endpoints are then available directly on that port. Test with curl:
 ```bash
 # Launch terminal
-curl -X POST http://localhost:7861/api/apps/launch \
+curl -X POST http://localhost:3000/api/apps/launch \
   -H "Content-Type: application/json" \
   -d '{"command":"gnome-terminal","name":"Terminal"}'
 
 # List running apps
-curl http://localhost:7861/api/apps/list
+curl http://localhost:3000/api/apps/list
 ```
 
 To exercise the actual `/desktop` UI (not just the API directly), also run
 `vite`'s dev server (`npm run dev` / `bun run dev`, port 3000) with the
 backend above already running -- `vite.config.ts`'s dev-server proxy forwards
-`/api/*` requests to `http://127.0.0.1:7861`. This proxy only applies to the
+`/api/*` requests to `http://127.0.0.1:3000`. This proxy only applies to the
 dev server: a production `vite build` produces a purely static site (see
 `scripts/finalize-static-build.mjs`) with no route to the backend at all
 unless the hosting layer provides its own reverse proxy for `/api/*` -- not

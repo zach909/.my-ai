@@ -76,7 +76,7 @@ export const SHARING_PAGE = `<!DOCTYPE html>
     <p class="nc-dim">Spend the credit you earned. Add a computer with the address and the lease token its owner gave you.</p>
     <div class="row">
       <input class="nc-input grow" id="p-name" placeholder="Name" maxlength="64">
-      <input class="nc-input grow" id="p-url" placeholder="http://192.168.1.20:7861">
+      <input class="nc-input grow" id="p-url" placeholder="http://192.168.1.20:3000">
       <input class="nc-input grow" id="p-token" placeholder="Lease token (cl_...)" type="password" autocomplete="off">
       <button class="nc-btn" id="p-add">Add</button>
     </div>

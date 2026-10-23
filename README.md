@@ -148,7 +148,7 @@ Every tracked file in the repository is listed below, grouped by folder. Paths a
 | `TERMS.md` | Short pointer to the full terms of use in `wiki/Terms.md`. |
 | `bun.lock` | Bun lockfile for Node dependencies. |
 | `components.json` | shadcn/ui config: style, Tailwind CSS path, and the `@/` import aliases. |
-| `docker-compose.dev.yml` | One-service Docker Compose dev setup (`node:22-slim`). It runs `npm install && npm run dev` on ports 3000 and 7861. |
+| `docker-compose.dev.yml` | One-service Docker Compose dev setup (`node:22-slim`). It runs `npm install && npm run dev` and serves the backend on port 3000. |
 | `eslint.config.js` | ESLint flat config, scoped to `src/` (React hooks and react-refresh rules). |
 | `package.json` | Node package manifest. It defines the scripts (`dev`, `server`, `build`, `lint`, `test`, `bench:*`) and the dependencies. |
 | `package-lock.json` | npm lockfile. |
@@ -876,7 +876,7 @@ TypeScript plugins (`*.ts`) run in the Node backend. Python plugins (`plugin_*.p
 
 | File | What it does |
 |---|---|
-| `scripts/dev.mjs` | `npm run dev`: builds the backend and runs it in the foreground on 7861 (`NEUROCLAW_WEB_PORT` / `NEUROCLAW_WEB_HOST` override). |
+| `scripts/dev.mjs` | `npm run dev`: builds the backend and runs it in the foreground on 3000 (`NEUROCLAW_WEB_PORT` / `NEUROCLAW_WEB_HOST` override). |
 | `scripts/server.mjs` | `npm run server`: production backend plus diagnostics, an update check, and the five autonomous agents. |
 | `scripts/launcher.mjs` | `npm run launch`: starts the server automatically when you open the web app, or shows a page with the command to run. |
 | `scripts/build-backend.mjs` | Compiles the TypeScript backend into `dist/` and copies the hand-written `.js` files. |

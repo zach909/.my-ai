@@ -317,7 +317,7 @@ export function addPeer(input, file = computeFile()) {
         url = new URL(input.baseUrl);
     }
     catch {
-        throw new ComputeError("\"baseUrl\" must be a full URL such as http://192.168.1.20:7861.");
+        throw new ComputeError("\"baseUrl\" must be a full URL such as http://192.168.1.20:3000.");
     }
     if (url.protocol !== "http:" && url.protocol !== "https:")
         throw new ComputeError("\"baseUrl\" must be http or https.");

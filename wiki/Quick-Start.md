@@ -44,8 +44,8 @@ There is no `npm start` script. Run the built backend directly:
 # Interactive CLI
 node dist/interface/main.js cli
 
-# HTTP API (default port 7861; pass a port number to use another)
-node dist/interface/main.js web 7861
+# HTTP API (default port 3000; pass a port number to use another)
+node dist/interface/main.js web 3000
 ```
 
 ## Directory Structure
@@ -107,8 +107,8 @@ graph together and starts the CLI; always go through the built
 #### Web Interface
 
 The HTTP API is served by the backend itself, not by `npm run dev`'s Vite
-dev server: after `node dist/interface/main.js web 7861`, open
-`http://localhost:7861` for the built-in chat UI, or call the JSON routes
+dev server: after `node dist/interface/main.js web 3000`, open
+`http://localhost:3000` for the built-in chat UI, or call the JSON routes
 directly (`GET /api/status`, `POST /api/chat`, etc.). The separate `src/`
 React app (started with `npm run dev`, port 3000) is a different UI that
 talks to this same backend through a dev-server proxy — both need to be
@@ -133,7 +133,7 @@ through the CLI or the HTTP API, not a script you run standalone:
    prompt, since each Enter submits a separate top-level CLI command. Use
    the HTTP API for that instead:
    ```bash
-   curl -X POST http://localhost:7861/api/extension/build \
+   curl -X POST http://localhost:3000/api/extension/build \
      -H "Content-Type: application/json" \
      -d '{"name":"greeting_ext","code":"name=\"greeting\"\n\"greeting\"@vale=\"0.9\"\n\"greeting\"@definishon=\"Hello!\"","quantize":true}'
    ```

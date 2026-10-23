@@ -7,7 +7,7 @@
 // would make every remote client look like loopback to it and defeat its
 // remote-access password gate.
 //
-// NEUROCLAW_WEB_PORT picks the port (default 7861) and NEUROCLAW_WEB_HOST the
+// NEUROCLAW_WEB_PORT picks the port (default 3000) and NEUROCLAW_WEB_HOST the
 // bind address (default 127.0.0.1; anything else needs a password, or the
 // backend serves only its setup page until one is set -- see
 // WebServer.start()). docker-compose.dev.yml uses both to serve on :3000.
@@ -17,7 +17,7 @@ import { createConnection } from 'node:net';
 import { spawnAwait } from './spawn-utils.mjs';
 
 const ROOT = process.cwd();
-const BACKEND_PORT = Number(process.env.NEUROCLAW_WEB_PORT) || 7861;
+const BACKEND_PORT = Number(process.env.NEUROCLAW_WEB_PORT) || 3000;
 
 // Startup-time optimization: the update check (a network call, up to a
 // 15s git-fetch timeout -- see update-check.mjs) and the backend build

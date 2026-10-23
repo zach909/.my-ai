@@ -29,14 +29,14 @@ The owner chose the look of the terminal page at `/` (`HTML_TEMPLATE` in `interf
 # Docker Dev Environment
 
 ## What this is
-NeuroClaw — a local-first AI agent. The backend is a Node/TypeScript HTTP server (port 7861). The React/Vite frontend's npm packages have been removed from `package.json`, so the dashboard no longer builds or runs; its source under `src/` (routes, components, features) is still in the repo but unused.
+NeuroClaw — a local-first AI agent. The backend is a Node/TypeScript HTTP server (port 3000). The React/Vite frontend's npm packages have been removed from `package.json`, so the dashboard no longer builds or runs; its source under `src/` (routes, components, features) is still in the repo but unused.
 
 ## Running it
 ```
 docker compose -f docker-compose.dev.yml up -d
 ```
 - Single `web` service on `node:22-slim`, repo bind-mounted at `/app`.
-- `npm run dev` (scripts/dev.mjs) does: tsc backend build → starts the backend and stays up until it exits. It no longer starts Vite. Port and bind address come from `NEUROCLAW_WEB_PORT` (default 7861) and `NEUROCLAW_WEB_HOST` (default 127.0.0.1).
+- `npm run dev` (scripts/dev.mjs) does: tsc backend build → starts the backend and stays up until it exits. It no longer starts Vite. Port and bind address come from `NEUROCLAW_WEB_PORT` (default 3000) and `NEUROCLAW_WEB_HOST` (default 127.0.0.1).
 - The only npm packages left are the build and test tools: `typescript`, `@types/node`, `vitest`.
 - `NEUROCLAW_AUTO_UPDATE=0` disables the startup git fetch/pull so it never touches the working tree.
 - The compose file runs the backend itself on port 3000 (`NEUROCLAW_WEB_PORT=3000`, `NEUROCLAW_WEB_HOST=0.0.0.0`) and publishes it as `127.0.0.1:3000`, so http://localhost:3000 is the real backend: `/` terminal page, `/app` dashboard, `/api/*`. No proxy sits in front, because a proxy would make remote clients look like loopback and bypass the backend's password gate. Because the bind is non-loopback, the backend wants a password: set `NEUROCLAW_WEB_PASSWORD`, or open `/login` and enter the setup code printed in `docker compose -f docker-compose.dev.yml logs web`.

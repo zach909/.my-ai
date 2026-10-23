@@ -73,9 +73,9 @@ Nothing waits on sync. Without the PC, everything stays on the phone until the n
 
 ## 1. Set up the PC (only for syncing)
 
-1. Run NeuroClaw as usual (`npm run dev`). The phone connects to the backend's port, **7861**, which serves the dashboard at `/app`.
+1. Run NeuroClaw as usual (`npm run dev`). The phone connects to the backend's port, **3000**, which serves the dashboard at `/app`.
 2. In NeuroClaw, set a **Remote Access password**. The phone uses it to sign in.
-3. Find the PC's address on your Wi-Fi (for example `192.168.1.20`). On the phone you will enter `http://192.168.1.20:7861`.
+3. Find the PC's address on your Wi-Fi (for example `192.168.1.20`). On the phone you will enter `http://192.168.1.20:3000`.
 
 Photos you send arrive on the PC in `~/.neuroclaw/captures/`: each one is a `.jpg` plus a `.json` file holding the note and the time it was taken. They are never put in the repo. `GET /api/captures` lists them.
 
