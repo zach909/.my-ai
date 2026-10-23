@@ -214,7 +214,7 @@ export class AccountsStore {
    */
   async setupAdmin(name: string, password: string, authorised: boolean): Promise<PublicUser> {
     if (this.hasAdmin()) throw new AccountError("This server already has an admin.", 409);
-    if (!authorised) throw new AccountError("Making the first account needs a request from the machine itself, or the setup code from the server's console.", 403);
+    if (!authorised) throw new AccountError("Setting this up needs the computer's administrator at the machine itself, or the setup code from the server's console.", 403);
     return this.make(name, password, "admin");
   }
 
@@ -433,7 +433,7 @@ const ADMIN_ONLY: RegExp[] = [
 
 const USER_EXACT = new Set<string>([
   "/", "/commons", "/login", "/accounts", "/ambient.css", "/ambient.js", "/settings", "/api/app-info", "/api/app-settings",
-  "/api/status", "/api/commons", "/api/chat", "/api/chat/messages", "/api/chat/correct",
+  "/api/status", "/api/agent", "/api/commons", "/api/chat", "/api/chat/messages", "/api/chat/correct",
   "/api/chat-history/save", "/api/chat-history/search", "/api/chat-history/groups", "/api/chat-history/threads",
   "/api/chat-history/export", "/api/chat-history/import",
 ]);

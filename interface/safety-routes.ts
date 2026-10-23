@@ -24,6 +24,7 @@ import {
   loadSafety,
   setAsk,
   setAutoContinue,
+  setJudge,
   type ToolGate,
 } from "../models && skills/core/tool-safety.js";
 import type { AccessManager } from "../models && skills/core/access-manager.js";
@@ -52,6 +53,7 @@ function snapshot(ctx: SafetyContext) {
     fullAccess: s.fullAccess,
     completeAccessPhrase: COMPLETE_ACCESS_PHRASE,
     autoContinue: { ...s.autoContinue, max: MAX_CONTINUE_STEPS },
+    judge: s.judge,
     tools: describeTools(s),
     approvals: ctx.gate.list().slice(0, 30),
   };
@@ -93,6 +95,12 @@ async function route(ctx: SafetyContext): Promise<boolean> {
   if (pathname === "/api/safety/auto-continue" && method === "POST") {
     const b = await body();
     setAutoContinue({ enabled: typeof b.enabled === "boolean" ? b.enabled : undefined, maxSteps: b.maxSteps === undefined ? undefined : Number(b.maxSteps) });
+    return send(snapshot(ctx));
+  }
+
+  if (pathname === "/api/safety/judge" && method === "POST") {
+    const b = await body();
+    setJudge({ enabled: typeof b.enabled === "boolean" ? b.enabled : undefined, high: typeof b.high === "boolean" ? b.high : undefined });
     return send(snapshot(ctx));
   }
 

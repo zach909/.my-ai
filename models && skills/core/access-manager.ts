@@ -28,6 +28,10 @@
  * a permission error that does not tell you what to grant is a dead end.
  */
 
+import { realpathSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 /** Ordered from least to most dangerous. A grant at one level implies every level below it. */
 export const ACCESS_LEVELS = ["observe", "interact", "modify", "execute", "system", "privileged"] as const;
 export type AccessLevel = (typeof ACCESS_LEVELS)[number];
@@ -146,16 +150,28 @@ export const CAPABILITY_SWITCH: Record<Capability, Exclude<AccessSwitch, "all">>
   "mods.apply": "workspace",
 };
 
+/**
+ * What a sandboxed agent may still do: read, write and delete files, but only
+ * inside the sandbox folder. Everything else (terminals, windows, screen, input,
+ * processes, services, devices, the network, mods) reaches outside it and is
+ * refused while the sandbox is on, whatever is granted.
+ */
+export const SANDBOX_CAPABILITIES: readonly Capability[] = ["files.read", "files.write", "files.delete"];
+
+export type Blocker = AccessSwitch | "sandbox";
+
 export class AccessDenied extends Error {
   constructor(
     readonly capability: Capability,
     readonly needed: AccessLevel,
     readonly granted: AccessLevel | null,
-    /** Set when the refusal came from a switch being off rather than from a missing grant. */
-    readonly switchedOff?: AccessSwitch,
+    /** Set when the refusal came from a switch being off (or the sandbox being on) rather than from a missing grant. */
+    readonly switchedOff?: Blocker,
   ) {
     super(
-      switchedOff === "all"
+      switchedOff === "sandbox"
+        ? `The agent is sandboxed, so "${capability}" is refused outside its sandbox folder. Turn the sandbox off to allow it.`
+        : switchedOff === "all"
         ? `Computer access is switched off, so "${capability}" is refused. Turn access back on to use it.`
         : switchedOff
           ? `The "${SWITCH_LABEL[switchedOff]}" switch is off, so "${capability}" is refused. Turn it back on to use it.`
@@ -183,6 +199,20 @@ export interface AccessGrant {
   paths?: string[];
 }
 
+/** The path with "." and ".." resolved and, where it exists, links followed; a new file is judged by its folder. */
+function resolveReal(p: string): string {
+  const abs = path.resolve(p);
+  try {
+    return realpathSync(abs);
+  } catch {
+    const parent = path.dirname(abs);
+    if (parent === abs) return abs;
+    return path.join(resolveReal(parent), path.basename(abs));
+  }
+}
+
+const within = (root: string, target: string): boolean => target === root || target.startsWith(root.replace(/\/+$/, "") + path.sep);
+
 /**
  * Holds the grants and answers the only question the access layer ever asks:
  * may I do this, at this level, to this path.
@@ -192,6 +222,23 @@ export class AccessManager {
   /** Every switch starts on; the grants themselves are what is restrictive by default. */
   private switches: Record<AccessSwitch, boolean> = { all: true, desktop: true, workspace: true };
   private listeners = new Set<(state: Record<AccessSwitch, boolean>) => void>();
+  /** The folder the agent is confined to right now, or null when it is not sandboxed. Asked every time, so flipping the sandbox takes effect at once. */
+  private sandboxSource: () => string | null = () => null;
+
+  /** Where the sandbox comes from (agent-profile / danger-protocol). Not persisted here: the agent's file is the one source of truth. */
+  setSandboxSource(source: () => string | null): void {
+    this.sandboxSource = source;
+  }
+
+  /** The sandbox folder in force, or null. */
+  sandboxRoot(): string | null {
+    try {
+      return this.sandboxSource();
+    } catch {
+      // A sandbox that cannot be read is treated as on, at the default place it would be, so a failure never opens the door.
+      return path.join(os.homedir(), ".neuroclaw", "agent", "sandbox");
+    }
+  }
 
   constructor(grants: AccessGrant[] = [], switches?: Partial<Record<AccessSwitch, boolean>>) {
     for (const g of grants) this.grant(g);
@@ -226,8 +273,9 @@ export class AccessManager {
   }
 
   /** Which switch is standing in the way, or null when none is. */
-  private blockedBy(capability: Capability): AccessSwitch | null {
+  private blockedBy(capability: Capability): Blocker | null {
     if (!this.switches.all) return "all";
+    if (this.sandboxRoot() && !SANDBOX_CAPABILITIES.includes(capability)) return "sandbox";
     const group = CAPABILITY_SWITCH[capability];
     return this.switches[group] ? null : group;
   }
@@ -284,8 +332,13 @@ export class AccessManager {
   allowsPath(capability: Capability, absolutePath: string): boolean {
     const grant = this.grants.get(capability);
     if (!grant) return false;
+    const target = resolveReal(absolutePath);
+    // The sandbox is a hard wall inside any grant: the path, with ".." and links
+    // followed, has to be inside the sandbox folder.
+    const sandbox = this.sandboxRoot();
+    if (sandbox && !within(resolveReal(sandbox), target)) return false;
     if (!grant.paths || grant.paths.length === 0) return true;
-    return grant.paths.some(root => absolutePath === root || absolutePath.startsWith(root.replace(/\/+$/, "") + "/"));
+    return grant.paths.some(root => within(resolveReal(root), target));
   }
 
   requirePath(capability: Capability, absolutePath: string, needed?: AccessLevel): void {

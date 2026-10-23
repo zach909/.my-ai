@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
 import { configFile } from "../../interface/platform/app-paths.js";
+import { sandboxRoot } from "./danger-protocol.js";
 import {
   ACCESS_SWITCHES,
   AccessManager,
@@ -147,7 +148,11 @@ let shared: AccessManager | null = null;
 
 /** The one the running system uses. */
 export function sharedAccessManager(): AccessManager {
-  if (!shared) shared = loadAccessManager();
+  if (!shared) {
+    shared = loadAccessManager();
+    // The agent's sandbox (danger-protocol.ts) is asked at every check, so flipping it applies at once.
+    shared.setSandboxSource(() => sandboxRoot());
+  }
   return shared;
 }
 

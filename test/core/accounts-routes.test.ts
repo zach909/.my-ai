@@ -17,6 +17,7 @@ let server: http.Server
 let base: string
 let accounts: AccountsStore
 let setupDone = 0
+let computerAdminFlag = true
 let t = 1_000_000
 const PW = 'correct horse battery'
 
@@ -42,6 +43,7 @@ beforeAll(async () => {
         sendJson: (r, data, status = 200) => { r.writeHead(status, { 'Content-Type': 'application/json' }); r.end(JSON.stringify(data)) },
         accounts,
         fromThisMachine: r => r.headers['x-from-machine'] === '1',
+        computerAdmin: () => computerAdminFlag,
         setupCodeOk: code => code === 'abc12345',
         onSetup: () => { setupDone++ },
         token: cookieOf,
@@ -61,6 +63,7 @@ beforeEach(() => {
   t = 1_000_000
   accounts = new AccountsStore(path.join(dir, 'accounts.json'), () => t)
   setupDone = 0
+  computerAdminFlag = true
 })
 afterEach(() => { for (const k of ENV) delete process.env[k]; rmSync(dir, { recursive: true, force: true }) })
 
@@ -99,6 +102,29 @@ describe('setting up', () => {
     expect((await call('POST', '/api/accounts/setup', { json: { name: 'zach', password: PW, setupCode: 'guess' } })).status).toBe(403)
     expect((await call('GET', '/api/accounts/status')).json.hasAdmin).toBe(false)
     expect((await call('POST', '/api/accounts/setup', { json: { name: 'zach', password: PW, setupCode: 'abc12345' } })).status).toBe(201)
+  })
+
+  it('from the machine, setup needs the computer to be running as an administrator; otherwise only the console code works', async () => {
+    computerAdminFlag = false
+    const st = await call('GET', '/api/accounts/status', { machine: true })
+    expect(st.json).toMatchObject({ hasAdmin: false, onThisMachine: true, computerAdmin: false })
+    const denied = await call('POST', '/api/accounts/setup', { json: { name: 'zach', password: PW }, machine: true })
+    expect(denied.status).toBe(403)
+    expect(denied.json.error).toMatch(/administrator/)
+    expect(accounts.hasAdmin()).toBe(false)
+    const withCode = await call('POST', '/api/accounts/setup', { json: { name: 'zach', password: PW, setupCode: 'abc12345' }, machine: true })
+    expect(withCode.status).toBe(201)
+    expect(accounts.hasAdmin()).toBe(true)
+  })
+
+  it('an administrator at the machine needs no code, and afterwards everyone can sign up', async () => {
+    const st = await call('GET', '/api/accounts/status', { machine: true })
+    expect(st.json).toMatchObject({ onThisMachine: true, computerAdmin: true })
+    await makeAdmin()
+    const status = await call('GET', '/api/accounts/status')
+    expect(status.json).toMatchObject({ hasAdmin: true, signup: 'open' })
+    const sam = await call('POST', '/api/accounts/register', { json: { name: 'sam', password: PW } })
+    expect(sam.status).toBe(201)
   })
 
   it('once there is an admin nobody can set up again, not even from the machine', async () => {

@@ -38,6 +38,8 @@ export interface AccountsContext {
   accounts: AccountsStore;
   /** Whether the request is from the machine itself. */
   fromThisMachine(req: http.IncomingMessage): boolean;
+  /** Whether the account the server runs as is the computer's administrator (computer-admin.ts). */
+  computerAdmin(): boolean;
   /** Whether a setup code is the one printed on the server's console. */
   setupCodeOk(code: unknown): boolean;
   /** Called once the first account exists, so the server stops being "setup only". */
@@ -95,12 +97,13 @@ async function route(ctx: AccountsContext): Promise<boolean> {
   };
 
   if (pathname === "/api/accounts/status" && method === "GET") {
-    return send({ hasAdmin: accounts.hasAdmin(), signup: accounts.signupMode(), me: describe(me), onThisMachine: ctx.fromThisMachine(req) });
+    return send({ hasAdmin: accounts.hasAdmin(), signup: accounts.signupMode(), me: describe(me), onThisMachine: ctx.fromThisMachine(req), computerAdmin: ctx.computerAdmin() });
   }
 
   if (pathname === "/api/accounts/setup" && method === "POST") {
     const b = await body();
-    const authorised = ctx.fromThisMachine(req) || ctx.setupCodeOk(b.setupCode);
+    // The computer's administrator, at the machine, or anyone holding the code from the server's console.
+    const authorised = (ctx.fromThisMachine(req) && ctx.computerAdmin()) || ctx.setupCodeOk(b.setupCode);
     const user = await accounts.setupAdmin(str(b.name, 40), str(b.password, MAX_PASSWORD_LENGTH + 1), authorised);
     ctx.onSetup();
     const { token } = await accounts.login(user.name, str(b.password, MAX_PASSWORD_LENGTH + 1));

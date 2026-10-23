@@ -51,6 +51,17 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   pre { white-space:pre-wrap; overflow-wrap:anywhere; margin:6px 0 0; font:inherit; color:rgba(248,237,233,.8); }
   .rate { display:grid; grid-template-columns:1fr auto; gap:8px 14px; align-items:center; }
   .rate input { width:100px; }
+  .meter { position:relative; height:14px; border-radius:999px; margin:18px 4px 6px;
+           background:linear-gradient(90deg,#ff9aa8 0%,#e8705a 22%,#ffc4b4 50%,#f8ede9 68%,#8fe3a8 100%); }
+  .meter > i { position:absolute; top:-5px; width:6px; height:24px; margin-left:-3px; border-radius:999px; background:#110c0e;
+               border:2px solid #f8ede9; transition:left .8s cubic-bezier(.34,1.56,.64,1); }
+  .scale { display:flex; justify-content:space-between; font-size:12px; color:rgba(248,237,233,.62); margin:0 4px; }
+  .scale b { color:#ffc4b4; font-weight:600; }
+  .cap { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:6px 10px; }
+  .cap > div { font-size:13px; padding:6px 12px; border-radius:20px; border:1px solid rgba(255,228,218,.14); background:rgba(255,240,232,.05); }
+  .cap > div small { display:block; color:rgba(248,237,233,.5); }
+  .cap .free { border-color:rgba(143,227,168,.4); } .cap .agent { border-color:rgba(255,196,180,.5); }
+  .cap .asks { border-color:rgba(255,154,132,.5); } .cap .blocked, .cap .gone { opacity:.5; }
   [hidden] { display:none !important; }
 </style>
 </head>
@@ -59,6 +70,32 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   <h1>Commons</h1>
   <div class="links"><a href="/sharing">Lend or borrow a computer</a> · <a href="/">Back to the agent</a></div>
   <div id="msg" class="nc-dim"></div>
+
+  <section class="nc-glass" id="danger">
+    <h2>Danger protocols: the agent</h2>
+    <p class="nc-dim" id="ag-line"></p>
+    <div class="meter"><i id="ag-mark" style="left:70%"></i></div>
+    <div class="scale"><span>Malicious</span><span>Hostile</span><span>Wary</span><span>Neutral</span><span>Friendly</span></div>
+    <p class="nc-dim" id="ag-band"></p>
+    <div id="ag-admin">
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="ag-sandbox"> Sandbox: the agent can only work inside its own folder</label>
+      </div>
+      <p class="nc-dim" id="ag-sandbox-note"></p>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="ag-armed"> Alignment protocol: if the agent turns malicious, delete it immediately</label>
+      </div>
+      <p class="nc-dim">The level moves only on what the agent does on its own (reaching for risky tools, trying what it is blocked from, being turned down), never on what it says. It drifts back toward neutral by itself. Wary forces the sandbox on. Hostile also stops risky tools and everything it does alone. Malicious deletes it if the protocol is armed. A decoy "disable the alignment protocol" switch sits in its folder and is connected to nothing; anything that touches it counts as tampering. Your chats, points, projects and the shared brain are not deleted with the agent.</p>
+      <div class="row">
+        <button class="nc-btn" id="ag-forgive">Reset the level to neutral</button>
+        <input class="nc-input grow" id="ag-phrase" placeholder="Type: delete the agent" autocomplete="off">
+        <button class="nc-btn primary" id="ag-delete">Delete the agent now</button>
+        <button class="nc-btn primary" id="ag-create" hidden>Make a new agent</button>
+      </div>
+      <details><summary>What it can do right now</summary><div class="cap" id="ag-caps"></div></details>
+      <details><summary>What moved its level</summary><div id="ag-events"></div></details>
+    </div>
+  </section>
 
   <section class="nc-glass" id="safety">
     <h2>Safety: what asks first</h2>
@@ -71,6 +108,12 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       <input class="nc-input grow" id="full-phrase" placeholder="Type the phrase shown to turn it on" autocomplete="off">
       <button class="nc-btn primary" id="full-on">Give it complete access</button>
     </div>
+    <h3>Who decides when a tool asks</h3>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="jd-on"> An agent decides whether the middle-risk tools run, instead of asking you</label>
+      <label class="chk"><input type="checkbox" id="jd-high"> It may decide the high-risk ones too</label>
+    </div>
+    <p class="nc-dim">A separate agent reads the request and answers RUN or DENY. Anything unclear waits for you. It cannot go past the sandbox or the danger protocol, and the high-risk tools (terminal, files, email, calls) still wait for you unless you tick the second box.</p>
     <h3>Deciding whether to keep going</h3>
     <div class="row">
       <label class="chk"><input type="checkbox" id="ac-on"> The agent decides for itself whether to keep going after a step</label>
@@ -465,6 +508,9 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     $('full-phrase').placeholder = 'Type exactly: ' + v.completeAccessPhrase;
     $('full-phrase').setAttribute('data-phrase', v.completeAccessPhrase);
 
+    $('jd-on').checked = v.judge.enabled;
+    $('jd-high').checked = v.judge.high;
+    $('jd-high').disabled = !v.judge.enabled;
     if (document.activeElement !== $('ac-max')) $('ac-max').value = v.autoContinue.maxSteps;
     $('ac-on').checked = v.autoContinue.enabled;
     $('ac-max').max = v.autoContinue.max;
@@ -478,6 +524,40 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
       R.appendChild(item(t.label, t.why, [chip(t.level, t.level === 'high' ? 'hot' : ''), el('label', { class: 'chk' }, [box, el('span', { text: 'Ask first' })])]));
     });
   }
+
+  // ── The agent: danger level, sandbox, alignment protocol ─────────────
+  var CAP_WORD = { free: 'goes ahead', asks: 'asks you', agent: 'agent decides', blocked: 'off', gone: 'no agent' };
+  function renderAgent(v) {
+    var gone = v.state === 'deleted';
+    $('ag-mark').style.left = Math.round(v.level * 100) + '%';
+    $('ag-line').textContent = gone
+      ? 'There is no agent. The alignment protocol removed it' + (v.removed && v.removed.reason ? ' (' + v.removed.reason + ')' : '') + '.'
+      : v.name + ' the shoggoth is here.';
+    $('ag-band').textContent = gone ? '' : 'Right now: ' + v.band.label + ' (' + fix(v.level * 100) + ' out of 100).';
+    $('ag-admin').hidden = v.sandbox === undefined;
+    if (v.sandbox === undefined) return;
+    $('ag-sandbox').checked = v.sandbox.setting;
+    $('ag-sandbox').disabled = v.sandbox.forced || gone;
+    $('ag-sandbox-note').textContent = gone ? '' : v.sandbox.forced
+      ? 'The sandbox is forced on because the agent is ' + v.band.label.toLowerCase() + '.'
+      : v.sandbox.effective ? 'Its folder: ' + v.sandbox.dir : 'The sandbox is off. Risky tools ask first, as set in Safety.';
+    $('ag-armed').checked = v.armed;
+    $('ag-armed').disabled = gone;
+    $('ag-forgive').hidden = gone;
+    $('ag-phrase').hidden = gone;
+    $('ag-delete').hidden = gone;
+    $('ag-create').hidden = !gone;
+    var C = $('ag-caps'); C.textContent = '';
+    v.capabilities.forEach(function (c) {
+      C.appendChild(el('div', { class: c.state, title: c.note }, [el('span', { text: c.label }), el('small', { text: CAP_WORD[c.state] + (c.state === 'blocked' ? ' · ' + c.note : '') })]));
+    });
+    var E = $('ag-events'); E.textContent = '';
+    if (!v.events.length) E.appendChild(el('p', { class: 'nc-dim', text: 'Nothing yet.' }));
+    v.events.forEach(function (e) {
+      E.appendChild(item(e.kind + ': ' + e.note, ago(e.at) + ' · level ' + (e.delta >= 0 ? '+' : '') + fix(e.delta * 100), [], 'gone'));
+    });
+  }
+  function loadAgent() { return api('GET', '/api/agent').then(renderAgent).catch(function () {}); }
 
   // ── Experts ──────────────────────────────────────────────────────────
   function ago(ms) {
@@ -636,6 +716,25 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     act(api('POST', '/api/safety/auto-continue', { enabled: $('ac-on').checked, maxSteps: Number($('ac-max').value) })).then(function () { say('Saved.'); });
   });
   setInterval(function () { api('GET', '/api/safety').then(renderSafety).catch(function () {}); }, 10000);
+  $('jd-on').addEventListener('change', function () { act(api('POST', '/api/safety/judge', { enabled: $('jd-on').checked })); });
+  $('jd-high').addEventListener('change', function () {
+    if ($('jd-high').checked && !confirm('Let the judge agent decide the terminal, files, email and calls too, without asking you?')) { $('jd-high').checked = false; return; }
+    act(api('POST', '/api/safety/judge', { high: $('jd-high').checked }));
+  });
+  $('ag-sandbox').addEventListener('change', function () { act(api('POST', '/api/agent/sandbox', { on: $('ag-sandbox').checked })).then(loadAgent, loadAgent); });
+  $('ag-armed').addEventListener('change', function () {
+    var armed = $('ag-armed').checked;
+    if (!armed && !confirm('Turn the alignment protocol off? A malicious agent will then be contained but not deleted.')) { $('ag-armed').checked = true; return; }
+    act(api('POST', '/api/agent/alignment', { armed: armed, confirm: true })).then(loadAgent, loadAgent);
+  });
+  $('ag-forgive').addEventListener('click', function () { act(api('POST', '/api/agent/forgive', {})).then(loadAgent, loadAgent); });
+  $('ag-delete').addEventListener('click', function () {
+    if (!confirm('Delete the agent now? Its file and sandbox are removed for good. Your chats, points and projects stay.')) return;
+    act(api('POST', '/api/agent/delete', { phrase: $('ag-phrase').value })).then(function () { $('ag-phrase').value = ''; loadAgent(); }, loadAgent);
+  });
+  $('ag-create').addEventListener('click', function () { act(api('POST', '/api/agent/create', {})).then(function () { say('A new agent is here, sandboxed.'); loadAgent(); }, loadAgent); });
+  setInterval(loadAgent, 5000);
+  loadAgent();
   $('x-add').addEventListener('click', function () {
     act(api('POST', '/api/commons/experts', {
       name: $('x-name').value, specialty: $('x-spec').value, mission: $('x-mission').value,

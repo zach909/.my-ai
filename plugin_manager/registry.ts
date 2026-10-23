@@ -359,7 +359,10 @@ export class PluginRegistry {
    * approval is not called at all, and dispatch returns the gate's message
    * ("waiting for your permission") in place of a result.
    */
-  private gate: { check(pluginId: string, input: string, score: number, acts?: boolean): { allow: true } | { allow: false; message: string } } | null = null;
+  private gate: {
+    check(pluginId: string, input: string, score: number, acts?: boolean): { allow: true } | { allow: false; message: string };
+    checkAsync?(pluginId: string, input: string, score: number, acts?: boolean): Promise<{ allow: true } | { allow: false; message: string }>;
+  } | null = null;
 
   setGate(gate: PluginRegistry["gate"]): void {
     this.gate = gate;
@@ -441,7 +444,9 @@ export class PluginRegistry {
       if (!plugin) continue;
       let acts: boolean | undefined;
       try { acts = (plugin as { wouldAct?(m: unknown): boolean }).wouldAct?.(input); } catch { acts = true; }  // a predicate that throws is treated as "would act": fail closed
-      const verdict = this.gate?.check(pluginId, input, scoreOf.get(pluginId) ?? 0, acts);
+      const verdict = this.gate?.checkAsync
+        ? await this.gate.checkAsync(pluginId, input, scoreOf.get(pluginId) ?? 0, acts)
+        : this.gate?.check(pluginId, input, scoreOf.get(pluginId) ?? 0, acts);
       if (verdict && verdict.allow === false) {
         // Held, not run. The tool never saw this message.
         this.lastHandledBy = null;
