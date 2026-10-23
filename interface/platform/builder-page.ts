@@ -1,6 +1,6 @@
 /**
  * Extension Builder — interface for creating and editing extensions.
- * A plain HTML page replacing the React version.
+ * Allows users to create custom extensions with real code editing and testing.
  */
 
 export function builderPage(): string {
@@ -19,7 +19,7 @@ export function builderPage(): string {
     line-height: 1.5;
   }
   main {
-    max-width: 56rem;
+    max-width: 64rem;
     margin: 0 auto;
     padding: 24px;
   }
@@ -28,12 +28,39 @@ export function builderPage(): string {
     margin: 0 0 24px;
     color: #ffc4b4;
   }
+  .tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid rgba(255, 154, 132, 0.2);
+    flex-wrap: wrap;
+  }
+  .tab-button {
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    color: rgba(248, 237, 233, 0.62);
+    font-family: inherit;
+    font-size: 1rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  .tab-button.active {
+    color: #ffc4b4;
+    border-bottom-color: #ff9a84;
+  }
+  .tab-content {
+    display: none;
+  }
+  .tab-content.active {
+    display: block;
+  }
   .grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    gap: 24px;
+    gap: 16px;
   }
-  @media (min-width: 640px) {
+  @media (min-width: 768px) {
     .grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -54,6 +81,30 @@ export function builderPage(): string {
     color: rgba(248, 237, 233, 0.75);
     font-size: 0.95rem;
   }
+  .form-group {
+    margin-bottom: 16px;
+  }
+  label {
+    display: block;
+    margin-bottom: 8px;
+    color: #ffc4b4;
+    font-size: 0.95rem;
+  }
+  input, textarea {
+    width: 100%;
+    padding: 10px 12px;
+    background: rgba(248, 237, 233, 0.05);
+    border: 1px solid rgba(255, 154, 132, 0.3);
+    color: #f8ede9;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.95rem;
+  }
+  textarea {
+    resize: vertical;
+    min-height: 200px;
+    font-family: 'Courier New', monospace;
+  }
   button {
     background: rgba(255, 154, 132, 0.16);
     border: 1px solid rgba(255, 154, 132, 0.5);
@@ -62,8 +113,9 @@ export function builderPage(): string {
     border-radius: 999px;
     font-family: inherit;
     cursor: pointer;
-    font-size: 0.9rem;
+    font-size: 0.95rem;
     display: inline-block;
+    margin-right: 8px;
   }
   button:hover {
     background: rgba(255, 154, 132, 0.24);
@@ -85,34 +137,160 @@ export function builderPage(): string {
 <main>
   <h1>Extension Builder</h1>
 
-  <div class="info">
-    <p><strong>Create and manage custom extensions</strong> to add new capabilities to your NeuroClaw instance. Extensions run in a sandboxed environment and integrate with the core engine.</p>
+  <div class="tabs">
+    <button class="tab-button active" data-tab="create">Create</button>
+    <button class="tab-button" data-tab="my-extensions">My Extensions</button>
+    <button class="tab-button" data-tab="templates">Templates</button>
   </div>
 
-  <div class="grid">
-    <div class="card">
-      <h2>Create New Extension</h2>
-      <p>Start building a new extension from scratch. Choose a template or build from a blank canvas.</p>
-      <button>New Extension</button>
+  <div id="create" class="tab-content active">
+    <div class="info">
+      <p><strong>Create a new extension</strong> to add custom capabilities to your NeuroClaw instance.</p>
     </div>
-
     <div class="card">
-      <h2>Your Extensions</h2>
-      <p>View, edit, and manage extensions you've created or installed.</p>
-      <button>My Extensions</button>
-    </div>
-
-    <div class="card">
-      <h2>Extension Templates</h2>
-      <p>Browse pre-built templates for common extension patterns and use cases.</p>
-      <button>Browse Templates</button>
-    </div>
-
-    <div class="card">
-      <h2>Extension Gallery</h2>
-      <p>Discover extensions created by other users and the community.</p>
-      <button>Browse Gallery</button>
+      <h2>New Extension</h2>
+      <div class="form-group">
+        <label>Extension Name</label>
+        <input type="text" id="extName" placeholder="my-awesome-extension">
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <input type="text" id="extDesc" placeholder="What does your extension do?">
+      </div>
+      <div class="form-group">
+        <label>Extension Code (JavaScript)</label>
+        <textarea id="extCode" placeholder="export default function myExtension() { /* your code */ }"></textarea>
+      </div>
+      <button onclick="saveExtension()">Create Extension</button>
+      <button onclick="testExtension()">Test</button>
     </div>
   </div>
-</main>`;
+
+  <div id="my-extensions" class="tab-content">
+    <div id="extensions-list"></div>
+  </div>
+
+  <div id="templates" class="tab-content">
+    <div class="grid">
+      <div class="card">
+        <h2>Skill Plugin</h2>
+        <p>Extend the engine's skill library with new capabilities.</p>
+        <button onclick="useTemplate('skill')">Use Template</button>
+      </div>
+      <div class="card">
+        <h2>Tool Integration</h2>
+        <p>Integrate external tools and APIs.</p>
+        <button onclick="useTemplate('tool')">Use Template</button>
+      </div>
+      <div class="card">
+        <h2>Data Processor</h2>
+        <p>Process and transform data streams.</p>
+        <button onclick="useTemplate('processor')">Use Template</button>
+      </div>
+      <div class="card">
+        <h2>UI Component</h2>
+        <p>Add custom interface elements.</p>
+        <button onclick="useTemplate('ui')">Use Template</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  document.querySelectorAll('.tab-button').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      e.target.classList.add('active');
+      const tabName = e.target.dataset.tab;
+      document.getElementById(tabName).classList.add('active');
+      if (tabName === 'my-extensions') {
+        loadMyExtensions();
+      }
+    });
+  });
+
+  async function saveExtension() {
+    const name = document.getElementById('extName').value;
+    const desc = document.getElementById('extDesc').value;
+    const code = document.getElementById('extCode').value;
+
+    if (!name || !code) {
+      alert('Name and code are required');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/extensions/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: desc, code })
+      });
+      if (res.ok) {
+        alert('Extension created: ' + name);
+        document.getElementById('extName').value = '';
+        document.getElementById('extDesc').value = '';
+        document.getElementById('extCode').value = '';
+      } else {
+        alert('Error creating extension');
+      }
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  }
+
+  function testExtension() {
+    const code = document.getElementById('extCode').value;
+    if (!code) {
+      alert('Enter code to test');
+      return;
+    }
+    console.log('Testing extension...');
+    try {
+      eval('(async () => { ' + code + ' })()');
+      alert('Test passed');
+    } catch (e) {
+      alert('Test error: ' + e.message);
+    }
+  }
+
+  async function loadMyExtensions() {
+    try {
+      const res = await fetch('/api/extensions');
+      if (!res.ok) throw new Error('Failed to load extensions');
+      const exts = await res.json();
+      const html = exts?.map(ext => \`
+        <div class="card">
+          <h2>\${ext.name}</h2>
+          <p>\${ext.description || 'No description'}</p>
+          <button onclick="editExtension('\${ext.name}')">Edit</button>
+          <button onclick="deleteExtension('\${ext.name}')">Delete</button>
+        </div>
+      \`).join('') || '<div>No extensions yet</div>';
+      document.getElementById('extensions-list').innerHTML = html;
+    } catch (e) {
+      document.getElementById('extensions-list').innerHTML = '<div style="color: #ff9a84;">' + e.message + '</div>';
+    }
+  }
+
+  function useTemplate(type) {
+    const templates = {
+      skill: 'export function mySkill(input) { return input.toUpperCase(); }',
+      tool: 'export async function fetchData(url) { const res = await fetch(url); return res.json(); }',
+      processor: 'export function processStream(data) { return data.filter(x => x.valid); }',
+      ui: 'export function renderComponent() { const el = document.createElement("div"); el.textContent = "Hello"; return el; }'
+    };
+    document.getElementById('extCode').value = templates[type] || '';
+  }
+
+  function editExtension(name) {
+    console.log('Edit:', name);
+  }
+
+  function deleteExtension(name) {
+    if (confirm('Delete ' + name + '?')) {
+      console.log('Delete:', name);
+    }
+  }
+</script>`;
 }

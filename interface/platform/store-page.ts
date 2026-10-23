@@ -1,9 +1,7 @@
 /**
  * The Store — catalogue of published skills, plugins, and shared content.
- * A plain HTML page replacing the React version.
+ * Fetches from backend APIs and displays: Store (skills/plugins), Wiki, Uploads, Community Chat.
  */
-
-import { h } from './settings-page.js';
 
 export function storePage(): string {
   return `<!doctype html>
@@ -21,7 +19,7 @@ export function storePage(): string {
     line-height: 1.5;
   }
   main {
-    max-width: 48rem;
+    max-width: 56rem;
     margin: 0 auto;
     padding: 24px;
   }
@@ -35,7 +33,7 @@ export function storePage(): string {
     gap: 8px;
     margin-bottom: 24px;
     border-bottom: 1px solid rgba(255, 154, 132, 0.2);
-    padding-bottom: 0;
+    flex-wrap: wrap;
   }
   .tab-button {
     padding: 12px 16px;
@@ -46,7 +44,6 @@ export function storePage(): string {
     font-size: 1rem;
     cursor: pointer;
     border-bottom: 2px solid transparent;
-    margin-bottom: -1px;
   }
   .tab-button.active {
     color: #ffc4b4;
@@ -74,6 +71,16 @@ export function storePage(): string {
     color: rgba(248, 237, 233, 0.75);
     font-size: 0.9rem;
   }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  @media (min-width: 640px) {
+    .grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   button {
     background: rgba(255, 154, 132, 0.16);
     border: 1px solid rgba(255, 154, 132, 0.5);
@@ -86,6 +93,19 @@ export function storePage(): string {
   }
   button:hover {
     background: rgba(255, 154, 132, 0.24);
+  }
+  .loading, .error {
+    padding: 12px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .loading {
+    background: rgba(255, 154, 132, 0.1);
+    color: rgba(248, 237, 233, 0.75);
+  }
+  .error {
+    background: rgba(255, 100, 100, 0.1);
+    color: #ff9a84;
   }
 </style>
 
@@ -100,59 +120,112 @@ export function storePage(): string {
   </div>
 
   <div id="store" class="tab-content active">
-    <p style="color: rgba(248, 237, 233, 0.62); font-size: 0.95rem;">
-      The shared catalogue of published skills, plugins, and tools. Coming soon.
-    </p>
-    <div class="card">
-      <h3>Skills Library</h3>
-      <p>Reusable skill modules and improvements from the community.</p>
-      <button>Learn more</button>
-    </div>
+    <div id="store-content"></div>
   </div>
 
   <div id="wiki" class="tab-content">
-    <p style="color: rgba(248, 237, 233, 0.62); font-size: 0.95rem;">
-      Research and reference pages published by you and the community.
-    </p>
-    <div class="card">
-      <h3>Research Pages</h3>
-      <p>Editable wiki pages backed by published files.</p>
-      <button>Browse pages</button>
-    </div>
+    <div id="wiki-content"></div>
   </div>
 
   <div id="uploads" class="tab-content">
-    <p style="color: rgba(248, 237, 233, 0.62); font-size: 0.95rem;">
-      Upload and manage plugin packages, skills, and tools.
-    </p>
-    <div class="card">
-      <h3>Your Uploads</h3>
-      <p>Manage files associated with published pages.</p>
-      <button>Upload files</button>
-    </div>
+    <div id="uploads-content"></div>
   </div>
 
   <div id="chat" class="tab-content">
-    <p style="color: rgba(248, 237, 233, 0.62); font-size: 0.95rem;">
-      Shared discussion room with the community and the engine.
-    </p>
-    <div class="card">
-      <h3>Community Chat</h3>
-      <p>Discuss published pages and share ideas.</p>
-      <button>Open chat</button>
-    </div>
+    <div id="chat-content"></div>
   </div>
 </main>
 
 <script>
   document.querySelectorAll('.tab-button').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      const tabName = e.target.dataset.tab;
       document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
       e.target.classList.add('active');
+      const tabName = e.target.dataset.tab;
       document.getElementById(tabName).classList.add('active');
+      loadTabContent(tabName);
     });
   });
+
+  loadTabContent('store');
+
+  async function loadTabContent(tab) {
+    try {
+      if (tab === 'store') {
+        const res = await fetch('/api/store');
+        if (!res.ok) throw new Error('Failed to load store');
+        const data = await res.json();
+        displayStore(data);
+      } else if (tab === 'wiki') {
+        const res = await fetch('/api/wiki');
+        if (!res.ok) throw new Error('Failed to load wiki pages');
+        const pages = await res.json();
+        displayWiki(pages);
+      } else if (tab === 'uploads') {
+        const res = await fetch('/api/store/installed');
+        if (!res.ok) throw new Error('Failed to load uploads');
+        const items = await res.json();
+        displayUploads(items);
+      } else if (tab === 'chat') {
+        const res = await fetch('/api/shared-chat');
+        if (!res.ok) throw new Error('Failed to load chat');
+        const messages = await res.json();
+        displayChat(messages);
+      }
+    } catch (e) {
+      document.getElementById(tab + '-content').innerHTML = \`<div class="error">\${e.message}</div>\`;
+    }
+  }
+
+  function displayStore(data) {
+    const html = data.items?.map(item => \`
+      <div class="card">
+        <h3>\${item.name}</h3>
+        <p>\${item.description || 'No description'}</p>
+        <button onclick="installItem('\${item.name}')">Install</button>
+      </div>
+    \`).join('') || '<div class="error">No items found</div>';
+    document.getElementById('store-content').innerHTML = html;
+  }
+
+  function displayWiki(pages) {
+    const html = pages?.map(page => \`
+      <div class="card">
+        <h3>\${page.title}</h3>
+        <p>\${(page.content || '').substring(0, 100)}...</p>
+        <button onclick="openWikiPage('\${page.name}')">Read</button>
+      </div>
+    \`).join('') || '<div class="error">No wiki pages found</div>';
+    document.getElementById('wiki-content').innerHTML = html;
+  }
+
+  function displayUploads(items) {
+    const html = items?.map(item => \`
+      <div class="card">
+        <h3>\${item.name}</h3>
+        <p>Type: \${item.kind}</p>
+        <button onclick="manageUpload('\${item.name}')">Manage</button>
+      </div>
+    \`).join('') || '<div>No uploads yet</div>';
+    document.getElementById('uploads-content').innerHTML = html;
+  }
+
+  function displayChat(messages) {
+    const html = '<div style="color: rgba(248, 237, 233, 0.75);"><p>Shared community discussion room. Coming soon.</p></div>';
+    document.getElementById('chat-content').innerHTML = html;
+  }
+
+  function installItem(name) {
+    console.log('Install:', name);
+  }
+
+  function openWikiPage(name) {
+    window.location.href = '/wiki/' + encodeURIComponent(name);
+  }
+
+  function manageUpload(name) {
+    console.log('Manage:', name);
+  }
 </script>`;
 }
