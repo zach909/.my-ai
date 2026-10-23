@@ -65,6 +65,8 @@ import { PerformanceMonitor, ComponentMetrics, SystemHealth } from "../models &&
 import { CallHistoryPlugin } from "../plugins/call-history.js";
 import { PhoneCallsPlugin } from "../plugins/phone-calls.js";
 import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
+import { LinuxPermissionToolsPlugin } from "../plugins/linux-permission-plugin.js";
+import { rootAccessRequest, manageService, helperStatus, loadBrokerSettings } from "../models && skills/core/linux-privilege-broker.js";
 import type { SkillDefinition } from "../plugin_manager/types.js";
 import { embedText } from "../models && skills/core/neuro-lang.js";
 import { ToolPlugin } from "../plugin_manager/sdk.js";
@@ -761,6 +763,37 @@ export class NeuroclawSystem {
     const phoneCallsInstance = this.pluginRegistry.getPluginInstance("phone-calls") as PhoneCallsPlugin | undefined;
     if (callHistoryInstance && phoneCallsInstance) {
       callHistoryInstance.setSource(phoneCallsInstance);
+    }
+
+    // Give the Linux permission tools their real host: a grant store the user
+    // controls in Settings, and native adapters that only run through pkexec
+    // (the OS's own authentication prompt -- see models && skills/core/
+    // linux-privilege-broker.ts). Without this, every one of those tools fails
+    // closed with "host is not configured"; most still do, honestly, because
+    // only the systemd-service actions have a real adapter behind them.
+    const linuxPermissionTools = this.pluginRegistry.getPluginInstance("linux-permission-tools") as LinuxPermissionToolsPlugin | undefined;
+    if (linuxPermissionTools) {
+      linuxPermissionTools.configure({
+        isGranted: (_extensionId, permission) => {
+          if (!loadBrokerSettings().enabled) return false;
+          if (permission === "linux-root-access-request" || permission === "linux-polkit-elevation" || permission === "linux-sudo-admin" || permission === "linux-privileged-helper-manage") return true;
+          return false;
+        },
+        // pkexec shows its own authentication dialog for every call these
+        // adapters make; that dialog IS the approval. Nothing here collects
+        // a password or widens access beyond what the adapter itself does.
+        requestApproval: async () => true,
+        adapters: {
+          "linux-root-access-request": async (args) => rootAccessRequest(String(args.operation ?? ""), String(args.target ?? "")),
+          "linux-polkit-elevation": async (args) => manageService(String(args.action ?? "status"), String(args.target ?? "")),
+          "linux-sudo-admin": async (args) => manageService(String(args.action ?? "status"), String(args.target ?? "")),
+          "linux-privileged-helper-manage": async (args) => {
+            const action = String(args.action ?? "status");
+            if (action !== "status") return { ok: false, error: `"${action}" is not implemented. This app does not install, update, or remove a privileged helper automatically -- add the service you need to the allowlist in Settings > Access instead.` };
+            return helperStatus();
+          },
+        },
+      });
     }
 
     // Activate all plugins
