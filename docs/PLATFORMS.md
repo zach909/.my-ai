@@ -54,19 +54,24 @@ and the permissions each OS prompts for.
 | Settings | yes | yes | yes | yes | yes | yes |
 | Computer access | yes | yes | yes | no | partly | partly |
 | Tool safety and approvals | yes | yes | yes | no | partly | partly |
-| Remote access password | yes | yes | yes | partly | partly | partly |
-| Accounts | yes | yes | yes | partly | partly | partly |
-| Commons | yes | yes | yes | partly | partly | partly |
-| Self-improvement | yes | yes | yes | no | partly | no |
+| Remote access password | yes | yes | yes | no | partly | partly |
+| Accounts | yes | yes | yes | no | partly | partly |
+| Commons | yes | yes | yes | no | partly | partly |
+| Self-improvement | partly | partly | partly | no | partly | no |
 | Desktop control | partly | partly | no | no | partly | no |
 | Phone sync | no | no | no | no | yes | yes |
 | Phone apps | no | no | no | no | yes | yes |
 | Desktop app (launcher and installers) | yes | yes | yes | no | no | no |
-| Source updates | yes | yes | yes | partly | partly | partly |
+| Source updates | yes | yes | yes | no | partly | partly |
 | App update status | yes | yes | yes | yes | yes | yes |
 | Installable web app | yes | yes | yes | yes | yes | yes |
 | Chrome extension launcher | no | no | no | yes | no | no |
 | Versioning, release manifest, change-driven builds | yes | yes | yes | yes | yes | yes |
+| Root / system access | no | yes | no | no | no | no |
+| Terminal | yes | yes | yes | no | partly | partly |
+| Agent sandbox | yes | yes | yes | no | partly | partly |
+| AI monitor (judge agent) | yes | yes | yes | no | partly | partly |
+| Alignment protocol (kill switch) | yes | yes | yes | no | partly | partly |
 <!-- parity-matrix:end -->
 
 <!-- capability-matrix:begin -->
@@ -206,24 +211,38 @@ self-authored-skill checks), so this work adds no regression there.
 
 ## Unfinished, and decisions that are yours
 
-1. **Third-party code that was already in the repo** (AGENTS.md rule), left as found: `package.json` still lists the React,
-   Vite and three stack; `src/`, `dist/app`, `dist/assets` and a tracked `node_modules/` hold third-party code;
-   `desktop-app/` is an Electron project (no longer used for installers); the Android Gradle wrapper jar; the iOS CI job uses
-   Homebrew `xcodegen`. `node scripts/check-no-third-party.mjs` reports tens of thousands of problems because of these, none of
-   them added here; every file this work added passes it.
+1. **Third-party code that was in the repo**: the React/Vite/three/Electron stack, the Gradle wrapper jar, and the tracked
+   `node_modules/` have all been removed; `mobile/brain`'s Vite build was replaced with this project's own bundler
+   (`scripts/release/build-mobile-brain.mjs`). What is left, deliberately: `model && skills manager/` (torch, numpy,
+   sentencepiece) is a separate, documented opt-in "heavy tier" with its own test suite defending that it stays declared there
+   (`test/core/requirements.test.ts`) -- adding it to `.third-party-allowlist.json` is the owner's call, not something to code
+   around. The iOS CI job still uses Homebrew `xcodegen` to generate the Xcode project from `project.yml`.
 2. **Bundling the Node runtime** into the desktop packages is the one new thing a package carries that is not this repo's code.
    It is the `node` binary of the CI runner for that platform, copied at build time, never committed or downloaded, and it is what
    lets the app start without Node installed. If you would rather require Node, say so and the packagers drop it.
-3. **The old React dashboard** (`/app/*`: Store, Extension Builder, Self-improvement UIs) is still the only interface for those
-   three features, ships inside the desktop packages, and needs WebGL for its animation. Rebuilding those screens as plain pages
-   in the house style is the way to retire it; it was too large to do safely here.
-4. **The phone apps' on-phone brain** (`mobile/brain/bundle/neuroclaw-brain.js`) is a committed bundle that cannot be regenerated
-   (its build tool is gone), so engine changes reach phones through the server's pages but not through that bundle.
-5. **Signing and publishing**: Windows code signing, Google Play, the App Store and TestFlight are not wired (they need your
+3. **Store, Extension Builder and Self-improvement** are now plain pages (`interface/platform/store-page.ts`,
+   `builder-page.ts`, `self-improvement-page.ts`) at `/store`, `/builder`, `/self-improvement`, served the same way as
+   Settings -- no React, no WebGL dependency. They call real backend routes (`/api/store`, `/api/wiki`,
+   `/api/store/installed`) rather than mock data, but the Extension Builder's own save/test/template flow and the
+   Self-improvement dashboard's metrics are new UI that has not been proven against the live engine the way the rest of
+   this document's tests prove the older pages; treat them as a first pass, not a finished audit.
+4. **The phone apps' on-phone brain** (`mobile/brain/bundle/neuroclaw-brain.js`) is now rebuilt by this project's own
+   bundler and verified in a bare `vm.createContext({})` sandbox (init, chat, teach/ask, a full export/import round trip).
+   Rebuild it with `npm run build:phone-brain` after any engine change reachable from `mobile/brain/src/index.ts`; nothing
+   does that automatically yet, so a forgotten rebuild is a real way for the phone app to drift from the PC.
+5. **Root/system access on Linux** (`models && skills/core/linux-privilege-broker.ts`) only has a real adapter for one
+   operation: a systemd unit action via `pkexec`, gated by a user-controlled allowlist (Settings > Access). The tool
+   descriptors in `plugins/linux-permission-tools.ts` cover 100+ other capabilities (package management, firewall rules,
+   local accounts, mounting, ACLs, ...); all of them still fail closed with an honest "not implemented" rather than a fake
+   success. Windows and macOS have no equivalent privilege-broker adapter at all yet.
+6. **Multiple virtual desktops/workspaces** and **true multi-seat input** (distinguishing separate physical mice/keyboards)
+   were asked for and are not built. Virtual workspaces are a reasonable UI feature to add to the shared interface later;
+   multi-seat hardware input has no standard web API to detect which physical device sent an event, so it cannot be done
+   honestly in a browser-based app on any platform without a native, per-OS layer this project does not have.
+7. **Signing and publishing**: Windows code signing, Google Play, the App Store and TestFlight are not wired (they need your
    certificates and accounts); macOS signing and notarisation are wired but wait for the secrets above.
-6. **Intel macOS** is not built (add a `macos-15-intel` job when you want it); **Linux arm64** (ARM Chromebooks) builds only from
+8. **Intel macOS** is not built (add a `macos-15-intel` job when you want it); **Linux arm64** (ARM Chromebooks) builds only from
    a manual run with "linux_arm64" ticked, because it needs a GitHub-hosted ARM runner.
-7. No tray icon, no macOS Accessibility or screen capture, and no Windows UI automation in the packaged desktop apps (see Limits).
-8. Settings of the older kind that still live on the legacy dashboard are linked from Settings > More rather than rebuilt.
-9. The ring icon and the extension's icon are the cord around the sphere, drawn in code, because the owner's rule is that no
-   picture or logo is used. If you want a different mark for the stores, replace `interface/platform/icon.ts`.
+9. No tray icon, no macOS Accessibility or screen capture, and no Windows UI automation in the packaged desktop apps (see Limits).
+10. The ring icon and the extension's icon are the cord around the sphere, drawn in code, because the owner's rule is that no
+    picture or logo is used. If you want a different mark for the stores, replace `interface/platform/icon.ts`.

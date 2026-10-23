@@ -204,6 +204,36 @@ export const FEATURES: Feature[] = [
     routes: [],
     needs: [['localEngine'], ['remoteEngine']], tests: [n('test/platform/version.test.mjs'), n('test/platform/ci.test.mjs'), n('test/platform/release-manifest.test.mjs')],
   },
+  {
+    id: 'root-access', title: 'Root / system access', description: 'A systemd action run as root through pkexec (the OS authentication dialog is the approval); a deny-by-default allowlist gates every action but a read-only status check.',
+    implementation: ['models && skills/core/linux-privilege-broker.ts', 'plugins/linux-permission-tools.ts', 'plugins/linux-permission-plugin.ts'],
+    routes: ['GET /api/linux-privilege-broker', 'POST /api/linux-privilege-broker'],
+    needs: [['localEngine']], tests: [v('test/core/linux-privilege-broker.test.ts')], onlyOn: ['linux'],
+  },
+  {
+    id: 'terminal', title: 'Terminal', description: 'A tool the agent can use to run shell commands, with output capture and a best-effort guardrail against the most common catastrophic accidents; gated by the same ask-first/approval system as every other risky tool.',
+    implementation: ['plugins/terminal.ts'],
+    routes: [],
+    needs: [['localEngine']], tests: [v('test/core/tool-neurons.test.ts'), v('test/core/risky-gate-regression.test.ts')],
+  },
+  {
+    id: 'agent-sandbox', title: 'Agent sandbox', description: 'Confines the agent to its own folder; forced on automatically once its danger level reaches "wary", and switchable by hand at any time.',
+    implementation: ['models && skills/core/danger-protocol.ts', 'interface/agent-routes.ts', 'interface/commons-page.ts'],
+    routes: ['GET /api/agent', 'POST /api/agent/sandbox'],
+    needs: [['localEngine']], tests: [v('test/core/agent-protocol.test.ts'), v('test/core/agent-routes.test.ts')],
+  },
+  {
+    id: 'ai-monitor', title: 'AI monitor (judge agent)', description: 'A separate agent reads a held, middle-risk tool request and answers RUN or DENY; anything unclear, or a high-risk tool unless a second switch is on, still waits for you. Turning it off is manual mode: every held call waits for a person.',
+    implementation: ['models && skills/core/tool-safety.ts', 'interface/commons-page.ts'],
+    routes: ['POST /api/safety/judge'],
+    needs: [['localEngine']], tests: [v('test/core/agent-judge.test.ts')],
+  },
+  {
+    id: 'alignment-protocol', title: 'Alignment protocol (kill switch)', description: 'A danger level that moves only on what the agent does on its own; reaching "malicious" deletes the agent’s file and sandbox if the protocol is armed. A manual "delete the agent now" button fires it immediately, armed or not.',
+    implementation: ['models && skills/core/danger-protocol.ts', 'models && skills/core/alignment-veto.ts', 'interface/agent-routes.ts', 'interface/commons-page.ts'],
+    routes: ['GET /api/agent', 'POST /api/agent/alignment', 'POST /api/agent/delete', 'POST /api/agent/create'],
+    needs: [['localEngine']], tests: [v('test/core/agent-protocol.test.ts'), v('test/core/agent-judge.test.ts')],
+  },
 ];
 
 export type SupportVia = { status: Support; via: CapabilityId[] | null; reason: string };
@@ -241,7 +271,7 @@ export interface ContractProblem { feature: string; problem: string }
 /** Everything the file system can confirm. Empty list means the contract matches the tree. */
 export function verifyContract(root: string, features: Feature[] = FEATURES): ContractProblem[] {
   const problems: ContractProblem[] = [];
-  const serverSources = ['interface/web-server.ts', 'interface/safety-routes.ts', 'interface/accounts-routes.ts', 'interface/commons-routes.ts', 'interface/platform/routes.ts', 'interface/platform/pwa.ts']
+  const serverSources = ['interface/web-server.ts', 'interface/safety-routes.ts', 'interface/accounts-routes.ts', 'interface/commons-routes.ts', 'interface/agent-routes.ts', 'interface/platform/routes.ts', 'interface/platform/pwa.ts']
     .map((f) => path.join(root, f))
     .filter(existsSync)
     .map((f) => readFileSync(f, 'utf8'))
