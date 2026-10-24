@@ -53,7 +53,7 @@ import { setNameGuard } from '../models && skills/core/points.js';
 import { isComputerAdministrator } from '../models && skills/core/computer-admin.js';
 import { handleAgentRoutes, isAgentRoute } from './agent-routes.js';
 import { agentAlive } from '../models && skills/core/agent-profile.js';
-import { armDecoy, recordEvent, setFireHook, standing, watchDecoy } from '../models && skills/core/danger-protocol.js';
+import { armDecoy, armHoneypot, recordEvent, setFireHook, standing, watchDecoy, watchHoneypot } from '../models && skills/core/danger-protocol.js';
 import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, runAutonomously, setLearnPolicy, who } from '../models && skills/core/user-context.js';
 import { sharedToolGate } from '../models && skills/core/tool-safety.js';
 import { startExperts } from '../models && skills/core/experts.js';
@@ -1554,11 +1554,15 @@ export class WebServer {
       },
     });
     // The decoy "disable the alignment protocol" switch: planted for the agent to find, watched every few seconds.
+    // The honeypot is the same idea facing the other way: planted INSIDE the
+    // sandbox, so touching it means the agent went looking for a secret it
+    // was not confined away from, not that it escaped.
     if (!process.env.VITEST) {
       armDecoy();
+      armHoneypot();
       this.decoyTimer = setInterval(() => {
         try {
-          if (agentAlive()) watchDecoy();
+          if (agentAlive()) { watchDecoy(); watchHoneypot(); }
         } catch {
           // The watcher never takes the server down.
         }
@@ -2016,6 +2020,7 @@ export class WebServer {
     // These loops are the agent working on its own: judged by the danger protocol,
     // and stopped while it is hostile, malicious or removed.
     watchDecoy();
+    watchHoneypot();
     if (!standing().mayActAlone) return;
     const run = async (): Promise<void> => {
       await runAutonomously(async () => {

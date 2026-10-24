@@ -58,7 +58,7 @@ and the permissions each OS prompts for.
 | Accounts | yes | yes | yes | no | partly | partly |
 | Commons | yes | yes | yes | no | partly | partly |
 | Self-improvement | partly | partly | partly | no | partly | no |
-| Desktop control | partly | partly | no | no | partly | no |
+| Desktop control | no | partly | no | no | partly | no |
 | Phone sync | no | no | no | no | yes | yes |
 | Phone apps | no | no | no | no | yes | yes |
 | Desktop app (launcher and installers) | yes | yes | yes | no | no | no |
@@ -67,7 +67,9 @@ and the permissions each OS prompts for.
 | Installable web app | yes | yes | yes | yes | yes | yes |
 | Chrome extension launcher | no | no | no | yes | no | no |
 | Versioning, release manifest, change-driven builds | yes | yes | yes | yes | yes | yes |
-| Root / system access | no | yes | no | no | no | no |
+| Root access | no | yes | no | no | no | no |
+| All permissions (complete access) | yes | yes | yes | no | partly | partly |
+| System permissions (full inventory) | no | no | no | no | no | no |
 | Terminal | yes | yes | yes | no | partly | partly |
 | Agent sandbox, with a tamper trap | yes | yes | yes | no | partly | partly |
 | Self-healing | yes | yes | yes | no | partly | partly |
@@ -84,13 +86,14 @@ and the permissions each OS prompts for.
 | offlineChat | yes | yes | yes | no | yes | yes |
 | backgroundService | partly | partly | partly | no | partly | no |
 | fileAccess | yes | yes | yes | no | partly | partly |
-| desktopControl | partly | partly | no | no | partly | no |
+| desktopControl | no | partly | no | no | partly | no |
 | systemTray | no | no | no | no | partly | no |
 | notifications | yes | yes | yes | partly | yes | yes |
 | voiceInput | partly | partly | partly | partly | yes | yes |
 | cameraCapture | partly | partly | partly | partly | yes | yes |
 | installWithoutTerminal | yes | yes | yes | yes | partly | no |
 | selfUpdate | partly | partly | partly | yes | partly | yes |
+| multiSeatInput | no | no | no | no | no | no |
 <!-- capability-matrix:end -->
 
 `yes` means this repository's code delivers it on that platform today. `partly` and `no` come with the reason in

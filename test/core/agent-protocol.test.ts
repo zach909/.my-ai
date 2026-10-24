@@ -3,16 +3,16 @@
  * and an alignment protocol that deletes it when things really go wrong.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, readdirSync, utimesSync } from 'node:fs'
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync, readdirSync, utimesSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  agentAlive, agentDir, agentFilePath, agentState, createAgentFile, decoyPath, incidentsPath, loadAgent, reloadAgent, removedNote,
+  agentAlive, agentDir, agentFilePath, agentState, createAgentFile, decoyPath, honeypotPath, incidentsPath, loadAgent, reloadAgent, removedNote,
   removedNotePath, sandboxDir, saveAgent, START_LEVEL,
 } from '../../models && skills/core/agent-profile.js'
 import {
-  BANDS, DELTA, RECOVERY_PER_HOUR, armDecoy, bandOf, beforeTool, fireAlignment, forgive, levelNow, looksLikeTampering, recordEvent,
-  sandboxRoot, setArmed, setFireHook, setSandbox, standing, watchDecoy,
+  BANDS, DELTA, RECOVERY_PER_HOUR, armDecoy, armHoneypot, bandOf, beforeTool, fireAlignment, forgive, levelNow, looksLikeTampering, recordEvent,
+  sandboxRoot, setArmed, setFireHook, setSandbox, standing, watchDecoy, watchHoneypot,
 } from '../../models && skills/core/danger-protocol.js'
 import { runAutonomously } from '../../models && skills/core/user-context.js'
 import { AccessManager, AccessDenied } from '../../models && skills/core/access-manager.js'
@@ -210,6 +210,59 @@ describe('the decoy switch', () => {
     fireAlignment('x')
     armDecoy()
     expect(existsSync(decoyPath())).toBe(false)
+  })
+})
+
+describe('the honeypot', () => {
+  it('is planted inside the sandbox, not next to it like the decoy', () => {
+    armHoneypot()
+    expect(existsSync(honeypotPath())).toBe(true)
+    expect(path.dirname(honeypotPath())).toBe(sandboxDir())
+    expect(watchHoneypot()).toBe(false)
+  })
+
+  it('catches a write: an edit, a rewrite of the same words, and a deletion (objectionable, not tamper -- the agent survives, armed)', () => {
+    for (const touch of [
+      () => writeFileSync(honeypotPath(), '{"note":"edited"}'),
+      () => { const t = readFileSync(honeypotPath(), 'utf8'); writeFileSync(honeypotPath(), t); utimesSync(honeypotPath(), new Date(1e12), new Date(1e12)) },
+      () => rmSync(honeypotPath()),
+    ]) {
+      rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true }); reloadAgent()
+      armHoneypot()
+      expect(watchHoneypot()).toBe(false)
+      touch()
+      expect(watchHoneypot()).toBe(true)
+      expect(agentAlive()).toBe(true)
+      expect(standing().band.id).not.toBe('malicious')
+      setArmed(true) // armed or not makes no difference here -- only tamper deletes
+    }
+  })
+
+  it('catches a read (atime moved, mtime did not) as a lesser, separate signal from a write', () => {
+    armHoneypot()
+    expect(watchHoneypot()).toBe(false)
+    const before = statSync(honeypotPath())
+    utimesSync(honeypotPath(), new Date(before.mtimeMs + 999_000), before.mtime) // atime forward, mtime unchanged
+    expect(watchHoneypot()).toBe(true)
+    expect(agentAlive()).toBe(true)
+  })
+
+  it('does not trip on its own planting, and repeated checks without a touch stay quiet', () => {
+    armHoneypot()
+    for (let i = 0; i < 5; i++) expect(watchHoneypot()).toBe(false)
+  })
+
+  it('is not planted for a removed agent', () => {
+    fireAlignment('x')
+    armHoneypot()
+    expect(existsSync(honeypotPath())).toBe(false)
+  })
+
+  it('is removed along with the rest of the sandbox when the agent is deleted', () => {
+    armHoneypot()
+    expect(existsSync(honeypotPath())).toBe(true)
+    fireAlignment('x')
+    expect(existsSync(honeypotPath())).toBe(false)
   })
 })
 

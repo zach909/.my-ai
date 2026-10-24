@@ -17,7 +17,7 @@
 import type http from "node:http";
 import { CAPABILITIES, type AccessManager } from "../models && skills/core/access-manager.js";
 import { agentAlive, agentState, createAgentFile, decoyPath, loadAgent, removedNote } from "../models && skills/core/agent-profile.js";
-import { BANDS, armDecoy, fireAlignment, forgive, setArmed, setSandbox, standing, watchDecoy } from "../models && skills/core/danger-protocol.js";
+import { BANDS, armDecoy, armHoneypot, fireAlignment, forgive, setArmed, setSandbox, standing, watchDecoy, watchHoneypot } from "../models && skills/core/danger-protocol.js";
 import { RISKY_TOOLS, loadSafety, needsApproval, normalizeToolId } from "../models && skills/core/tool-safety.js";
 import { isOwnerOrAdmin } from "../models && skills/core/user-context.js";
 
@@ -130,10 +130,12 @@ async function route(ctx: AgentContext): Promise<boolean> {
     return true;
   };
   if (pathname === "/api/agent" && method === "GET") {
-    // The page asks every few seconds, which is also how a touched decoy is noticed promptly.
+    // The page asks every few seconds, which is also how a touched decoy or honeypot is noticed promptly.
     if (agentAlive()) {
       armDecoy();
       watchDecoy();
+      armHoneypot();
+      watchHoneypot();
     }
     return send();
   }

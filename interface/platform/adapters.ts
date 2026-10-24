@@ -38,6 +38,7 @@ export const CAPABILITY_IDS = [
   'cameraCapture',      // photo capture to the engine
   'installWithoutTerminal', // a normal installer or store install exists
   'selfUpdate',         // how updates arrive (see UpdateMechanism)
+  'multiSeatInput',      // telling separate physical mice/keyboards apart, or multiple independent virtual desktops
 ] as const;
 export type CapabilityId = (typeof CAPABILITY_IDS)[number];
 
@@ -78,6 +79,7 @@ const desktopCommon = {
   voiceInput: some('No speech-to-text is bundled; type, or use the OS dictation shortcut.'),
   cameraCapture: some('Through the browser window\'s camera permission prompt.'),
   installWithoutTerminal: ok('Double-click installer or app bundle.'),
+  multiSeatInput: no('Not built: the UI runs in one browser window, which the OS gives one merged mouse/keyboard input stream for, with no standard way to tell which physical device an event came from. Separate virtual desktops/workspaces inside the app are not built either.'),
 } as const;
 
 export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
@@ -86,7 +88,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
     runtime: 'node', updateMechanism: 'manual-download', artifacts: ['windows-installer-exe', 'windows-zip'],
     capabilities: {
       ...desktopCommon,
-      desktopControl: some('Windows UI Automation tools exist in desktop-app/src/main/windows-capability-tools.js (Electron build only); the packaged launcher does not include them.'),
+      desktopControl: no('No Windows UI Automation tools are wired into the packaged launcher.'),
       systemTray: no('The launcher opens a window; there is no tray icon.'),
       selfUpdate: some('The app reports a newer release and links to the installer. It never replaces itself silently.'),
     },
@@ -106,7 +108,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
     runtime: 'node', updateMechanism: 'manual-download', artifacts: ['macos-app-zip', 'macos-dmg'],
     capabilities: {
       ...desktopCommon,
-      desktopControl: no('The packaged app asks for no Accessibility or Screen Recording permission. The Electron build in desktop-app/ documents those requests.'),
+      desktopControl: no('The packaged app asks for no Accessibility or Screen Recording permission.'),
       systemTray: no('No menu-bar item; open the app from the Dock.'),
       selfUpdate: some('Reports a newer release and links to the .dmg. Signed, notarised updates need the maintainer\'s Apple credentials, which this repo does not hold.'),
     },
@@ -127,6 +129,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: some('Browser camera permission prompt.'),
       installWithoutTerminal: ok('Install the extension from the Chrome Web Store (once published) or load the zip in developer mode. Starting the server on the Chromebook needs the Linux container.'),
       selfUpdate: ok('Chrome updates published extensions itself.'),
+      multiSeatInput: no('A browser extension has no access to raw input devices and no concept of a second virtual desktop.'),
     },
   },
   android: {
@@ -145,6 +148,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: ok(),
       installWithoutTerminal: some('CI produces a debug APK; Play Store publishing needs the maintainer\'s signing key and Play account.'),
       selfUpdate: some('Through the store you installed from. A debug APK does not update itself.'),
+      multiSeatInput: no('Not built. Some Android devices support a second connected display or a DeX-style desktop mode, but this app does nothing with it, and Android gives apps no way to distinguish two physical keyboards or mice either.'),
     },
   },
   ios: {
@@ -163,6 +167,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: ok(),
       installWithoutTerminal: no('CI builds an unsigned simulator app only. A device build needs an Apple developer team, signing certificates and TestFlight/App Store.'),
       selfUpdate: ok('The App Store updates it, once published.'),
+      multiSeatInput: no('Not built, and iOS gives an app no way to tell two Bluetooth keyboards or trackpads apart or to run a second independent desktop.'),
     },
   },
 };
