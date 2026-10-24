@@ -38,6 +38,11 @@ export const CAPABILITY_IDS = [
   'cameraCapture',      // photo capture to the engine
   'installWithoutTerminal', // a normal installer or store install exists
   'selfUpdate',         // how updates arrive (see UpdateMechanism)
+  'normalPermissions',   // ordinary OS/browser permission prompts this repo's code already asks for (notifications, camera/mic, file picker)
+  'systemPermissions',   // an elevated, beyond-sandbox grant this repo's code can actually obtain (pkexec, Android Accessibility/overlay settings)
+  'multiDesktop',        // named, in-app workspaces that group chat threads -- not OS-level virtual desktop switching, which no platform exposes to this app
+  'multiMouse',          // can tell separate physical mice apart (device enumeration only -- never reads live pointer events)
+  'multiKeyboard',       // can tell separate physical keyboards apart (device enumeration only -- never reads live key events, which would be a keylogger)
 ] as const;
 export type CapabilityId = (typeof CAPABILITY_IDS)[number];
 
@@ -78,6 +83,8 @@ const desktopCommon = {
   voiceInput: some('No speech-to-text is bundled; type, or use the OS dictation shortcut.'),
   cameraCapture: some('Through the browser window\'s camera permission prompt.'),
   installWithoutTerminal: ok('Double-click installer or app bundle.'),
+  normalPermissions: some('Notifications and the file-access grant are fully wired; camera/mic capture only reaches the browser window\'s own permission prompt, with no feature consuming it yet.'),
+  multiDesktop: ok('Named workspaces group chat threads in the shared interface (models && skills/core/workspace-store.ts). Not OS-level virtual desktop switching -- no platform exposes that to this app.'),
 } as const;
 
 export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
@@ -89,6 +96,9 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       desktopControl: some('Windows UI Automation tools exist in desktop-app/src/main/windows-capability-tools.js (Electron build only); the packaged launcher does not include them.'),
       systemTray: no('The launcher opens a window; there is no tray icon.'),
       selfUpdate: some('The app reports a newer release and links to the installer. It never replaces itself silently.'),
+      systemPermissions: no('No privilege-broker adapter exists for Windows yet (models && skills/core/linux-privilege-broker.ts is Linux-only); nothing here can request an elevated grant beyond the ordinary install.'),
+      multiMouse: no('Needs the Win32 Raw Input API (WM_INPUT/RegisterRawInputDevices) from a native addon; this project has no Electron or native-addon layer (house rule).'),
+      multiKeyboard: no('Same as multiMouse: Raw Input needs a native addon this project does not have.'),
     },
   },
   linux: {
@@ -99,6 +109,9 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       desktopControl: some('X11 tools and Linux permission tools exist; Wayland sessions restrict what any app may see or drive.'),
       systemTray: no('The launcher opens a window; there is no tray icon.'),
       selfUpdate: some('The app reports a newer release; install the new .deb or tarball yourself.'),
+      systemPermissions: some('The pkexec-gated systemd broker (models && skills/core/linux-privilege-broker.ts, Settings > Access) is a real elevated grant beyond the browser sandbox, but it only covers starting/stopping an allowlisted systemd unit; every other operation in its tool enum fails closed as not implemented.'),
+      multiMouse: some('Device enumeration (names, counts) from /proc/bus/input/devices works with no special permission (models && skills/core/linux-input-devices.ts). Real-time attribution of a click to one physical mouse is deliberately not implemented: it would need raw /dev/input/eventN access, which this project avoids for the privacy risk, not the difficulty.'),
+      multiKeyboard: some('Same enumeration as multiMouse. Reading raw /dev/input/eventN to attribute a keystroke to one physical keyboard in real time is deliberately not implemented -- that is a system-wide keylogging primitive this project chooses not to build.'),
     },
   },
   macos: {
@@ -109,6 +122,9 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       desktopControl: no('The packaged app asks for no Accessibility or Screen Recording permission. The Electron build in desktop-app/ documents those requests.'),
       systemTray: no('No menu-bar item; open the app from the Dock.'),
       selfUpdate: some('Reports a newer release and links to the .dmg. Signed, notarised updates need the maintainer\'s Apple credentials, which this repo does not hold.'),
+      systemPermissions: no('No privilege-broker adapter exists for macOS yet; the packaged app requests no elevated or special permission at all.'),
+      multiMouse: no('Needs IOKit HID APIs from native (Objective-C/Swift) code. Unlike iOS/Android, this project has no native macOS host app -- NeuroClaw.app is only the bundled Node runtime in a WKWebView window.'),
+      multiKeyboard: no('Same as multiMouse: IOKit HID access needs native code this project\'s macOS package does not have.'),
     },
   },
   chromeos: {
@@ -127,6 +143,11 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: some('Browser camera permission prompt.'),
       installWithoutTerminal: ok('Install the extension from the Chrome Web Store (once published) or load the zip in developer mode. Starting the server on the Chromebook needs the Linux container.'),
       selfUpdate: ok('Chrome updates published extensions itself.'),
+      normalPermissions: some('Browser permission prompts for notifications and camera exist, but the extension has no fileAccess at all -- Chrome gives extensions no arbitrary file access.'),
+      systemPermissions: no('A browser extension cannot request anything beyond ordinary extension permissions; there is no elevated-grant mechanism to call.'),
+      multiDesktop: ok('Named workspaces group chat threads in the shared interface, served to the extension by whatever server it points at. Not OS-level virtual desktop switching.'),
+      multiMouse: no('A browser/extension context has no raw input-device access at all.'),
+      multiKeyboard: no('Same as multiMouse: no raw input-device access from a browser extension.'),
     },
   },
   android: {
@@ -145,6 +166,11 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: ok(),
       installWithoutTerminal: some('CI produces a debug APK; Play Store publishing needs the maintainer\'s signing key and Play account.'),
       selfUpdate: some('Through the store you installed from. A debug APK does not update itself.'),
+      normalPermissions: some('Camera, mic and notifications go through native Android permission dialogs and are fully wired; file access is still limited to scoped storage.'),
+      systemPermissions: some('The accessibility-service bridge and the "display over other apps" overlay are real OS-level special-permission grants (flipped in Android Settings, not an in-app prompt), each off until the user enables it there.'),
+      multiDesktop: ok('Named workspaces group chat threads in the shared interface, shown in the app\'s WebView. Not OS-level virtual desktop switching.'),
+      multiMouse: no('android.hardware.input.InputManager with MotionEvent.getDeviceId() could distinguish devices, but it is not implemented here, and this sandbox has no Android SDK to compile or verify a Kotlin change against.'),
+      multiKeyboard: no('Same as multiMouse: InputManager/KeyEvent.getDeviceId() is a real Android mechanism but is not implemented, and cannot be compiled or verified in this sandbox.'),
     },
   },
   ios: {
@@ -163,6 +189,11 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: ok(),
       installWithoutTerminal: no('CI builds an unsigned simulator app only. A device build needs an Apple developer team, signing certificates and TestFlight/App Store.'),
       selfUpdate: ok('The App Store updates it, once published.'),
+      normalPermissions: some('Camera, mic and notifications go through native iOS permission dialogs and are fully wired; file access is limited to what the file and photo pickers hand the app.'),
+      systemPermissions: no('iOS gives apps no system-settings-level special permission beyond the ordinary runtime prompts (camera, mic, notifications), and this project requests no entitlement beyond those.'),
+      multiDesktop: ok('Named workspaces group chat threads in the shared interface, shown in the app\'s WKWebView. Not OS-level virtual desktop switching.'),
+      multiMouse: no('UIKit exposes no public per-device HID identity API for distinguishing physical mice.'),
+      multiKeyboard: no('UIKit exposes no public per-device HID identity API for distinguishing physical keyboards.'),
     },
   },
 };

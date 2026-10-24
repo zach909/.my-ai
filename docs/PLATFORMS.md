@@ -76,6 +76,7 @@ Then add another thing for terminal access.
 | Versioning, release manifest, change-driven builds | yes | yes | yes | yes | yes | yes |
 | Root / system access | no | yes | no | no | no | no |
 | Terminal | yes | yes | yes | no | partly | partly |
+| Virtual workspaces | yes | yes | yes | yes | yes | yes |
 | Agent sandbox, with a tamper trap | yes | yes | yes | no | partly | partly |
 | Self-healing | yes | yes | yes | no | partly | partly |
 | Hive mind | yes | yes | yes | no | partly | partly |
@@ -98,6 +99,11 @@ Then add another thing for terminal access.
 | cameraCapture | partly | partly | partly | partly | yes | yes |
 | installWithoutTerminal | yes | yes | yes | yes | partly | no |
 | selfUpdate | partly | partly | partly | yes | partly | yes |
+| normalPermissions | partly | partly | partly | partly | partly | partly |
+| systemPermissions | no | partly | no | no | partly | no |
+| multiDesktop | yes | yes | yes | yes | yes | yes |
+| multiMouse | no | partly | no | no | no | no |
+| multiKeyboard | no | partly | no | no | no | no |
 <!-- capability-matrix:end -->
 
 `yes` means this repository's code delivers it on that platform today. `partly` and `no` come with the reason in
@@ -201,20 +207,39 @@ missing browser fails there instead.
 | `ci.test.mjs` | a change triggers exactly the builds it affects; the summary never reports a failed or skipped build as built; the workflow is wired so a failed build cannot be released, only first-party actions are used, secrets are never echoed, and no credential is committed |
 | `mobile-native.test.mjs` | the Android and iOS source faults listed above stay fixed (checked as source: no SDK here) |
 
-**Executed in this session (Linux, Node 22, Chromium 141):** all 107 platform tests passed, 0 skipped, in about 130 seconds.
-The repository's older engine smoke test (`node test/smoke.mjs`) gives **872 passed, 6 failed**, and the identical 6 fail on
+**Executed in an earlier session (Linux, Node 22, Chromium 141):** all 107 platform tests passed, 0 skipped, in about 130 seconds.
+The repository's older engine smoke test (`node test/smoke.mjs`) gave **872 passed, 6 failed**, with the identical 6 failing on
 unmodified `main` (a boot-loaded extension recall check, an `[Waiting fo...` JSON parse in two learning checks, and three
-self-authored-skill checks), so this work adds no regression there.
+self-authored-skill checks).
+
+**This session's container had no `node_modules` at all** (no `typescript`, `vitest`, or `@types/node`), and `npm install`
+itself crashed with an internal arborist error before any package was fetched (`Cannot read properties of null (reading
+'edgesOut')`, logged under `/root/.npm/_logs/`) -- not a third-party-code refusal, just a broken install in this particular
+container, with no lockfile to pin it. That made `npm run test:platform` (needs a `tsc` build first) and the whole
+`test/core/*.test.ts` vitest suite impossible to run here, on top of the vitest gap already noted below. What could still be
+checked without a build: `node --experimental-strip-types --check` on every changed/added `.ts` file (syntax only, confirmed
+clean); the no-third-party guard (`node scripts/check-no-third-party.mjs`) run directly, which needs no build and reported
+only the pre-existing `model && skills manager/` findings in item 1 below, nothing from this change; and, in place of the
+vitest files this change adds (`test/core/workspace-store.test.ts`, `test/core/linux-input-devices.test.ts`), the same
+scenarios re-run as plain Node scripts importing the real `.ts` modules directly (`node --experimental-strip-types`), which
+passed -- a substitute for executing the committed vitest files, not a replacement for actually running them. The
+regenerated matrices below were produced the same way: `scripts/release/parity-matrix.mjs` itself needs the `dist/` build,
+so its exact rendering logic was re-run standalone against the real `adapters.ts`/`feature-contract.ts`, including
+`verifyContract()`, which came back clean (no missing implementation, route, or test file).
 
 **Not executed, and why:**
 
-- The older vitest suite (`test/core/*.test.ts`, about 180 files): `node_modules/vitest/dist` is missing from the repository's
-  tracked `node_modules`, and installing it is a package install that the project rules (and this session's permissions) forbid.
-  CI runs it when vitest is present and otherwise reports "NOT RUN" in the summary.
+- The vitest suite (`test/core/*.test.ts`, now 191 files including this change's two new ones): no `node_modules` in
+  this session's container at all (see above), on top of the long-standing gap where vitest itself was missing even when the
+  rest of `node_modules` was present. CI runs it when vitest is present and otherwise reports "NOT RUN" in the summary.
+- `npm run test:platform` and `node scripts/build-backend.mjs`: same missing-`node_modules`/broken-`npm install` problem:
+  no `tsc`, no `@types/node`. A prior session (above) ran this successfully; it was not reproducible in this one.
 - Windows: IExpress installer, Start menu entry, install and uninstall (needs a Windows runner; the CI job does it).
 - macOS: `swiftc`, `codesign`, `hdiutil`, the `.app` really opening (needs a Mac; the CI job compiles, signs ad hoc, verifies and starts the packaged engine).
 - Android: Gradle build of the edited Kotlin. iOS: `xcodegen` and `xcodebuild` of the edited Swift. (Android SDK and Xcode are not available here.)
 - A real Chromebook, a real phone, and the Chrome Web Store flow.
+- Linux `/dev/input/eventN` access for `linux-input-devices.ts`: not applicable -- that code path does not exist. The module
+  only ever reads `/proc/bus/input/devices`, by design (see the module's own header).
 - The GitHub Actions workflow itself has never run: it was linted as YAML and its structure is tested, but the first real run
   may need small fixes (runner images and tool paths are the usual suspects).
 
@@ -244,10 +269,27 @@ self-authored-skill checks), so this work adds no regression there.
    descriptors in `plugins/linux-permission-tools.ts` cover 100+ other capabilities (package management, firewall rules,
    local accounts, mounting, ACLs, ...); all of them still fail closed with an honest "not implemented" rather than a fake
    success. Windows and macOS have no equivalent privilege-broker adapter at all yet.
-6. **Multiple virtual desktops/workspaces** and **true multi-seat input** (distinguishing separate physical mice/keyboards)
-   were asked for and are not built. Virtual workspaces are a reasonable UI feature to add to the shared interface later;
-   multi-seat hardware input has no standard web API to detect which physical device sent an event, so it cannot be done
-   honestly in a browser-based app on any platform without a native, per-OS layer this project does not have.
+6. **Virtual workspaces** are now built: named, in-app groups of chat threads (`models && skills/core/workspace-store.ts`,
+   `GET/POST /api/workspaces`, `.../:id/rename`, `.../:id/activate`, `.../:id/threads`, `DELETE .../:id`) that a person can
+   create, rename, switch between and delete. This is a software grouping inside the shared interface, served wherever the
+   interface already runs -- it is explicitly **not** the operating system's own virtual desktops, which still have no
+   cross-platform API this app could drive honestly. No page renders them yet; today they are reachable only through the
+   API, the same first-pass state several other backend-only features here started from.
+   **True multi-seat input** (telling separate physical mice/keyboards apart) is built on Linux only, and only halfway on
+   purpose: `models && skills/core/linux-input-devices.ts` (`GET /api/input-devices`) reads `/proc/bus/input/devices` to
+   enumerate connected devices by name and classify them as mice or keyboards -- something no browser API can do at all,
+   with no special permission needed. It deliberately stops there: it never opens `/dev/input/eventN` to read live
+   pointer/key events, because doing that would make the agent a system-wide keylogger/mouse-logger, capturing input in
+   windows that have nothing to do with it. That is a line this project chooses not to cross, not a gap left by difficulty --
+   see the module's own header comment. So "two mice and a keyboard are plugged in" is something this app can now honestly
+   say on Linux; "what did you just type" is not, and will not be. Windows needs the Win32 Raw Input API from a native
+   addon this project's architecture does not have; macOS needs IOKit HID APIs from native code, and unlike iOS/Android
+   there is no native macOS host app here at all (`NeuroClaw.app` is only the bundled Node runtime in a WKWebView window);
+   ChromeOS has no raw device access from a browser extension; Android's `InputManager`/`getDeviceId()` is a real,
+   non-third-party mechanism that could do this, but it is not implemented, and this project's sandboxes have no Android
+   SDK to compile or verify a Kotlin change against; iOS's UIKit exposes no public per-device HID identity API at all. See
+   the new `systemPermissions`, `normalPermissions`, `multiDesktop`, `multiMouse` and `multiKeyboard` rows in the capability
+   matrix above for the per-platform detail, each with its own honest reason.
 7. **Signing and publishing**: Windows code signing, Google Play, the App Store and TestFlight are not wired (they need your
    certificates and accounts); macOS signing and notarisation are wired but wait for the secrets above.
 8. **Intel macOS** is not built (add a `macos-15-intel` job when you want it); **Linux arm64** (ARM Chromebooks) builds only from
