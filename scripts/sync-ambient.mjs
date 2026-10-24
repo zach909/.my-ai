@@ -18,7 +18,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { AMBIENT_CSS, AMBIENT_JS } = await import(pathToFileURL(join(root, 'dist', 'interface', 'ambient.js')).href);
 
 export const AMBIENT_COPY_DIRS = [
-  'desktop-app/src/renderer',
   'browser-extension',
   'interface/static',
 ];

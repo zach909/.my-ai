@@ -235,6 +235,12 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine']], tests: [v('test/core/agent-protocol.test.ts'), v('test/core/agent-routes.test.ts')],
   },
   {
+    id: 'escape-warning', title: 'Sandbox escape warning', description: 'A successful escape (the decoy trap tripping) used to only move a number in a file nobody was looking at. Now it logs a loud console banner, writes a record outside the agent’s own folder that survives the agent being deleted and is not cleared by forgive() or time passing, pushes a real OS notification where the notifications plugin is active, and shows an unmissable banner on every page (not just Commons) until a person acknowledges it.',
+    implementation: ['models && skills/core/agent-profile.ts', 'models && skills/core/danger-protocol.ts', 'interface/web-server.ts', 'interface/agent-routes.ts', 'interface/ambient.ts', 'interface/commons-page.ts'],
+    routes: ['GET /api/agent/escape-warning', 'POST /api/agent/escape-warning/acknowledge'],
+    needs: [['localEngine']], tests: [v('test/core/agent-protocol.test.ts')],
+  },
+  {
     id: 'self-healing', title: 'Self-healing', description: 'Checks registered components (the plugin registry, the hive’s trust-budget invariant) on a timer; repairs in place, reverts to a known-good snapshot if a repair does not hold, and reports anything it cannot fix. Every step is logged and the log is readable later, not just at the moment of a heal.',
     implementation: ['models && skills/core/self-healer.ts', 'src/index.ts', 'interface/web-server.ts', 'interface/commons-page.ts'],
     routes: ['GET /api/health', 'POST /api/health/heal', 'GET /api/health/log'],

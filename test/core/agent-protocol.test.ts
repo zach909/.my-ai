@@ -7,12 +7,12 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  agentAlive, agentDir, agentFilePath, agentState, createAgentFile, decoyPath, honeypotPath, incidentsPath, loadAgent, reloadAgent, removedNote,
+  acknowledgeEscapeWarning, agentAlive, agentDir, agentFilePath, agentState, createAgentFile, decoyPath, escapeWarningStatus, honeypotPath, incidentsPath, loadAgent, reloadAgent, removedNote,
   removedNotePath, sandboxDir, saveAgent, START_LEVEL,
 } from '../../models && skills/core/agent-profile.js'
 import {
   BANDS, DELTA, RECOVERY_PER_HOUR, armDecoy, armHoneypot, bandOf, beforeTool, fireAlignment, forgive, levelNow, looksLikeTampering, recordEvent,
-  sandboxRoot, setArmed, setFireHook, setSandbox, standing, watchDecoy, watchHoneypot,
+  sandboxRoot, setArmed, setEscapeHook, setFireHook, setSandbox, standing, watchDecoy, watchHoneypot,
 } from '../../models && skills/core/danger-protocol.js'
 import { runAutonomously } from '../../models && skills/core/user-context.js'
 import { AccessManager, AccessDenied } from '../../models && skills/core/access-manager.js'
@@ -26,6 +26,7 @@ beforeEach(() => {
   delete process.env.CORONA_AGENT_RECORD_DIR
   reloadAgent()
   setFireHook(null)
+  setEscapeHook(null)
 })
 afterEach(() => {
   for (const [k, v] of [['CORONA_DATA_DIR', saved.data], ['CORONA_AGENT_DIR', saved.agent], ['CORONA_AGENT_RECORD_DIR', saved.rec]] as const) {
@@ -263,6 +264,59 @@ describe('the honeypot', () => {
     expect(existsSync(honeypotPath())).toBe(true)
     fireAlignment('x')
     expect(existsSync(honeypotPath())).toBe(false)
+  })
+})
+
+describe('the escape warning', () => {
+  it('starts inactive, with no history', () => {
+    createAgentFile('Test')
+    expect(escapeWarningStatus()).toEqual({ warnings: [], acknowledgedAt: null, active: false })
+  })
+
+  it('goes active, calls the escape hook, and is not cleared by forgive() -- it is a separate, persistent record', () => {
+    createAgentFile('Test')
+    let hookReason: string | null = null
+    setEscapeHook((reason) => { hookReason = reason })
+    writeFileSync(decoyPath(), 'tampered')
+    expect(watchDecoy()).toBe(true)
+    expect(hookReason).toMatch(/escape|confinement/i)
+    expect(escapeWarningStatus().active).toBe(true)
+    forgive()
+    expect(escapeWarningStatus().active).toBe(true)
+    expect(escapeWarningStatus().warnings.length).toBe(1)
+  })
+
+  it('survives the agent being deleted: it lives outside the agent\'s own folder', () => {
+    createAgentFile('Test')
+    writeFileSync(decoyPath(), 'tampered')
+    watchDecoy()
+    expect(agentAlive()).toBe(false) // armed by default: tamper deletes it
+    expect(escapeWarningStatus().active).toBe(true)
+  })
+
+  it('acknowledging silences it without deleting the history, and a new breach un-acknowledges it again', () => {
+    createAgentFile('Test')
+    writeFileSync(decoyPath(), 'tampered')
+    watchDecoy()
+    expect(escapeWarningStatus().active).toBe(true)
+    acknowledgeEscapeWarning()
+    expect(escapeWarningStatus().active).toBe(false)
+    expect(escapeWarningStatus().warnings.length).toBe(1)
+
+    rmSync(dir, { recursive: true, force: true }); mkdirSync(dir, { recursive: true }); reloadAgent()
+    createAgentFile('Test2')
+    writeFileSync(decoyPath(), 'tampered again')
+    watchDecoy()
+    expect(escapeWarningStatus().active).toBe(true)
+  })
+
+  it('a failing escape hook never stops the rest of the protocol', () => {
+    createAgentFile('Test')
+    setEscapeHook(() => { throw new Error('notification backend is down') })
+    writeFileSync(decoyPath(), 'tampered')
+    expect(() => watchDecoy()).not.toThrow()
+    expect(escapeWarningStatus().active).toBe(true)
+    expect(agentAlive()).toBe(false)
   })
 })
 

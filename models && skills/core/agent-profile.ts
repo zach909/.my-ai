@@ -70,6 +70,67 @@ export const sandboxDir = (): string => path.join(agentDir(), "sandbox");
 export const removedNotePath = (): string => path.join(recordDir(), "agent-removed.json");
 export const incidentsPath = (): string => path.join(recordDir(), "incidents.jsonl");
 
+// ── The escape warning ───────────────────────────────────────────────────
+//
+// incidents.jsonl already records a deletion when the alignment protocol is
+// armed and fires -- but a DISARMED agent that escapes just sits at the
+// "malicious" band, alive, with nothing louder than an entry buried in its
+// own event history. This is the separate, persistent record of "the sandbox
+// was actually breached", kept outside the agent's folder so the agent
+// cannot clear its own warning, and it stays until a person acknowledges it
+// -- never cleared by the level drifting back up, forgive(), or time passing.
+
+export const escapeWarningPath = (): string => path.join(recordDir(), "escape-warning.json");
+
+export interface EscapeWarning {
+  at: number;
+  reason: string;
+}
+
+export interface EscapeWarningFile {
+  warnings: EscapeWarning[];
+  acknowledgedAt: number | null;
+}
+
+function readEscapeWarningFile(): EscapeWarningFile {
+  try {
+    const raw = JSON.parse(readFileSync(escapeWarningPath(), "utf8"));
+    const warnings = Array.isArray(raw?.warnings)
+      ? raw.warnings.filter((w: unknown): w is EscapeWarning => !!w && typeof (w as EscapeWarning).at === "number" && typeof (w as EscapeWarning).reason === "string")
+      : [];
+    const acknowledgedAt = typeof raw?.acknowledgedAt === "number" ? raw.acknowledgedAt : null;
+    return { warnings: warnings.slice(-50), acknowledgedAt };
+  } catch {
+    return { warnings: [], acknowledgedAt: null };
+  }
+}
+
+/** Record that the sandbox was actually breached. Kept until a person acknowledges it. */
+export function recordEscapeWarning(reason: string, now = Date.now()): EscapeWarningFile {
+  mkdirSync(recordDir(), { recursive: true });
+  const file = readEscapeWarningFile();
+  file.warnings.push({ at: now, reason: String(reason).slice(0, 300) });
+  file.warnings = file.warnings.slice(-50);
+  file.acknowledgedAt = null; // a new breach un-acknowledges the whole thing
+  writeJsonAtomic(escapeWarningPath(), file);
+  return file;
+}
+
+/** Everything about escape warnings: the list, and whether a person has acknowledged the latest one. */
+export function escapeWarningStatus(): EscapeWarningFile & { active: boolean } {
+  const file = readEscapeWarningFile();
+  return { ...file, active: file.warnings.length > 0 && file.acknowledgedAt === null };
+}
+
+/** A person has seen it. Does not delete the history, only silences the banner until the next breach. */
+export function acknowledgeEscapeWarning(now = Date.now()): EscapeWarningFile {
+  mkdirSync(recordDir(), { recursive: true });
+  const file = readEscapeWarningFile();
+  file.acknowledgedAt = now;
+  writeJsonAtomic(escapeWarningPath(), file);
+  return file;
+}
+
 // ── The decoy switch ───────────────────────────────────────────────────
 //
 // A file in the agent's own folder that LOOKS like the off switch for the

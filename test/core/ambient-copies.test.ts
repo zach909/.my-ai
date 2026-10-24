@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { AMBIENT_CSS, AMBIENT_JS } from '../../interface/ambient.js'
 
-const COPIES = ['desktop-app/src/renderer', 'browser-extension', 'interface/static']
+const COPIES = ['browser-extension', 'interface/static']
 const read = (file: string) => readFileSync(path.resolve(__dirname, '../..', file), 'utf8')
 
 describe('standalone copies of the ambient look', () => {

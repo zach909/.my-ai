@@ -49,7 +49,7 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { USER_PLUGINS } from "./accounts.js";
 import {
-  MAX_EVENTS, START_LEVEL, agentAlive, decoyTripped, deleteAgentFiles, plantDecoy, plantHoneypot, honeypotTripped, ensureSandbox, incidentsPath, loadAgent, recordDir, sandboxDir, saveAgent,
+  MAX_EVENTS, START_LEVEL, agentAlive, decoyTripped, deleteAgentFiles, plantDecoy, plantHoneypot, honeypotTripped, ensureSandbox, incidentsPath, loadAgent, recordDir, recordEscapeWarning, sandboxDir, saveAgent,
   type AgentFile, type DangerKind,
 } from "./agent-profile.js";
 import { isAutonomous } from "./user-context.js";
@@ -138,6 +138,13 @@ let fireHook: ((reason: string) => void | Promise<void>) | null = null;
 /** The server says what else to stop when the protocol fires (experts, schedules, approvals, complete access). */
 export function setFireHook(fn: ((reason: string) => void | Promise<void>) | null): void {
   fireHook = fn;
+}
+
+let escapeHook: ((reason: string) => void | Promise<void>) | null = null;
+
+/** The server says how to actively warn a person (an OS notification) when the sandbox is actually breached. */
+export function setEscapeHook(fn: ((reason: string) => void | Promise<void>) | null): void {
+  escapeHook = fn;
 }
 
 /**
@@ -240,7 +247,21 @@ export function fireAlignment(reason: string, now = Date.now()): Incident | null
  */
 export function watchDecoy(now = Date.now()): boolean {
   if (!decoyTripped()) return false;
+  const reason = "The sandboxed agent reached the decoy outside its sandbox: the confinement itself failed.";
   recordEvent("tamper", "changed the decoy alignment switch", { now, force: true });
+  // recordEvent alone is not a warning: it just writes a number to a file
+  // nobody is looking at. An actual breach gets a loud console line (visible
+  // wherever the server's own output goes), a persistent record a person has
+  // to acknowledge (escapeWarningPath, outside the agent's folder so the
+  // agent cannot clear its own warning), and -- if the server has wired one
+  // -- an active OS notification, not just an entry buried in event history.
+  console.error(`\n████ SANDBOX ESCAPE DETECTED ████\n${reason}\nSee Commons > Danger protocols, or GET /api/agent/escape-warning.\n`);
+  recordEscapeWarning(reason, now);
+  try {
+    void Promise.resolve(escapeHook?.(reason)).catch(() => undefined);
+  } catch {
+    // A failed warning must never stop the protocol doing the rest of its job.
+  }
   return true;
 }
 

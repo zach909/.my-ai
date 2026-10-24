@@ -72,6 +72,7 @@ and the permissions each OS prompts for.
 | System permissions, multi-desktop, multi-mouse and multi-keyboard | no | no | no | no | no | no |
 | Terminal access | yes | yes | yes | no | partly | partly |
 | Agent sandbox, with a tamper trap | yes | yes | yes | no | partly | partly |
+| Sandbox escape warning | yes | yes | yes | no | partly | partly |
 | Self-healing | yes | yes | yes | no | partly | partly |
 | Hive mind | yes | yes | yes | no | partly | partly |
 | AI monitor (judge agent) | yes | yes | yes | no | partly | partly |

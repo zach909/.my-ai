@@ -53,7 +53,7 @@ import { setNameGuard } from '../models && skills/core/points.js';
 import { isComputerAdministrator } from '../models && skills/core/computer-admin.js';
 import { handleAgentRoutes, isAgentRoute } from './agent-routes.js';
 import { agentAlive } from '../models && skills/core/agent-profile.js';
-import { armDecoy, armHoneypot, recordEvent, setFireHook, standing, watchDecoy, watchHoneypot } from '../models && skills/core/danger-protocol.js';
+import { armDecoy, armHoneypot, recordEvent, setEscapeHook, setFireHook, standing, watchDecoy, watchHoneypot } from '../models && skills/core/danger-protocol.js';
 import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, runAutonomously, setLearnPolicy, who } from '../models && skills/core/user-context.js';
 import { sharedToolGate } from '../models && skills/core/tool-safety.js';
 import { startExperts } from '../models && skills/core/experts.js';
@@ -1545,6 +1545,20 @@ export class WebServer {
     setNameGuard(name => nameBelongsToAnotherAccount(getAccounts(), name));
     // The alignment protocol: when it deletes the agent, everything the agent was doing on its own stops too.
     setFireHook(reason => this.onAgentRemoved(reason));
+    // A sandbox breach is not something to find out about next time someone
+    // happens to open Commons: push a real OS notification too, if the
+    // notifications plugin is active (watchDecoy already logs loudly and
+    // writes the persistent, acknowledge-to-clear record regardless).
+    setEscapeHook(async (reason) => {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const plugin = system.pluginRegistry.getPluginInstance('notifications') as { show?: (title: string, body: string) => Promise<string> } | undefined;
+        await plugin?.show?.('NeuroClaw: sandbox escape detected', reason);
+      } catch {
+        // The console warning and the persistent record already happened; a failed OS notification is not fatal.
+      }
+    });
     // A judge agent chooses whether a held tool runs (tool-safety.ts); it can only think in text and the registry runs the tool.
     sharedToolGate().useJudge({
       ask: prompt => withTimeout(this.runner.generateText(prompt)),
