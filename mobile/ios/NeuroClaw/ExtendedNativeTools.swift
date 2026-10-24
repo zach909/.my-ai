@@ -3,7 +3,6 @@ import AppTrackingTransparency
 import CoreBluetooth
 import CoreLocation
 import CoreMotion
-import CoreNFC
 import CoreTelephony
 import Contacts
 import EventKit
@@ -14,11 +13,9 @@ import Intents
 import LocalAuthentication
 import MediaPlayer
 import Network
-import NearbyInteraction
 import Photos
 import Speech
 import UIKit
-import UniformTypeIdentifiers
 import UserNotifications
 
 /// Expanded public-API tools. iOS intentionally does not expose some system data/actions;
@@ -74,10 +71,6 @@ enum ExtendedNativeTools {
         tool("files.read_selected", "Read a user-selected document using a security-scoped URL."),
         tool("files.export", "Export a file through a user-facing share or document picker."),
         tool("network.local_discovery", "Discover local-network services only after iOS permission."),
-        tool("nearby.start_session", "Start a Nearby Interaction session using a peer discovery token."),
-        tool("nearby.get_local_token", "Export this device discovery token for secure out-of-band exchange with a nearby peer."),
-        tool("nearby.get_measurements", "Read the latest Nearby Interaction distance and direction measurements."),
-        tool("nearby.stop_session", "Stop an active Nearby Interaction session."),
         tool("homekit.get_status", "Report HomeKit entitlement and authorization readiness."),
         tool("homekit.list_homes", "List HomeKit homes after capability setup and authorization."),
         tool("homekit.list_accessories", "List HomeKit accessories after capability setup and authorization."),
@@ -110,7 +103,6 @@ enum ExtendedNativeTools {
         tool("permissions.catalog", "Return an inventory of requestable iOS permissions, user-controlled settings, entitlement-gated capabilities, and platform-blocked access."),
         tool("nearby.get_capabilities", "Report Nearby Interaction support and its entitlement/session requirements."),
         tool("nfc.get_capabilities", "Report NFC reader availability and required entitlements."),
-        tool("nfc.read_tag", "Read an NDEF NFC tag in the foreground system reader session."),
         tool("critical_alerts.get_capabilities", "Report critical notification alert restrictions."),
         tool("research_sensors.get_capabilities", "Report research sensor data restrictions and entitlement requirements.")
     ]
@@ -155,9 +147,6 @@ enum ExtendedNativeTools {
         case "files.export":
             properties = ["filename": ["type": "string"], "data_base64": ["type": "string"]]
             required = ["data_base64"]
-        case "nearby.start_session":
-            properties = ["peer_token_base64": ["type": "string", "description": "Base64 of an archived NIDiscoveryToken exchanged with the peer"]]
-            required = ["peer_token_base64"]
         case "network.local_discovery":
             properties = ["service_type": ["type": "string", "description": "Bonjour service type, such as _http._tcp"], "seconds": ["type": "number", "minimum": 1, "maximum": 10]]
             required = []
@@ -314,9 +303,9 @@ enum ExtendedNativeTools {
         case "permissions.catalog":
             return (200, ["requestable": ["location_when_in_use", "location_always", "contacts", "calendar", "reminders", "photos_read_write", "photos_add_only", "camera", "microphone", "speech_recognition", "motion_fitness", "healthkit_data_types", "media_library", "bluetooth", "local_network", "notifications", "app_tracking_transparency", "siri_authorization", "face_id_or_touch_id_authentication", "homekit"], "settings_only_or_system_managed": ["Background App Refresh", "Cellular data access restrictions", "per-app Local Network toggle", "notification presentation settings", "system permission changes in Settings"], "requires_entitlement_or_special_approval": ["HealthKit", "HomeKit", "critical alerts", "Nearby Interaction", "NFC reader sessions", "clinical health records", "research sensor access"], "not_available_to_ordinary_third_party_apps": ["SMS/iMessage inbox access", "system call history", "general mailbox access without provider authorization", "passwords and arbitrary device accounts", "reading current Focus mode", "unrestricted filesystem access", "arbitrary cross-app UI control or silent screen capture"], "note": "iOS has no single grant-all permission. Each authorization is separate, user-controlled, and constrained by API, entitlement, device, and App Store policy."])
         case "nearby.get_capabilities":
-            return limitation("Nearby Interaction needs supported hardware, a valid Nearby Interaction entitlement, discovery-token exchange, and a foreground session. There is no standalone permission prompt to grant from this bridge.")
+            return limitation("Nearby Interaction is not built into this app (the CoreNFC/NearbyInteraction frameworks are outside this project's allow-listed Apple frameworks). Even where supported it needs hardware, a Nearby Interaction entitlement, discovery-token exchange, and a foreground session.")
         case "nfc.get_capabilities":
-            return limitation("NFC reader sessions require supported hardware, the matching NFC capability/entitlement, and a foreground reader session. iOS does not offer general-purpose NFC access.")
+            return limitation("NFC reading is not built into this app (CoreNFC is outside this project's allow-listed Apple frameworks). Even where supported it needs hardware, the NFC capability/entitlement, and a foreground reader session.")
         case "critical_alerts.get_capabilities":
             return limitation("Critical notifications require Apple's special critical-alert entitlement and user authorization. A normal notification permission grant cannot enable them.")
         case "research_sensors.get_capabilities":
@@ -348,16 +337,6 @@ enum ExtendedNativeTools {
             return await HomeKitTools.listAccessories(arguments)
         case "homekit.control_accessory":
             return await HomeKitTools.controlAccessory(arguments)
-        case "nfc.read_tag":
-            return await NFCReaderFlow.shared.readTag()
-        case "nearby.get_local_token":
-            return NearbyInteractionTools.localToken()
-        case "nearby.start_session":
-            return NearbyInteractionTools.start(arguments)
-        case "nearby.get_measurements":
-            return NearbyInteractionTools.measurements()
-        case "nearby.stop_session":
-            return NearbyInteractionTools.stop()
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -698,7 +677,7 @@ private final class DocumentPickerFlow: NSObject, UIDocumentPickerDelegate {
             let flow = DocumentPickerFlow()
             flow.continuation = continuation
             active = flow
-            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.item], asCopy: false)
+            let picker = UIDocumentPickerViewController(documentTypes: ["public.item"], in: .open)
             picker.allowsMultipleSelection = false
             picker.delegate = flow
             presenter.present(picker, animated: true)
@@ -750,7 +729,7 @@ private final class DocumentPickerFlow: NSObject, UIDocumentPickerDelegate {
             let data = try Data(contentsOf: url)
             continuation.resume(returning: (200, [
                 "filename": url.lastPathComponent,
-                "content_type": UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream",
+                "content_type": mimeType(forExtension: url.pathExtension),
                 "size_bytes": data.count,
                 "data_base64": data.base64EncodedString()
             ]))
@@ -766,6 +745,32 @@ private final class DocumentPickerFlow: NSObject, UIDocumentPickerDelegate {
         if let exportURL { try? FileManager.default.removeItem(at: exportURL) }
         continuation.resume(returning: (499, ["error": "user_cancelled"]))
         Self.active = nil
+    }
+
+    /// A small, explicit extension -> MIME type table. Avoids UniformTypeIdentifiers
+    /// (not in this project's allow-listed Apple frameworks) for the handful of types
+    /// a picked file is likely to be.
+    private func mimeType(forExtension ext: String) -> String {
+        switch ext.lowercased() {
+        case "txt": return "text/plain"
+        case "json": return "application/json"
+        case "csv": return "text/csv"
+        case "md": return "text/markdown"
+        case "html", "htm": return "text/html"
+        case "xml": return "application/xml"
+        case "pdf": return "application/pdf"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "mp3": return "audio/mpeg"
+        case "m4a": return "audio/mp4"
+        case "wav": return "audio/wav"
+        case "mp4": return "video/mp4"
+        case "mov": return "video/quicktime"
+        case "zip": return "application/zip"
+        default: return "application/octet-stream"
+        }
     }
 
     private static func topPresenter() -> UIViewController? {
@@ -1086,132 +1091,3 @@ private final class HomeKitTools: NSObject, HMHomeManagerDelegate {
     }
 }
 
-
-@MainActor
-private final class NFCReaderFlow: NSObject, NFCNDEFReaderSessionDelegate {
-    static let shared = NFCReaderFlow()
-    private var session: NFCNDEFReaderSession?
-    private var continuation: CheckedContinuation<(Int, [String: Any]), Never>?
-
-    func readTag() async -> (Int, [String: Any]) {
-        guard NFCNDEFReaderSession.readingAvailable else {
-            return (501, ["error": "nfc_reading_unavailable_on_device"])
-        }
-        guard session == nil else { return (409, ["error": "nfc_session_already_active"]) }
-        return await withCheckedContinuation { continuation in
-            self.continuation = continuation
-            let session = NFCNDEFReaderSession(delegate: self, queue: nil, invalidateAfterFirstRead: true)
-            session.alertMessage = "Hold your iPhone near an NFC tag."
-            self.session = session
-            session.begin()
-        }
-    }
-
-    func readerSession(_ session: NFCNDEFReaderSession, didDetectNDEFs messages: [NFCNDEFMessage]) {
-        let records: [[String: Any]] = messages.flatMap { message in
-            message.records.map { record in
-                [
-                    "type": String(data: record.type, encoding: .utf8) ?? record.type.base64EncodedString(),
-                    "identifier_base64": record.identifier.base64EncodedString(),
-                    "payload_base64": record.payload.base64EncodedString(),
-                    "payload_text": String(data: record.payload, encoding: .utf8) as Any? ?? NSNull()
-                ]
-            }
-        }
-        finish((200, ["read": true, "messages": records, "record_count": records.count]))
-        session.invalidate()
-    }
-
-    func readerSession(_ session: NFCNDEFReaderSession, didInvalidateWithError error: Error) {
-        if continuation != nil {
-            let nsError = error as NSError
-            let cancelled = nsError.domain == NFCReaderError.errorDomain && nsError.code == NFCReaderError.readerSessionInvalidationErrorUserCanceled.rawValue
-            finish((cancelled ? 499 : 500, ["error": cancelled ? "user_cancelled" : "nfc_session_failed", "detail": error.localizedDescription]))
-        }
-        self.session = nil
-    }
-
-    private func finish(_ result: (Int, [String: Any])) {
-        let continuation = self.continuation
-        self.continuation = nil
-        continuation?.resume(returning: result)
-        self.session = nil
-    }
-}
-
-
-@available(iOS 16.0, *)
-private final class NearbyInteractionTools: NSObject, NISessionDelegate {
-    private static let shared = NearbyInteractionTools()
-    private var session: NISession?
-    private var tokenSession: NISession?
-    private var peerToken: NIDiscoveryToken?
-    private var lastMeasurement: [String: Any] = [:]
-    private var lastError: String?
-
-    static func localToken() -> (Int, [String: Any]) {
-        guard NISession.isSupported else { return (501, ["error": "nearby_interaction_unsupported_on_device"]) }
-        if shared.tokenSession == nil { shared.tokenSession = NISession() }
-        guard let token = shared.tokenSession?.discoveryToken else {
-            return (500, ["error": "nearby_discovery_token_unavailable"])
-        }
-        do {
-            let data = try NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true)
-            return (200, ["token_base64": data.base64EncodedString(), "note": "Exchange this token with the peer over a trusted channel; it does not discover peers by itself."])
-        } catch {
-            return (500, ["error": "nearby_token_archive_failed", "detail": error.localizedDescription])
-        }
-    }
-
-    static func start(_ arguments: [String: Any]) -> (Int, [String: Any]) {
-        guard NISession.isSupported else { return (501, ["error": "nearby_interaction_unsupported_on_device"]) }
-        guard let encoded = arguments["peer_token_base64"] as? String,
-              let data = Data(base64Encoded: encoded),
-              let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NIDiscoveryToken.self, from: data) else {
-            return (400, ["error": "valid_peer_token_base64_required"])
-        }
-        shared.session?.invalidate()
-        let session = NISession()
-        session.delegate = shared
-        shared.session = session
-        shared.peerToken = token
-        shared.lastMeasurement = [:]
-        shared.lastError = nil
-        session.run(NINearbyPeerConfiguration(peerToken: token))
-        return (200, ["started": true, "note": "Measurements arrive asynchronously; call nearby.get_measurements to read the latest result."])
-    }
-
-    static func measurements() -> (Int, [String: Any]) {
-        if let lastError = shared.lastError { return (409, ["error": "nearby_session_error", "detail": lastError]) }
-        guard shared.session != nil else { return (409, ["error": "nearby_session_not_started"]) }
-        return (200, ["active": true, "measurement": shared.lastMeasurement])
-    }
-
-    static func stop() -> (Int, [String: Any]) {
-        guard shared.session != nil else { return (200, ["stopped": true, "already_stopped": true]) }
-        shared.session?.invalidate()
-        shared.session = nil
-        shared.peerToken = nil
-        shared.lastMeasurement = [:]
-        return (200, ["stopped": true])
-    }
-
-    func session(_ session: NISession, didUpdate nearbyObjects: [NINearbyObject]) {
-        guard let object = nearbyObjects.first else { return }
-        var value: [String: Any] = ["peer_token": String(describing: object.discoveryToken)]
-        if let distance = object.distance { value["distance_meters"] = distance }
-        if let direction = object.direction {
-            value["direction_radians"] = ["x": direction.x, "y": direction.y, "z": direction.z]
-        }
-        lastMeasurement = value
-    }
-
-    func session(_ session: NISession, didInvalidateWith error: Error) {
-        lastError = error.localizedDescription
-        self.session = nil
-    }
-
-    func sessionSuspensionEnded(_ session: NISession) {
-        if let peerToken { session.run(NINearbyPeerConfiguration(peerToken: peerToken)) }
-    }
-}

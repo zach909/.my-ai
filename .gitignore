@@ -2,6 +2,8 @@
 .tanstack/start/build/
 .nitro/
 node_modules/
+# Compiled backend output (node scripts/build-backend.mjs); regenerated, not source.
+dist/
 release-artifacts/
 .neuroclaw/
 # Runtime state the engine writes into its working directory when run from a checkout.

@@ -97,6 +97,17 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
     </div>
   </section>
 
+  <section class="nc-glass" id="healing">
+    <h2>Self-healing</h2>
+    <p class="nc-dim">Runs automatically every few minutes. Checks each registered component (the plugin registry, the hive's trust budget); repairs what it can, reverts to a known-good snapshot if a repair does not hold, and reports anything it cannot fix. Every step is logged, never silent.</p>
+    <p class="nc-dim" id="heal-line">Loading...</p>
+    <div id="heal-components"></div>
+    <div class="row">
+      <button class="nc-btn" id="heal-now">Heal now</button>
+    </div>
+    <details><summary>Repair log</summary><div id="heal-log" class="nc-dim"></div></details>
+  </section>
+
   <section class="nc-glass" id="safety">
     <h2>Safety: what asks first</h2>
     <p class="nc-dim">Risky tools do not just go. When the agent wants to use one, the call is held and nothing happens until you approve it here. Approving runs that one call once. You can stop individual tools asking, or give it complete access.</p>
@@ -735,6 +746,42 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   $('ag-create').addEventListener('click', function () { act(api('POST', '/api/agent/create', {})).then(function () { say('A new agent is here, sandboxed.'); loadAgent(); }, loadAgent); });
   setInterval(loadAgent, 5000);
   loadAgent();
+
+  function renderHealthStatus(status) {
+    // GET /api/health: { componentName: healthy }
+    var names = Object.keys(status || {});
+    var healthy = names.filter(function (n) { return status[n]; }).length;
+    $('heal-line').textContent = names.length ? (healthy + ' of ' + names.length + ' component(s) healthy.') : 'Nothing registered yet.';
+    var box = $('heal-components');
+    box.innerHTML = '';
+    names.forEach(function (n) {
+      var p = document.createElement('p');
+      p.className = 'nc-dim';
+      p.textContent = n + ': ' + (status[n] ? 'healthy' : 'unhealthy');
+      box.appendChild(p);
+    });
+  }
+  function renderHealReport(r) {
+    // POST /api/health/heal: the fuller HealReport
+    $('heal-line').textContent = r.checked + ' component(s) checked, ' + r.healthy + ' healthy' +
+      (r.repaired ? ', ' + r.repaired + ' repaired' : '') + (r.restored ? ', ' + r.restored + ' restored' : '') +
+      (r.unrecoverable && r.unrecoverable.length ? ', ' + r.unrecoverable.length + ' unrecoverable: ' + r.unrecoverable.join(', ') : '.');
+    var box = $('heal-components');
+    box.innerHTML = '';
+    (r.results || []).forEach(function (c) {
+      var p = document.createElement('p');
+      p.className = 'nc-dim';
+      p.textContent = c.component + ': ' + (c.wasHealthy ? 'was healthy' : c.recovered ? 'recovered (' + c.actions.join('; ') + ')' : c.unrecoverable ? 'unrecoverable' : 'checked');
+      box.appendChild(p);
+    });
+  }
+  function loadHealth() { return api('GET', '/api/health').then(renderHealthStatus).catch(function () {}); }
+  $('heal-now').addEventListener('click', function () { act(api('POST', '/api/health/heal', {})).then(renderHealReport, loadHealth); });
+  $('heal-log').closest('details').addEventListener('toggle', function (e) {
+    if (e.target.open) api('GET', '/api/health/log').then(function (r) { $('heal-log').textContent = (r.log || []).slice(-50).join('\n') || 'Nothing logged yet.'; }).catch(function () {});
+  });
+  setInterval(loadHealth, 30000);
+  loadHealth();
   $('x-add').addEventListener('click', function () {
     act(api('POST', '/api/commons/experts', {
       name: $('x-name').value, specialty: $('x-spec').value, mission: $('x-mission').value,

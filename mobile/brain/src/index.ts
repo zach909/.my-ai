@@ -18,7 +18,7 @@
  * sides can call it without sharing types.
  */
 import "./shims";
-import { Buffer } from "buffer";
+import { Buffer } from "./buffer-shim.js";
 import { HyperDimensionalEngine, ZipLoopInterface, zipLoopIdsFor } from "../../../models && skills/core/onebrain";
 import { runUntilStoppedAsync, ZIP_FOLDERS } from "../../../models && skills/core/zip-halt";
 import { NetSkillRouter } from "../../../models && skills/core/net-skill-router";

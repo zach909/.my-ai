@@ -86,7 +86,7 @@ Build the APK:
 ```sh
 cd mobile/android
 echo "sdk.dir=/path/to/Android/sdk" > local.properties   # or set ANDROID_HOME
-./gradlew assembleDebug
+gradle assembleDebug   # needs Gradle installed; this repo carries no wrapper (the wrapper jar is Gradle's own third-party binary)
 # -> app/build/outputs/apk/debug/app-debug.apk
 ```
 
