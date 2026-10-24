@@ -14,6 +14,14 @@ and what is still unfinished. The two matrices below are generated from `interfa
 ## The layers
 
 ```
+
+All system permissions
+All normal permissions 
+ +multi-desktop multi-mouse and multi keyboard. 
+Then add another thing for terminal access. 
+ Root access
+
+
  Shared AI core          models && skills/  plugins/  plugin_manager/  extension_system/  extension-builder/
    (unchanged)           the OneBrain mesh, Zip Loop, memory, skills, plugins -- served by interface/web-server.ts
 
