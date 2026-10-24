@@ -778,7 +778,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   function loadHealth() { return api('GET', '/api/health').then(renderHealthStatus).catch(function () {}); }
   $('heal-now').addEventListener('click', function () { act(api('POST', '/api/health/heal', {})).then(renderHealReport, loadHealth); });
   $('heal-log').closest('details').addEventListener('toggle', function (e) {
-    if (e.target.open) api('GET', '/api/health/log').then(function (r) { $('heal-log').textContent = (r.log || []).slice(-50).join('\n') || 'Nothing logged yet.'; }).catch(function () {});
+    if (e.target.open) api('GET', '/api/health/log').then(function (r) { $('heal-log').textContent = (r.log || []).slice(-50).join('\\n') || 'Nothing logged yet.'; }).catch(function () {});
   });
   setInterval(loadHealth, 30000);
   loadHealth();
