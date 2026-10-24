@@ -3533,6 +3533,94 @@ export class WebServer {
       return;
     }
 
+    // ── Virtual workspaces ───────────────────────────────────────────────
+    // Named, in-app groups of chat threads (models && skills/core/workspace-store.ts).
+    // Not OS-level virtual desktop switching -- see docs/PLATFORMS.md.
+    //   GET    /api/workspaces                       list + which one is active
+    //   POST   /api/workspaces              {name}    create
+    //   POST   /api/workspaces/:id/rename   {name}
+    //   POST   /api/workspaces/:id/activate
+    //   POST   /api/workspaces/:id/threads  {threadId, member}
+    //   DELETE /api/workspaces/:id
+
+    if (pathname === '/api/workspaces' && method === 'GET') {
+      try {
+        const { WorkspaceStore } = await import('../models && skills/core/workspace-store.js');
+        const store = new WorkspaceStore();
+        this.sendJson(res, { workspaces: store.list(), activeId: store.getActiveId() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/workspaces' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { name?: string } | null;
+        const { WorkspaceStore } = await import('../models && skills/core/workspace-store.js');
+        this.sendJson(res, new WorkspaceStore().create(String(body?.name ?? '')), 201);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    const workspaceMatch = pathname.match(/^\/api\/workspaces\/([^/]+)(?:\/(rename|activate|threads))?$/);
+    if (workspaceMatch) {
+      const id = decodeURIComponent(workspaceMatch[1]);
+      const action = workspaceMatch[2];
+      try {
+        const { WorkspaceStore } = await import('../models && skills/core/workspace-store.js');
+        const store = new WorkspaceStore();
+
+        if (!action && method === 'DELETE') {
+          this.sendJson(res, { deleted: store.delete(id) });
+          return;
+        }
+        if (action === 'rename' && method === 'POST') {
+          const body = await this.parseBody(req) as { name?: string } | null;
+          const workspace = store.rename(id, String(body?.name ?? ''));
+          if (!workspace) { this.sendJson(res, { error: `No workspace "${id}".` }, 404); return; }
+          this.sendJson(res, workspace);
+          return;
+        }
+        if (action === 'activate' && method === 'POST') {
+          store.setActive(id);
+          this.sendJson(res, { activeId: store.getActiveId() });
+          return;
+        }
+        if (action === 'threads' && method === 'POST') {
+          const body = await this.parseBody(req) as { threadId?: string; member?: boolean } | null;
+          if (!body?.threadId || typeof body.member !== 'boolean') {
+            this.sendJson(res, { error: 'Expected { threadId: string, member: boolean }' }, 400);
+            return;
+          }
+          const workspace = store.setThreadMembership(id, body.threadId, body.member);
+          if (!workspace) { this.sendJson(res, { error: `No workspace "${id}".` }, 404); return; }
+          this.sendJson(res, workspace);
+          return;
+        }
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+        return;
+      }
+    }
+
+    // ── Linux input-device enumeration ──────────────────────────────────
+    // See models && skills/core/linux-input-devices.ts: names and counts of
+    // connected mice/keyboards, read from /proc/bus/input/devices. Never
+    // opens /dev/input/eventN -- that would be raw keystroke/click capture.
+    if (pathname === '/api/input-devices' && method === 'GET') {
+      try {
+        const { listInputDevices, summarizeDevices } = await import('../models && skills/core/linux-input-devices.js');
+        const result = listInputDevices();
+        this.sendJson(res, { ...result, summary: summarizeDevices(result.devices) });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
     // ── Auto-update ─────────────────────────────────────────────────────
     // Checking is safe and changes nothing, so it is open. Applying rewrites
     // the working tree and can move code out from under the running process,

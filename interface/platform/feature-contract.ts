@@ -206,6 +206,7 @@ export const FEATURES: Feature[] = [
   },
   {
     id: 'root-access', title: 'Root access, complete route access', description: 'Not actually complete yet, named that way because that is the goal: a systemd action run as root through pkexec (the OS authentication dialog is the approval), gated by a deny-by-default allowlist, is the one route with a real adapter today. plugins/linux-permission-tools.ts specifies 100+ other Linux capabilities (package management, firewall rules, local accounts, mounting, ACLs, SELinux/AppArmor, ...); every one of them still fails closed with an honest "not implemented" rather than a fake success. Windows and macOS have no privilege-broker adapter at all.',
+    id: 'root-access', title: 'Root / system access', description: 'Linux only, and only one thing: a systemd unit action (status/start/stop/restart/enable/disable) run through pkexec, whose OS authentication dialog is the approval, gated by a deny-by-default allowlist (Settings > Access). Not root shell access and not "complete" root access -- the tool enum\'s other 100+ operations (package install, firewall rules, local accounts, mounting, security policy) all fail closed as not implemented, and Windows and macOS have no privilege-broker adapter at all.',
     implementation: ['models && skills/core/linux-privilege-broker.ts', 'plugins/linux-permission-tools.ts', 'plugins/linux-permission-plugin.ts'],
     routes: ['GET /api/linux-privilege-broker', 'POST /api/linux-privilege-broker'],
     needs: [['localEngine']], tests: [v('test/core/linux-privilege-broker.test.ts')], onlyOn: ['linux'],
@@ -224,9 +225,16 @@ export const FEATURES: Feature[] = [
   },
   {
     id: 'terminal', title: 'Terminal access', description: 'A tool the agent can use to run shell commands, with output capture and a best-effort guardrail against the most common catastrophic accidents; gated by the same ask-first/approval system as every other risky tool.',
+    id: 'terminal', title: 'Terminal', description: 'A tool the agent can use to run shell commands on this device and read back their output, gated by the same ask-first/approval system as every other risky tool and with a best-effort guardrail against the most common catastrophic accidents (it is a sandboxed shell-command tool, not an open terminal emulator and not a path to extra privileges beyond the agent\'s own).',
     implementation: ['plugins/terminal.ts'],
     routes: [],
     needs: [['localEngine']], tests: [v('test/core/tool-neurons.test.ts'), v('test/core/risky-gate-regression.test.ts')],
+  },
+  {
+    id: 'workspaces', title: 'Virtual workspaces', description: 'Named, in-app workspaces that group chat threads so a person running several conversations at once can switch between named contexts -- a software grouping inside the shared interface, not OS-level virtual desktop switching, which no platform exposes to this app.',
+    implementation: ['models && skills/core/workspace-store.ts'],
+    routes: ['GET /api/workspaces', 'POST /api/workspaces', 'POST /api/workspaces/:id/rename', 'POST /api/workspaces/:id/activate', 'POST /api/workspaces/:id/threads', 'DELETE /api/workspaces/:id'],
+    needs: ENGINE, tests: [v('test/core/workspace-store.test.ts')],
   },
   {
     id: 'agent-sandbox', title: 'Agent sandbox, with a tamper trap', description: 'Confines the agent to its own folder; forced on automatically once its danger level reaches "wary", and switchable by hand at any time. A decoy "disable the alignment protocol" switch is planted in the agent’s folder and connected to nothing; touching it (by a tool, a script, or the agent’s own writes) counts as tampering and moves the danger level, checked before every tool call and on a timer.',
