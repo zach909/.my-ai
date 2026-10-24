@@ -67,10 +67,10 @@ and the permissions each OS prompts for.
 | Installable web app | yes | yes | yes | yes | yes | yes |
 | Chrome extension launcher | no | no | no | yes | no | no |
 | Versioning, release manifest, change-driven builds | yes | yes | yes | yes | yes | yes |
-| Root access | no | yes | no | no | no | no |
-| All permissions (complete access) | yes | yes | yes | no | partly | partly |
-| System permissions (full inventory) | no | no | no | no | no | no |
-| Terminal | yes | yes | yes | no | partly | partly |
+| Root access, complete route access | no | yes | no | no | no | no |
+| All permissions | yes | yes | yes | no | partly | partly |
+| System permissions, multi-desktop, multi-mouse and multi-keyboard | no | no | no | no | no | no |
+| Terminal access | yes | yes | yes | no | partly | partly |
 | Agent sandbox, with a tamper trap | yes | yes | yes | no | partly | partly |
 | Self-healing | yes | yes | yes | no | partly | partly |
 | Hive mind | yes | yes | yes | no | partly | partly |
