@@ -5032,84 +5032,17 @@ async function testPropagateOptimizations() {
   check(pathIters && pathDiff === 0, 'the dense path is bit-identical to the CSR path it replaces');
 }
 
-async function testMarkWaveAnimation() {
-  const fsp = await import('node:fs');
-  const src = fsp.readFileSync('src/components/NeuroclawMark.tsx', 'utf8');
-
-  // The mark's amplitudes: circle (A=0), the resting shape it shows when idle
-  // (A=17), and the spike the animation reaches (A=64).
-  const paths = [...src.matchAll(/const RING_(CIRCLE|CALM|SPIKE) =\s*\n\s*'([^']+)'/g)]
-    .map(m => ({ name: m[1], d: m[2] }));
-  check(paths.length === 3, `all three wave amplitudes are defined (found ${paths.length})`);
-
-  // Path interpolation only works when every path shares an identical command
-  // sequence. These do by construction -- same sampler, same segment count --
-  // but an edit that regenerated one at a different resolution would break the
-  // animation silently, with the shape simply snapping instead of morphing.
-  const shape = (d) => d.replace(/-?[\d.]+/g, '#');
-  const shapes = new Set(paths.map(p => shape(p.d)));
-  check(shapes.size === 1,
-    'every amplitude has an identical command structure, which is what makes them interpolatable');
-
-  const segments = paths.map(p => (p.d.match(/ C /g) || []).length);
-  check(new Set(segments).size === 1 && segments[0] > 0,
-    `every amplitude has the same segment count (${segments[0]})`);
-
-  // The shapes must actually differ, or the animation would run and show
-  // nothing. Compare the widest horizontal extent: the star reaches further
-  // out than the circle by construction.
-  const extent = (d) => {
-    const xs = [...d.matchAll(/(-?[\d.]+)\s+(-?[\d.]+)/g)].map(m => parseFloat(m[1]));
-    return Math.max(...xs) - Math.min(...xs);
-  };
-  const circle = paths.find(p => p.name === 'CIRCLE');
-  const star = paths.find(p => p.name === 'CALM');
-  // Proportional, not a fixed pixel margin: with six lobes the widest points
-  // do not fall on the x-axis, so the horizontal extent grows by noticeably
-  // less than 2*(R+A). Measured 304 -> 342, which is a plainly visible change.
-  // Horizontal extent is the wrong ruler for the resting shape: with six
-  // lobes the widest points do not sit on the x-axis, so A=17 measures 303
-  // against the circle's 304 despite being visibly wavy. Compare the shapes
-  // point-by-point instead, which is what "not a circle" actually means.
-  const points = (d) => [...d.matchAll(/(-?[\d.]+)\s+(-?[\d.]+)/g)].map(m => [parseFloat(m[1]), parseFloat(m[2])]);
-  const maxShift = Math.max(...points(star.d).map(([x, y], i) => {
-    const [cx, cy] = points(circle.d)[i];
-    return Math.hypot(x - cx, y - cy);
-  }));
-  check(maxShift > 10,
-    `the resting shape is genuinely wavy, not a circle (points move up to ${maxShift.toFixed(0)} units)`);
-
-  // The peak, on the other hand, does widen the whole mark, and that is the
-  // change a person actually sees while the agent is working.
-  const grew = extent(circle.d);
-
-  // The animation runs between the two EXTREMES -- a real circle and a really
-  // pointy star -- with no resting shape in between. Easing through the
-  // resting shape made it read as a wobble around the normal look rather than
-  // a circle becoming a star, which is the whole point of the motion.
-  const spike = paths.find(p => p.name === 'SPIKE');
-  const spiked = extent(spike.d) / grew;
-  check(spiked > 1.2,
-    `the animation's peak is dramatically wider than the circle it starts from (${Math.round(grew)} -> ${Math.round(extent(spike.d))}, ${((spiked - 1) * 100).toFixed(0)}% wider)`);
-  const keyframes = src.match(/@keyframes neuroclaw-wave \{([\s\S]*?)\n\}/);
-  check(!!keyframes && /0%[^}]*RING_CIRCLE/.test(keyframes[1]) && /100%[^}]*RING_CIRCLE/.test(keyframes[1]),
-    'the cycle starts and ends on a true circle');
-  check(!!keyframes && /50%[^}]*RING_SPIKE/.test(keyframes[1]),
-    'the cycle peaks on the most extreme shape');
-  check(!!keyframes && !/RING_CALM/.test(keyframes[1]),
-    'nothing softens the contrast in between -- it goes circle straight to spike and back');
-
-  // Driven by CSS, not SMIL. SMIL's clock does not advance under headless
-  // Chromium, so a SMIL version could never be verified here.
-  check(/@keyframes neuroclaw-wave/.test(src), 'the morph is a CSS keyframe animation');
-  check(!/<animate\b/.test(src), 'no SMIL animation is used, since it cannot be verified in this environment');
-  check(/prefers-reduced-motion/.test(src),
-    'a viewer who asked for less motion gets opacity instead of a morphing shape');
-
-  // Off unless the agent is working.
-  check(/active \? 'neuroclaw-wave-active' : undefined/.test(src),
-    'the animation only runs when the agent is actually working');
-}
+// testMarkWaveAnimation was retired along with src/components/NeuroclawMark.tsx:
+// it checked that component's SVG-path interpolation (three RING_* amplitude
+// constants morphed via a CSS keyframe animation) between a circle and a
+// spiked star while the agent worked. That React component was removed with
+// the rest of the React/Vite UI (AGENTS.md's no-third-party rule); the
+// replacement, interface/ambient.ts, draws the same idea -- the ring and the
+// shoggoth inside it -- a completely different way, with Canvas 2D paths
+// driven by numeric parameters (amp, crawl, speed) rather than named SVG
+// amplitude states and CSS keyframes. There is no equivalent to port this
+// check to; it tested a specific implementation technique that no longer
+// exists, not a requirement the current renderer still has to meet.
 
 async function testPromptingSkills() {
   const { isStorePublicRoute } = await load('interface/web-server.js');
@@ -5561,7 +5494,6 @@ async function main() {
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
-    ['Mark wave: circle to star while the agent works', testMarkWaveAnimation],
     ['Prompting skills: the perceive-think-act loop', testPromptingSkills],
     ['Public store: shared via the repo, open to publish, gated on destroy', testPublicStore],
     ['Tools plugin: exact local utilities, and a non-greedy dispatch contract', testToolsPlugin],
