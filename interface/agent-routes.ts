@@ -1,23 +1,26 @@
 /**
  * The agent, its sandbox, its danger level and the alignment protocol.
  *
- *   GET  /api/agent            who is there and how it stands (everyone signed in: the ring needs it)
- *   POST /api/agent/sandbox    { on }                 admin
- *   POST /api/agent/alignment  { armed, confirm? }    admin (turning it off needs confirm: true)
- *   POST /api/agent/forgive    {}                     admin: level back to neutral
- *   POST /api/agent/delete     { phrase }             admin: delete the agent now
- *   POST /api/agent/create     { name? }              admin: make a new one, once the old one is gone
+ *   GET  /api/agent                      who is there and how it stands (everyone signed in: the ring needs it)
+ *   POST /api/agent/sandbox              { on }                 admin
+ *   POST /api/agent/alignment            { armed, confirm? }    admin (turning it off needs confirm: true)
+ *   POST /api/agent/forgive              {}                     admin: level back to neutral
+ *   POST /api/agent/delete               { phrase }             admin: delete the agent now
+ *   POST /api/agent/create               { name? }              admin: make a new one, once the old one is gone
+ *   GET  /api/agent/escape-warning       full history of sandbox breaches   admin
+ *   POST /api/agent/escape-warning/acknowledge   silence the banner until the next breach   admin
  *
  * A regular user sees only the state, the look and the band (enough to draw
- * the agent and its goodbye); the settings, events and capabilities are the
- * admin's. The write routes are not on a regular user's allowlist at all
- * (accounts.ts), and check again here.
+ * the agent and its goodbye), plus whether an escape warning is active (a
+ * breach is everyone's business, not just the admin's); the settings, events
+ * and capabilities are the admin's. The write routes are not on a regular
+ * user's allowlist at all (accounts.ts), and check again here.
  */
 
 import type http from "node:http";
 import { CAPABILITIES, type AccessManager } from "../models && skills/core/access-manager.js";
-import { agentAlive, agentState, createAgentFile, decoyPath, loadAgent, removedNote } from "../models && skills/core/agent-profile.js";
-import { BANDS, armDecoy, fireAlignment, forgive, setArmed, setSandbox, standing, watchDecoy } from "../models && skills/core/danger-protocol.js";
+import { acknowledgeEscapeWarning, agentAlive, agentState, createAgentFile, decoyPath, escapeWarningStatus, loadAgent, removedNote } from "../models && skills/core/agent-profile.js";
+import { BANDS, armDecoy, armHoneypot, fireAlignment, forgive, setArmed, setSandbox, standing, watchDecoy, watchHoneypot } from "../models && skills/core/danger-protocol.js";
 import { RISKY_TOOLS, loadSafety, needsApproval, normalizeToolId } from "../models && skills/core/tool-safety.js";
 import { isOwnerOrAdmin } from "../models && skills/core/user-context.js";
 
@@ -87,12 +90,15 @@ export async function capabilityRows(ctx: Pick<AgentContext, "access">): Promise
 
 export async function agentSnapshot(ctx: Pick<AgentContext, "access">) {
   const st = standing();
+  const escape = escapeWarningStatus();
   const base = {
     state: agentState(),
     look: "shoggoth",
     name: loadAgent().name,
     level: st.level,
     band: { id: st.band.id, label: st.band.label },
+    // A breach is everyone's business, not just the admin's: the banner can show for any signed-in user.
+    escapeWarningActive: escape.active,
   };
   if (!isOwnerOrAdmin()) return base;
   const agent = loadAgent();
@@ -130,12 +136,19 @@ async function route(ctx: AgentContext): Promise<boolean> {
     return true;
   };
   if (pathname === "/api/agent" && method === "GET") {
-    // The page asks every few seconds, which is also how a touched decoy is noticed promptly.
+    // The page asks every few seconds, which is also how a touched decoy or honeypot is noticed promptly.
     if (agentAlive()) {
       armDecoy();
       watchDecoy();
+      armHoneypot();
+      watchHoneypot();
     }
     return send();
+  }
+  if (pathname === "/api/agent/escape-warning" && method === "GET") {
+    if (!isOwnerOrAdmin()) throw new AgentRouteError("Only the admin can read this.", 403);
+    ctx.sendJson(res, escapeWarningStatus());
+    return true;
   }
   if (method !== "POST") return false;
   if (!isOwnerOrAdmin()) throw new AgentRouteError("Only the admin can change the agent.", 403);
@@ -162,6 +175,10 @@ async function route(ctx: AgentContext): Promise<boolean> {
     if (typeof b.phrase !== "string" || b.phrase.trim().toLowerCase() !== DELETE_PHRASE) throw new AgentRouteError(`To delete the agent, type exactly: ${DELETE_PHRASE}`);
     fireAlignment("The owner deleted the agent.");
     return send();
+  }
+  if (pathname === "/api/agent/escape-warning/acknowledge") {
+    ctx.sendJson(res, acknowledgeEscapeWarning());
+    return true;
   }
   if (pathname === "/api/agent/create") {
     try {

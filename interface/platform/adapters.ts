@@ -38,6 +38,7 @@ export const CAPABILITY_IDS = [
   'cameraCapture',      // photo capture to the engine
   'installWithoutTerminal', // a normal installer or store install exists
   'selfUpdate',         // how updates arrive (see UpdateMechanism)
+  'multiSeatInput',      // telling separate physical mice/keyboards apart, or multiple independent virtual desktops
   'normalPermissions',   // ordinary OS/browser permission prompts this repo's code already asks for (notifications, camera/mic, file picker)
   'systemPermissions',   // an elevated, beyond-sandbox grant this repo's code can actually obtain (pkexec, Android Accessibility/overlay settings)
   'multiDesktop',        // named, in-app workspaces that group chat threads -- not OS-level virtual desktop switching, which no platform exposes to this app
@@ -83,6 +84,7 @@ const desktopCommon = {
   voiceInput: some('No speech-to-text is bundled; type, or use the OS dictation shortcut.'),
   cameraCapture: some('Through the browser window\'s camera permission prompt.'),
   installWithoutTerminal: ok('Double-click installer or app bundle.'),
+  multiSeatInput: no('Not built: the UI runs in one browser window, which the OS gives one merged mouse/keyboard input stream for, with no standard way to tell which physical device an event came from. Separate virtual desktops/workspaces inside the app are not built either.'),
   normalPermissions: some('Notifications and the file-access grant are fully wired; camera/mic capture only reaches the browser window\'s own permission prompt, with no feature consuming it yet.'),
   multiDesktop: ok('Named workspaces group chat threads in the shared interface (models && skills/core/workspace-store.ts). Not OS-level virtual desktop switching -- no platform exposes that to this app.'),
 } as const;
@@ -93,7 +95,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
     runtime: 'node', updateMechanism: 'manual-download', artifacts: ['windows-installer-exe', 'windows-zip'],
     capabilities: {
       ...desktopCommon,
-      desktopControl: some('Windows UI Automation tools exist in desktop-app/src/main/windows-capability-tools.js (Electron build only); the packaged launcher does not include them.'),
+      desktopControl: no('No Windows UI Automation tools are wired into the packaged launcher.'),
       systemTray: no('The launcher opens a window; there is no tray icon.'),
       selfUpdate: some('The app reports a newer release and links to the installer. It never replaces itself silently.'),
       systemPermissions: no('No privilege-broker adapter exists for Windows yet (models && skills/core/linux-privilege-broker.ts is Linux-only); nothing here can request an elevated grant beyond the ordinary install.'),
@@ -119,7 +121,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
     runtime: 'node', updateMechanism: 'manual-download', artifacts: ['macos-app-zip', 'macos-dmg'],
     capabilities: {
       ...desktopCommon,
-      desktopControl: no('The packaged app asks for no Accessibility or Screen Recording permission. The Electron build in desktop-app/ documents those requests.'),
+      desktopControl: no('The packaged app asks for no Accessibility or Screen Recording permission.'),
       systemTray: no('No menu-bar item; open the app from the Dock.'),
       selfUpdate: some('Reports a newer release and links to the .dmg. Signed, notarised updates need the maintainer\'s Apple credentials, which this repo does not hold.'),
       systemPermissions: no('No privilege-broker adapter exists for macOS yet; the packaged app requests no elevated or special permission at all.'),
@@ -143,6 +145,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: some('Browser camera permission prompt.'),
       installWithoutTerminal: ok('Install the extension from the Chrome Web Store (once published) or load the zip in developer mode. Starting the server on the Chromebook needs the Linux container.'),
       selfUpdate: ok('Chrome updates published extensions itself.'),
+      multiSeatInput: no('A browser extension has no access to raw input devices and no concept of a second virtual desktop.'),
       normalPermissions: some('Browser permission prompts for notifications and camera exist, but the extension has no fileAccess at all -- Chrome gives extensions no arbitrary file access.'),
       systemPermissions: no('A browser extension cannot request anything beyond ordinary extension permissions; there is no elevated-grant mechanism to call.'),
       multiDesktop: ok('Named workspaces group chat threads in the shared interface, served to the extension by whatever server it points at. Not OS-level virtual desktop switching.'),
@@ -166,6 +169,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: ok(),
       installWithoutTerminal: some('CI produces a debug APK; Play Store publishing needs the maintainer\'s signing key and Play account.'),
       selfUpdate: some('Through the store you installed from. A debug APK does not update itself.'),
+      multiSeatInput: no('Not built. Some Android devices support a second connected display or a DeX-style desktop mode, but this app does nothing with it, and Android gives apps no way to distinguish two physical keyboards or mice either.'),
       normalPermissions: some('Camera, mic and notifications go through native Android permission dialogs and are fully wired; file access is still limited to scoped storage.'),
       systemPermissions: some('The accessibility-service bridge and the "display over other apps" overlay are real OS-level special-permission grants (flipped in Android Settings, not an in-app prompt), each off until the user enables it there.'),
       multiDesktop: ok('Named workspaces group chat threads in the shared interface, shown in the app\'s WebView. Not OS-level virtual desktop switching.'),
@@ -189,6 +193,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
       cameraCapture: ok(),
       installWithoutTerminal: no('CI builds an unsigned simulator app only. A device build needs an Apple developer team, signing certificates and TestFlight/App Store.'),
       selfUpdate: ok('The App Store updates it, once published.'),
+      multiSeatInput: no('Not built, and iOS gives an app no way to tell two Bluetooth keyboards or trackpads apart or to run a second independent desktop.'),
       normalPermissions: some('Camera, mic and notifications go through native iOS permission dialogs and are fully wired; file access is limited to what the file and photo pickers hand the app.'),
       systemPermissions: no('iOS gives apps no system-settings-level special permission beyond the ordinary runtime prompts (camera, mic, notifications), and this project requests no entitlement beyond those.'),
       multiDesktop: ok('Named workspaces group chat threads in the shared interface, shown in the app\'s WKWebView. Not OS-level virtual desktop switching.'),

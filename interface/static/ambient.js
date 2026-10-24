@@ -103,6 +103,17 @@
       host.appendChild(noteEl);
     } else if (!on && noteEl) { noteEl.parentNode && noteEl.parentNode.removeChild(noteEl); noteEl = null; }
   }
+  var escapeNoteEl = null;
+  function showEscapeNote(on) {
+    var onCommons = /\/commons(\/|$)/.test(location.pathname);
+    if (on && !escapeNoteEl && !onCommons) {
+      escapeNoteEl = document.createElement('div');
+      escapeNoteEl.className = 'nc-escape-note';
+      escapeNoteEl.setAttribute('role', 'alert');
+      escapeNoteEl.innerHTML = '⚠ Sandbox escape detected — <a href="/commons">see Commons</a>';
+      host.appendChild(escapeNoteEl);
+    } else if ((!on || onCommons) && escapeNoteEl) { escapeNoteEl.parentNode && escapeNoteEl.parentNode.removeChild(escapeNoteEl); escapeNoteEl = null; }
+  }
   function startLeaving() {
     showNote(false);
     if (reduce) { agent.mode = 'gone'; showNote(true); return; }
@@ -116,6 +127,7 @@
       if (!agent.loaded) { agent.loaded = true; agent.mode = j.state === 'deleted' ? 'gone' : 'alive'; if (agent.mode === 'gone') showNote(true); }
       else if (j.state === 'deleted' && (agent.mode === 'alive' || agent.mode === 'arriving')) startLeaving();
       else if (j.state === 'alive' && (agent.mode === 'gone' || agent.mode === 'leaving')) startArriving();
+      showEscapeNote(j.escapeWarningActive === true);
       if (reduce && !hidden) draw(performance.now());
     }).catch(function () {});
   }

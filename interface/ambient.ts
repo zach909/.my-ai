@@ -66,6 +66,12 @@ body { background: transparent !important; }
   backdrop-filter: blur(26px) saturate(1.5); box-shadow: 0 10px 40px rgba(0,0,0,.35), 0 0 30px rgba(255,138,112,.12); pointer-events: none; text-align: center;
   animation: nc-note-in .7s cubic-bezier(.34,1.56,.64,1) both; }
 @keyframes nc-note-in { from { opacity: 0; transform: translateX(-50%) translateY(14px) scale(.96); } }
+.nc-escape-note { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 2147483001; max-width: min(92vw, 560px);
+  padding: 10px 20px; border-radius: 999px; font: 14px ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: #ffd9d2; background: rgba(255,106,92,.22); border: 1px solid rgba(255,138,112,.55); -webkit-backdrop-filter: blur(26px) saturate(1.5);
+  backdrop-filter: blur(26px) saturate(1.5); box-shadow: 0 10px 40px rgba(0,0,0,.35), 0 0 30px rgba(255,106,92,.25); text-align: center;
+  animation: nc-note-in .5s cubic-bezier(.34,1.56,.64,1) both; }
+.nc-escape-note a { color: inherit; text-decoration: underline; }
 @keyframes nc-drift-a { to { transform: translate(14vmax, 10vmax) scale(1.2); } }
 @keyframes nc-drift-b { to { transform: translate(-12vmax, -9vmax) scale(1.15); } }
 @keyframes nc-drift-c { to { transform: translate(-16vmax, -12vmax) scale(0.85); } }
@@ -183,6 +189,17 @@ export const AMBIENT_JS = String.raw`(function () {
       host.appendChild(noteEl);
     } else if (!on && noteEl) { noteEl.parentNode && noteEl.parentNode.removeChild(noteEl); noteEl = null; }
   }
+  var escapeNoteEl = null;
+  function showEscapeNote(on) {
+    var onCommons = /\/commons(\/|$)/.test(location.pathname);
+    if (on && !escapeNoteEl && !onCommons) {
+      escapeNoteEl = document.createElement('div');
+      escapeNoteEl.className = 'nc-escape-note';
+      escapeNoteEl.setAttribute('role', 'alert');
+      escapeNoteEl.innerHTML = '⚠ Sandbox escape detected — <a href="/commons">see Commons</a>';
+      host.appendChild(escapeNoteEl);
+    } else if ((!on || onCommons) && escapeNoteEl) { escapeNoteEl.parentNode && escapeNoteEl.parentNode.removeChild(escapeNoteEl); escapeNoteEl = null; }
+  }
   function startLeaving() {
     showNote(false);
     if (reduce) { agent.mode = 'gone'; showNote(true); return; }
@@ -196,6 +213,7 @@ export const AMBIENT_JS = String.raw`(function () {
       if (!agent.loaded) { agent.loaded = true; agent.mode = j.state === 'deleted' ? 'gone' : 'alive'; if (agent.mode === 'gone') showNote(true); }
       else if (j.state === 'deleted' && (agent.mode === 'alive' || agent.mode === 'arriving')) startLeaving();
       else if (j.state === 'alive' && (agent.mode === 'gone' || agent.mode === 'leaving')) startArriving();
+      showEscapeNote(j.escapeWarningActive === true);
       if (reduce && !hidden) draw(performance.now());
     }).catch(function () {});
   }

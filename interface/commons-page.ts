@@ -67,6 +67,11 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
 </head>
 <body class="nc-soft">
 <main>
+  <div id="escape-banner" class="nc-glass" hidden style="border-color:#ff6a5c;background:rgba(255,106,92,.14);margin-bottom:16px">
+    <h2 style="color:#ffb4a8">⚠ Sandbox escape detected</h2>
+    <p id="escape-reason"></p>
+    <div class="row"><button class="nc-btn primary" id="escape-ack">I've seen this</button></div>
+  </div>
   <h1>Commons</h1>
   <div class="links"><a href="/sharing">Lend or borrow a computer</a> · <a href="/">Back to the agent</a></div>
   <div id="msg" class="nc-dim"></div>
@@ -538,7 +543,23 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
 
   // ── The agent: danger level, sandbox, alignment protocol ─────────────
   var CAP_WORD = { free: 'goes ahead', asks: 'asks you', agent: 'agent decides', blocked: 'off', gone: 'no agent' };
+  var escapeBannerShown = false;
+  function renderEscapeBanner(v) {
+    if (!v.escapeWarningActive) { $('escape-banner').hidden = true; escapeBannerShown = false; return; }
+    $('escape-banner').hidden = false;
+    if (escapeBannerShown) return; // do not re-fetch the reason every poll
+    escapeBannerShown = true;
+    api('GET', '/api/agent/escape-warning').then(function (w) {
+      var last = w.warnings && w.warnings.length ? w.warnings[w.warnings.length - 1] : null;
+      $('escape-reason').textContent = last ? (new Date(last.at)).toLocaleString() + ': ' + last.reason : 'The sandbox was breached.';
+    }).catch(function () { $('escape-reason').textContent = 'The sandbox was breached. Sign in as the admin for details.'; });
+  }
+  $('escape-ack').addEventListener('click', function () {
+    act(api('POST', '/api/agent/escape-warning/acknowledge', {})).then(function () { $('escape-banner').hidden = true; escapeBannerShown = false; });
+  });
+
   function renderAgent(v) {
+    renderEscapeBanner(v);
     var gone = v.state === 'deleted';
     $('ag-mark').style.left = Math.round(v.level * 100) + '%';
     $('ag-line').textContent = gone
@@ -778,7 +799,7 @@ export const COMMONS_PAGE = `<!DOCTYPE html>
   function loadHealth() { return api('GET', '/api/health').then(renderHealthStatus).catch(function () {}); }
   $('heal-now').addEventListener('click', function () { act(api('POST', '/api/health/heal', {})).then(renderHealReport, loadHealth); });
   $('heal-log').closest('details').addEventListener('toggle', function (e) {
-    if (e.target.open) api('GET', '/api/health/log').then(function (r) { $('heal-log').textContent = (r.log || []).slice(-50).join('\n') || 'Nothing logged yet.'; }).catch(function () {});
+    if (e.target.open) api('GET', '/api/health/log').then(function (r) { $('heal-log').textContent = (r.log || []).slice(-50).join('\\n') || 'Nothing logged yet.'; }).catch(function () {});
   });
   setInterval(loadHealth, 30000);
   loadHealth();

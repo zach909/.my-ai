@@ -65,7 +65,7 @@ Then add another thing for terminal access.
 | Accounts | yes | yes | yes | no | partly | partly |
 | Commons | yes | yes | yes | no | partly | partly |
 | Self-improvement | partly | partly | partly | no | partly | no |
-| Desktop control | partly | partly | no | no | partly | no |
+| Desktop control | no | partly | no | no | partly | no |
 | Phone sync | no | no | no | no | yes | yes |
 | Phone apps | no | no | no | no | yes | yes |
 | Desktop app (launcher and installers) | yes | yes | yes | no | no | no |
@@ -74,10 +74,15 @@ Then add another thing for terminal access.
 | Installable web app | yes | yes | yes | yes | yes | yes |
 | Chrome extension launcher | no | no | no | yes | no | no |
 | Versioning, release manifest, change-driven builds | yes | yes | yes | yes | yes | yes |
+| Root access, complete route access | no | yes | no | no | no | no |
+| All permissions | yes | yes | yes | no | partly | partly |
+| System permissions, multi-desktop, multi-mouse and multi-keyboard | no | no | no | no | no | no |
+| Terminal access | yes | yes | yes | no | partly | partly |
 | Root / system access | no | yes | no | no | no | no |
 | Terminal | yes | yes | yes | no | partly | partly |
 | Virtual workspaces | yes | yes | yes | yes | yes | yes |
 | Agent sandbox, with a tamper trap | yes | yes | yes | no | partly | partly |
+| Sandbox escape warning | yes | yes | yes | no | partly | partly |
 | Self-healing | yes | yes | yes | no | partly | partly |
 | Hive mind | yes | yes | yes | no | partly | partly |
 | AI monitor (judge agent) | yes | yes | yes | no | partly | partly |
@@ -92,13 +97,14 @@ Then add another thing for terminal access.
 | offlineChat | yes | yes | yes | no | yes | yes |
 | backgroundService | partly | partly | partly | no | partly | no |
 | fileAccess | yes | yes | yes | no | partly | partly |
-| desktopControl | partly | partly | no | no | partly | no |
+| desktopControl | no | partly | no | no | partly | no |
 | systemTray | no | no | no | no | partly | no |
 | notifications | yes | yes | yes | partly | yes | yes |
 | voiceInput | partly | partly | partly | partly | yes | yes |
 | cameraCapture | partly | partly | partly | partly | yes | yes |
 | installWithoutTerminal | yes | yes | yes | yes | partly | no |
 | selfUpdate | partly | partly | partly | yes | partly | yes |
+| multiSeatInput | no | no | no | no | no | no |
 | normalPermissions | partly | partly | partly | partly | partly | partly |
 | systemPermissions | no | partly | no | no | partly | no |
 | multiDesktop | yes | yes | yes | yes | yes | yes |
