@@ -3606,15 +3606,30 @@ export class WebServer {
       }
     }
 
-    // ── Linux input-device enumeration ──────────────────────────────────
-    // See models && skills/core/linux-input-devices.ts: names and counts of
-    // connected mice/keyboards, read from /proc/bus/input/devices. Never
-    // opens /dev/input/eventN -- that would be raw keystroke/click capture.
+    // ── Input-device enumeration (names/counts of connected mice and
+    // keyboards; never a live event stream -- see each module's header for
+    // why) ────────────────────────────────────────────────────────────────
+    // Linux: models && skills/core/linux-input-devices.ts, /proc/bus/input/devices.
+    // Windows: models && skills/core/windows-input-devices.ts, PowerShell/WMI.
+    // macOS: models && skills/core/macos-input-devices.ts, ioreg.
+    // Elsewhere (ChromeOS/Android/iOS): no device enumeration exists; reported honestly.
     if (pathname === '/api/input-devices' && method === 'GET') {
       try {
-        const { listInputDevices, summarizeDevices } = await import('../models && skills/core/linux-input-devices.js');
-        const result = listInputDevices();
-        this.sendJson(res, { ...result, summary: summarizeDevices(result.devices) });
+        if (process.platform === 'linux') {
+          const { listInputDevices, summarizeDevices } = await import('../models && skills/core/linux-input-devices.js');
+          const result = listInputDevices();
+          this.sendJson(res, { ...result, summary: summarizeDevices(result.devices) });
+        } else if (process.platform === 'win32') {
+          const { listInputDevices, summarizeDevices } = await import('../models && skills/core/windows-input-devices.js');
+          const result = await listInputDevices();
+          this.sendJson(res, { ...result, summary: summarizeDevices(result.devices) });
+        } else if (process.platform === 'darwin') {
+          const { listInputDevices, summarizeDevices } = await import('../models && skills/core/macos-input-devices.js');
+          const result = await listInputDevices();
+          this.sendJson(res, { ...result, summary: summarizeDevices(result.devices) });
+        } else {
+          this.sendJson(res, { available: false, reason: `No input-device enumeration is implemented for ${process.platform}.`, devices: [], summary: {} });
+        }
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
       }
