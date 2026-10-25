@@ -1,6 +1,5 @@
 # NeuroClaw - Artificial Superintelligence System
-
-built FOR EDU USES ONLY
+this is educational project 
 
 please spread the word
 
