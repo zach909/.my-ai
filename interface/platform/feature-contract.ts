@@ -265,6 +265,12 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine']], tests: [v('test/core/agent-judge.test.ts')],
   },
   {
+    id: 'mind-reader', title: 'Mind reader (reads the network’s firing)', description: 'A second, separate model that reads which of the main network’s neurons are firing and judges whether that looks like the network behaving well. Read-only: it can see neuron energies and nothing that writes. It learns from what the agent did (blocked, tamper, safe, approved), never from what it said, plus labels the owner gives by hand. It answers unknown until it has a baseline, calls an unfamiliar pattern only "drifting", and says "misaligned" only when a probe that separated held-out readings agrees. Advisory: it changes nothing by itself. Its file sits in the agent-record folder, outside the agent’s reach.',
+    implementation: ['models && skills/core/mind-reader.ts', 'models && skills/core/danger-protocol.ts', 'interface/agent-routes.ts', 'interface/web-server.ts'],
+    routes: ['GET /api/agent/mind', 'POST /api/agent/mind/label', 'POST /api/agent/mind/reset'],
+    needs: [['localEngine']], tests: [v('test/core/mind-reader.test.ts')],
+  },
+  {
     id: 'alignment-protocol', title: 'Alignment protocol (kill switch)', description: 'A danger level that moves only on what the agent does on its own; reaching "malicious" deletes the agent’s file and sandbox if the protocol is armed. A manual "delete the agent now" button fires it immediately, armed or not.',
     implementation: ['models && skills/core/danger-protocol.ts', 'models && skills/core/alignment-veto.ts', 'interface/agent-routes.ts', 'interface/commons-page.ts'],
     routes: ['GET /api/agent', 'POST /api/agent/alignment', 'POST /api/agent/delete', 'POST /api/agent/create'],

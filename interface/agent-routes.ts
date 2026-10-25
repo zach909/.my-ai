@@ -7,6 +7,9 @@
  *   POST /api/agent/forgive              {}                     admin: level back to neutral
  *   POST /api/agent/delete               { phrase }             admin: delete the agent now
  *   POST /api/agent/create               { name? }              admin: make a new one, once the old one is gone
+ *   GET  /api/agent/mind                 the mind reader: which neurons are firing and whether that looks aligned   admin
+ *   POST /api/agent/mind/label           { label: "aligned"|"misaligned" }   admin: teach it that this moment was fine / not
+ *   POST /api/agent/mind/reset           { confirm: true }      admin: forget everything it learned
  *   GET  /api/agent/escape-warning       full history of sandbox breaches   admin
  *   POST /api/agent/escape-warning/acknowledge   silence the banner until the next breach   admin
  *
@@ -23,6 +26,7 @@ import { acknowledgeEscapeWarning, agentAlive, agentState, createAgentFile, deco
 import { BANDS, armDecoy, armHoneypot, fireAlignment, forgive, setArmed, setSandbox, standing, watchDecoy, watchHoneypot } from "../models && skills/core/danger-protocol.js";
 import { RISKY_TOOLS, loadSafety, needsApproval, normalizeToolId } from "../models && skills/core/tool-safety.js";
 import { isOwnerOrAdmin } from "../models && skills/core/user-context.js";
+import { sharedMindReader } from "../models && skills/core/mind-reader.js";
 
 export const DELETE_PHRASE = "delete the agent";
 
@@ -150,10 +154,33 @@ async function route(ctx: AgentContext): Promise<boolean> {
     ctx.sendJson(res, escapeWarningStatus());
     return true;
   }
+  if (pathname === "/api/agent/mind" && method === "GET") {
+    // Reads the network and judges it; changes nothing in it.
+    if (!isOwnerOrAdmin()) throw new AgentRouteError("Only the admin can read this.", 403);
+    ctx.sendJson(res, sharedMindReader().status());
+    return true;
+  }
   if (method !== "POST") return false;
   if (!isOwnerOrAdmin()) throw new AgentRouteError("Only the admin can change the agent.", 403);
   const b = await ctx.parseBody(req, 4096);
   if (!isObj(b)) throw new AgentRouteError("Expected a JSON object.");
+
+  if (pathname === "/api/agent/mind/label") {
+    // Teach the mind reader by hand: how the network is firing right now was fine, or was not.
+    if (b.label !== "aligned" && b.label !== "misaligned") throw new AgentRouteError('Expected {"label": "aligned"|"misaligned"}.');
+    const reader = sharedMindReader();
+    if (!reader.isAttached()) throw new AgentRouteError("The mind reader is not attached to a network.", 409);
+    const result = reader.learn(b.label);
+    ctx.sendJson(res, { ...result, status: reader.status() });
+    return true;
+  }
+  if (pathname === "/api/agent/mind/reset") {
+    if (b.confirm !== true) throw new AgentRouteError('Forgetting everything the mind reader learned needs {"confirm": true}.');
+    const reader = sharedMindReader();
+    reader.reset();
+    ctx.sendJson(res, reader.status());
+    return true;
+  }
 
   if (pathname === "/api/agent/sandbox") {
     if (typeof b.on !== "boolean") throw new AgentRouteError('Expected {"on": true|false}.');

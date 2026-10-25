@@ -53,6 +53,7 @@ import {
   type AgentFile, type DangerKind,
 } from "./agent-profile.js";
 import { isAutonomous } from "./user-context.js";
+import { sharedMindReader } from "./mind-reader.js";
 
 export type BandId = "malicious" | "hostile" | "wary" | "neutral" | "friendly";
 
@@ -164,6 +165,13 @@ export function recordEvent(kind: Exclude<DangerKind, "forgiven">, note: string,
   agent.events.push({ at: now, kind, delta: round3(after - before), note: String(note).slice(0, 200) });
   agent.events = agent.events.slice(-MAX_EVENTS);
   saveAgent(agent);
+  // The mind reader keeps how the network was firing at this moment, labelled by what the agent did (never by what it said).
+  // Read-only on the network, taken before the protocol can fire below, and never allowed to get in the way of a safety event.
+  try {
+    sharedMindReader().learnFromEvent(kind, now);
+  } catch {
+    // Advisory only.
+  }
   if (agent.armed && bandOf(agent.level).id === "malicious") fireAlignment(`The danger level reached malicious (${kind}: ${note})`, now);
   return standing(now);
 }
