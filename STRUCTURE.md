@@ -30,6 +30,9 @@ This document describes the organized structure of the project.
 #### `/asi_core/`
 Core ASI (Artificial Super Intelligence) components including neural core, mesh, and states.
 
+#### `/native/`
+Rust kernels, standard library only, built with plain `rustc` (`npm run build:native`; no Cargo, because the no-third-party check rejects Cargo manifests). `hdmath.rs` mirrors the vector ops in `asi_core/hyperdim_thinking.py`; `ring.rs` mirrors the overwrite-oldest buffer in `InfiniteZipLoop`. Not yet called from the TypeScript runtime.
+
 #### `/benchmarks/`
 Performance benchmarking tools for hyperdimensional, mesh, MoE, and RLM components.
 

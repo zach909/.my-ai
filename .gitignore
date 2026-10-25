@@ -8,3 +8,6 @@ release-artifacts/
 .neuroclaw/
 # Runtime state the engine writes into its working directory when run from a checkout.
 store/
+
+# Rust build output (node scripts/build-native.mjs); regenerated, not source.
+native/target/
