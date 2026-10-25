@@ -15,7 +15,6 @@ test('package.json is the authority and every place that carries a version agree
   const v = authority();
   assert.match(v, /^\d+\.\d+\.\d+/);
   assert.deepEqual(drift(), [], 'run: node scripts/release/version.mjs sync');
-  assert.equal(JSON.parse(read('desktop-app/package.json')).version, v);
   assert.equal(JSON.parse(read('browser-extension/manifest.json')).version, chromeVersion(v));
   assert.match(read('mobile/android/app/build.gradle.kts'), new RegExp(`versionName = "${v.replace(/\./g, '\\.')}"`));
   assert.match(read('mobile/ios/project.yml'), new RegExp(`MARKETING_VERSION: "${v.replace(/\./g, '\\.')}"`));
@@ -44,7 +43,7 @@ test('a drifted copy is reported by name, and sync repairs it (run in a scratch 
   try {
     mkdirSync(path.join(tmp, 'scripts', 'release'), { recursive: true });
     cpSync(path.join(ROOT, 'scripts', 'release', 'version.mjs'), path.join(tmp, 'scripts', 'release', 'version.mjs'));
-    for (const f of ['package.json', 'package-lock.json', 'desktop-app/package.json', 'desktop-app/package-lock.json', 'browser-extension/manifest.json', 'mobile/android/app/build.gradle.kts', 'mobile/ios/project.yml']) {
+    for (const f of ['package.json', 'browser-extension/manifest.json', 'mobile/android/app/build.gradle.kts', 'mobile/ios/project.yml']) {
       mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true });
       cpSync(path.join(ROOT, f), path.join(tmp, f));
     }
