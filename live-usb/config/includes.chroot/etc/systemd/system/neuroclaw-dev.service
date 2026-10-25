@@ -1,19 +1,16 @@
 [Unit]
-Description=NeuroClaw (the real app -- backend + Vite frontend)
+Description=NeuroClaw (the app: the backend serves the whole interface itself)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/neuroclaw
-# `npm run dev`, not scripts/launcher.mjs or server.mjs directly. Why this
-# one specifically: interface/web-server.ts's own GET / serves a bare-bones
-# fallback terminal page, NOT the real React app (Chats, Pinned Chats,
-# Chat History, Settings, Store, ...) -- that app is served by Vite itself,
-# on :3000, which is also the port scripts/dev.mjs's own proxy config
-# forwards /api/* from to the real backend on :7861. This is the exact
-# same command this repo's own developers run day to day (see
-# scripts/dev.mjs's doc comment) -- proven, not improvised for this image.
+# `npm run dev` (scripts/dev.mjs): rebuilds the backend, then runs it in the
+# foreground. The backend serves the whole app itself on :7861 -- the home chat
+# at /, Settings at /settings, the API under /api -- with Node built-ins only;
+# there is no separate frontend dev server. It listens on this computer's
+# loopback address only, which is all the kiosk browser needs.
 ExecStart=/usr/bin/npm run dev
 Restart=on-failure
 RestartSec=2

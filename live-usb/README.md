@@ -101,37 +101,40 @@ could not be. Please report back (or just fix it directly) if something
 here doesn't come up the way this document says it should; the most
 likely failure points are noted below.
 
-## Why :3000, not :7861 -- and why devDependencies stay installed
+## Why :7861, and why the build tools stay installed
 
-`interface/web-server.ts`'s own `GET /` serves a bare-bones fallback
-terminal page, not the real app (Chats, Pinned Chats, Chat History,
-Settings, Store, ...) -- that's served by Vite itself, on :3000, which is
-also where `scripts/dev.mjs`'s own proxy config forwards `/api/*` requests
-through to the real backend on :7861. `npm run dev` (which
-`neuroclaw-dev.service` runs) is the single command that starts both,
-together, in the right order -- the exact same thing this repo's own
-developers run day to day, not something improvised for this image.
+The backend serves the whole app itself, on :7861 -- the home chat at `/`,
+Settings at `/settings`, and the API under `/api` -- using Node built-ins
+only. There is no separate frontend server (the React/Vite dashboard that used
+to be served on :3000 was removed from the project). `npm run dev` (which
+`neuroclaw-dev.service` runs) rebuilds the backend and starts it on :7861 in
+the foreground, and the kiosk browser opens `http://127.0.0.1:7861/`.
 
-Because that's Vite's **dev** server, not a production static build,
-`vite`, `@vitejs/plugin-react`, `tailwindcss`, and the rest of this
-project's devDependencies have to stay installed and available in the live
-image -- there is no "prune to production" step here the way a normal
-deploy would have one. That's the main reason this image is larger than a
-minimal live Linux distro.
+That rebuild happens on every boot, and it needs the TypeScript compiler, so
+the image keeps the build tools named in `package.json` (`typescript`,
+`vitest`, and what they depend on) installed. There is no "prune to
+production" step. No lockfile is committed, so the build hook installs them
+with `npm install --ignore-scripts --legacy-peer-deps` (the same command CI
+runs) and not `npm ci`, which refuses to run without a lockfile.
+
+> **Fixed in this revision:** an earlier version of these files still waited
+> for a Vite server on :3000 that no longer exists (so the kiosk would sit on
+> a black screen forever), and ran `npm ci` with no lockfile (so the image
+> build itself would fail). Neither fix has been boot-tested; see above.
 
 ## Known limits / things to check if something's off
 
 - **Node.js version.** Debian stable's own `nodejs` package can lag behind
   what this project expects. If `config/hooks/live/
-  0100-neuroclaw-setup.hook.chroot`'s `npm ci` fails during the build,
+  0100-neuroclaw-setup.hook.chroot`'s `npm install` fails during the build,
   check `node -v` inside the chroot and consider swapping the `nodejs`/
   `npm` entries in `config/package-lists/neuroclaw.list.chroot` for the
   [NodeSource](https://github.com/nodesource/distributions) repository
   instead, added as an extra `lb config` apt source.
 - **First boot on very slow hardware.** `npm run dev` runs a `tsc` build
-  and Vite's own dependency pre-bundle on every boot (nothing under
+  on every boot (nothing under
   `/opt/neuroclaw` persists between boots on a plain live session) --
-  the openbox autostart script waits for `:3000` to actually answer
+  the openbox autostart script waits for `:7861` to actually answer
   before opening chromium, but a very slow machine could still mean a
   longer-than-expected wait before anything appears.
 - **Persistence.** This is a plain (non-persistent) live image: chats,

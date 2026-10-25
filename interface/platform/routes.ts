@@ -6,6 +6,8 @@
  *   GET  /api/app-settings    the shared settings, the field list, and whether the last save worked
  *   POST /api/app-settings    {group: {field: value}}  change settings (admin or owner)
  *   GET  /api/app-update      is this build current, behind, or could the check not complete
+ *   GET  /api/ai-os           is AI OS mode (start with the computer) on, and can this viewer change it
+ *   POST /api/ai-os           {enabled: boolean}  turn it on or off (admin, from the computer itself)
  *   GET  /manifest.webmanifest, /sw.js, /app-icon-192.png, /app-icon-512.png   the installable app
  *
  * Everything but the install files sits behind the server's normal gate.
@@ -20,6 +22,7 @@ import { checkAppUpdate, type UpdateStatus } from './update.js';
 import { renderIconPng } from './icon.js';
 import { serviceWorkerSource, webManifest } from './pwa.js';
 import { FEATURES, featureSupport } from './feature-contract.js';
+import { aiOsStatus, currentEnv, disableAiOs, enableAiOs } from './ai-os.js';
 
 export interface PlatformRouteContext {
   req: http.IncomingMessage;
@@ -30,9 +33,11 @@ export interface PlatformRouteContext {
   sendJson(res: http.ServerResponse, data: unknown, status?: number): void;
   /** True for the machine's owner or an admin account. */
   isAdmin(): boolean;
+  /** True when this request came from the computer the server runs on (not over the network). */
+  fromThisMachine(): boolean;
 }
 
-const ROUTES = new Set(['/api/app-info', '/api/app-settings', '/api/app-update', '/manifest.webmanifest', '/sw.js', '/app-icon-192.png', '/app-icon-512.png']);
+const ROUTES = new Set(['/api/app-info', '/api/app-settings', '/api/app-update', '/api/ai-os', '/manifest.webmanifest', '/sw.js', '/app-icon-192.png', '/app-icon-512.png']);
 export const isPlatformRoute = (pathname: string): boolean => ROUTES.has(pathname);
 
 let updateCache: { key: string; at: number; status: UpdateStatus } | null = null;
@@ -63,7 +68,7 @@ export async function handlePlatformRoutes(ctx: PlatformRouteContext): Promise<b
   const { pathname, method, req, res } = ctx;
   if (!isPlatformRoute(pathname)) return false;
   const head = method === 'HEAD';
-  if (method !== 'GET' && !head && !(pathname === '/api/app-settings' && method === 'POST')) {
+  if (method !== 'GET' && !head && !(pathname === '/api/app-settings' && method === 'POST') && !(pathname === '/api/ai-os' && method === 'POST')) {
     ctx.sendJson(res, { error: 'Method not allowed.' }, 405);
     return true;
   }
@@ -105,6 +110,35 @@ export async function handlePlatformRoutes(ctx: PlatformRouteContext): Promise<b
           return true;
         }
         ctx.sendJson(res, { settings: store.load(), fields: SETTINGS_FIELDS, persistence: { ...store.lastSave, file: store.file } });
+        return true;
+      }
+      case '/api/ai-os': {
+        // Turning this on changes the computer outside the app's own folders (it adds a login item), so
+        // only the admin sitting at the machine may do it; anyone past the gate may read the state.
+        const canChange = ctx.isAdmin() && ctx.fromThisMachine();
+        if (method === 'POST') {
+          if (!ctx.isAdmin()) {
+            ctx.sendJson(res, { error: 'Only the admin can change AI OS mode.' }, 403);
+            return true;
+          }
+          if (!ctx.fromThisMachine()) {
+            ctx.sendJson(res, { error: 'AI OS mode changes how this computer starts, so it can only be turned on or off from the computer itself (or with "node scripts/ai-os.mjs" in a terminal there).' }, 403);
+            return true;
+          }
+          const body = await ctx.parseBody(req, 1024);
+          const want = (body as { enabled?: unknown } | null)?.enabled;
+          if (typeof want !== 'boolean') {
+            ctx.sendJson(res, { error: 'Send {"enabled": true} or {"enabled": false}.' }, 400);
+            return true;
+          }
+          const env = currentEnv();
+          const result = want ? enableAiOs(env) : disableAiOs(env);
+          const status = { ...aiOsStatus(env), canChange };
+          // A failure carries its plain-words cause in `error`, which is what the Settings page shows.
+          ctx.sendJson(res, result.ok ? { result, status } : { error: result.message, result, status }, result.ok ? 200 : 500);
+          return true;
+        }
+        ctx.sendJson(res, { ...aiOsStatus(), canChange });
         return true;
       }
       case '/api/app-update': {

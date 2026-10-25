@@ -17,7 +17,7 @@ const SIZES = [
   { name: 'tablet', width: 768, height: 1024, mobile: true, scale: 2 },
   { name: 'desktop', width: 1280, height: 800, mobile: false, scale: 1 },
 ];
-const PAGES = ['/', '/settings', '/settings#updates', '/settings#remote', '/settings#access', '/settings#safety', '/settings#data', '/settings#modules', '/settings#about', '/accounts', '/commons', '/sharing', '/login'];
+const PAGES = ['/', '/settings', '/settings#updates', '/settings#remote', '/settings#access', '/settings#aios', '/settings#safety', '/settings#data', '/settings#modules', '/settings#about', '/accounts', '/commons', '/sharing', '/login'];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 before(async () => {
@@ -114,7 +114,7 @@ test('settings: tabs switch by tap and by keyboard, and every section loads with
   try {
     await pg.waitFor('document.querySelector("#panel h2")');
     const ids = await pg.eval('[...document.querySelectorAll("[role=tab]")].map((b) => b.dataset.id)');
-    assert.deepEqual(ids, ['general', 'updates', 'remote', 'access', 'safety', 'data', 'modules', 'about']);
+    assert.deepEqual(ids, ['general', 'updates', 'remote', 'access', 'aios', 'safety', 'data', 'modules', 'about']);
     for (const id of ids) {
       await pg.click(`#tab-${id}`);
       await pg.waitFor(`document.querySelector("#tab-${id}").getAttribute("aria-selected") === "true" && document.querySelector("#panel h2") && !document.querySelector("#panel .banner[role=alert]")`, 10000);

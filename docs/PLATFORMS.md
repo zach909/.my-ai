@@ -63,6 +63,7 @@ and the permissions each OS prompts for.
 | Phone sync | no | no | no | no | yes | yes |
 | Phone apps | no | no | no | no | yes | yes |
 | Desktop app (launcher and installers) | yes | yes | yes | no | no | no |
+| AI OS mode (start with the computer) | partly | partly | partly | no | no | no |
 | Source updates | yes | yes | yes | no | partly | partly |
 | App update status | yes | yes | yes | yes | yes | yes |
 | Installable web app | yes | yes | yes | yes | yes | yes |
@@ -182,6 +183,7 @@ merged or published without you.
   unmaintained Electron project).
 - Closing the app window stops the engine the app started (so nothing lingers). If you want your phone to sync with your PC,
   keep the app open.
+- **AI OS mode** (`node scripts/ai-os.mjs enable`, or Settings > AI OS) is the opt-in that makes the engine start at every sign-in and keep running with no window, through the OS's own per-user mechanism (systemd user service or autostart entry, LaunchAgent, per-user Run key). It grants the agent no extra access and listens on this computer only. See `wiki/AI-OS-Mode.md` for what was and was not verified on each OS.
 - iOS cannot run a background server, drive other apps or draw over them; Android only with permissions you grant by hand.
 - Speech-to-text is the operating system's, on phones only; nothing is bundled.
 

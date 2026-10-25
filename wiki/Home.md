@@ -11,6 +11,7 @@ Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's po
 - [[Architecture Overview|Architecture]] - System architecture and design
 - [[Quick Start Guide|Quick-Start]] - Getting started with installation and usage
 - [[Visuals|Visuals]] - Live panels in chat: the AI as the back end, the panel as the front end
+- [[AI OS mode|AI-OS-Mode]] - Start NeuroClaw with the computer, so the AI is there before you open anything
 - [[NeuroLang Reference|NeuroLang]] - The custom neuron definition language
 
 ### Background Systems (Learning & Memory)

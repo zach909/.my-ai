@@ -16,14 +16,14 @@ xterm
 # Firefox's kiosk mode needs more manual profile setup for the same result.
 chromium
 
-# Used by the openbox autostart script's own wait-for-Vite-to-come-up loop
+# Used by the openbox autostart script's own wait-for-the-engine loop
 # before it ever launches chromium the first time.
 curl
 
 # Node.js runtime NeuroClaw itself runs on. Debian stable's nodejs package
 # is often older than this project targets -- see live-usb/README.md's
 # "Node.js version" section for the NodeSource-repo alternative if `node -v`
-# in the built image is too old for `npm ci` to succeed.
+# in the built image is too old for `npm install` to succeed.
 nodejs
 npm
 git

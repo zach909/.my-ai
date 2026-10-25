@@ -2727,6 +2727,7 @@ export class WebServer {
         parseBody: (r, max) => this.parseBody(r, max),
         sendJson: (r, data, status) => this.sendJson(r, data, status),
         isAdmin: () => isOwnerOrAdmin(),
+        fromThisMachine: () => this.isFromThisMachine(req),
       });
       if (handled) return;
     }

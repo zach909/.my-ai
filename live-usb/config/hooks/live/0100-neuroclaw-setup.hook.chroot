@@ -11,18 +11,14 @@
 set -e
 cd /opt/neuroclaw
 
-# Full install, devDependencies included and KEPT -- unlike a normal
-# production deploy, what actually runs at boot here is `npm run dev`
-# (scripts/dev.mjs: builds+starts the real backend on :7861, then runs
-# Vite itself on :3000 in the foreground -- the exact same thing this
-# repo's own developers run, and the one path already proven to serve the
-# real app rather than web-server.ts's own bare-bones fallback page at :7861
-# -- see live-usb/README.md's "why :3000, not :7861" section). Vite,
-# @vitejs/plugin-react, tailwindcss, etc. are all devDependencies, so they
-# must stay installed for that to work -- there is no prune-to-production
-# step here the way there normally would be.
-echo "[neuroclaw-setup] installing dependencies..."
-npm ci --no-audit --no-fund
+# Install the build tools named in package.json (typescript, vitest; nothing
+# else) -- the same command CI runs. `npm ci` cannot be used: no lockfile is
+# committed, and `npm ci` refuses to run without one. They stay installed
+# because what runs at boot is `npm run dev` (scripts/dev.mjs), which rebuilds
+# the backend with typescript every time before starting it on :7861 -- see
+# live-usb/README.md. The backend itself uses Node built-ins only.
+echo "[neuroclaw-setup] installing the build tools..."
+npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
 
 echo "[neuroclaw-setup] building the backend once now, so first boot isn't the first compile..."
 node scripts/build-backend.mjs
