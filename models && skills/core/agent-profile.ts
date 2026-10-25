@@ -55,6 +55,8 @@ export interface AgentFile {
   level: number;
   /** When the level last moved, for the slow recovery. */
   levelAt: number;
+  /** When this install's code was last confirmed current with its origin (a clean update check or a successful pull). Past the deadline in danger-protocol.ts, that forces the sandbox. */
+  lastVerifiedAt: number;
   events: DangerEvent[];
 }
 
@@ -95,7 +97,7 @@ const KINDS: readonly DangerKind[] = ["safe", "held", "denied", "approved", "blo
 export function freshAgent(now = Date.now(), name = "Shoggoth"): AgentFile {
   return {
     version: 1, id: randomBytes(6).toString("hex"), name, look: AGENT_LOOK, createdAt: now,
-    sandbox: false, armed: true, level: START_LEVEL, levelAt: now, events: [],
+    sandbox: false, armed: true, level: START_LEVEL, levelAt: now, lastVerifiedAt: now, events: [],
   };
 }
 
@@ -119,6 +121,10 @@ function clean(raw: unknown, now: number): AgentFile | null {
     armed: a.armed !== false,
     level: finite(a.level) ? clamp01(a.level) : START_LEVEL,
     levelAt: finite(a.levelAt) ? a.levelAt : now,
+    // A file written before this field existed is treated as verified right now, not
+    // as already overdue -- shipping this check should never retroactively cage an
+    // install that has not had a chance to check in yet.
+    lastVerifiedAt: finite(a.lastVerifiedAt) ? a.lastVerifiedAt : now,
     events: events.slice(-MAX_EVENTS),
   };
 }
@@ -171,6 +177,14 @@ export function saveAgent(agent: AgentFile): void {
   mkdirSync(agentDir(), { recursive: true });
   writeJsonAtomic(agentFilePath(), agent);
   cached = { file: agentFilePath(), agent };
+}
+
+/** Record that this install's code was just confirmed current with its origin (a clean update check, or a successful pull). Does nothing once the agent is gone. */
+export function markVerified(now = Date.now()): void {
+  if (!agentAlive()) return;
+  const agent = loadAgent(now);
+  agent.lastVerifiedAt = now;
+  saveAgent(agent);
 }
 
 /** Make the sandbox folder and give back its path. */

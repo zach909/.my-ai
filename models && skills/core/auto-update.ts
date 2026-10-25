@@ -25,6 +25,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { listCatalog, storeRoot, STORE_KINDS, type StoreFileInfo } from "./store.js";
+import { markVerified } from "./agent-profile.js";
 
 const GIT_TIMEOUT_MS = 60_000;
 
@@ -138,6 +139,13 @@ export async function checkForUpdates(): Promise<UpdateReport> {
       cwd,
     );
     if (log.ok && log.out) code.commits = log.out.split("\n");
+  } else {
+    // Confirmed current with origin, not just "the check didn't fail" -- this is
+    // what keeps the alignment protocol's own staleness gate (danger-protocol.ts)
+    // from forcing the sandbox on. Safe to do here: GET /api/updates is reachable
+    // only by the admin (accounts.ts userMayReach() default-denies everyone else
+    // before this ever runs), the same actor applyUpdates() already trusts.
+    markVerified();
   }
 
   return { code, store: await staleDownloads(), checkedAt };
@@ -217,6 +225,9 @@ export async function applyUpdates(opts: { code?: boolean; store?: boolean } = {
         // Said plainly rather than left for the user to work out: the files on
         // disk have moved on, and the process serving this response has not.
         result.restartRequired = result.codeUpdated;
+        // A successful pull brings this branch to the tip it pulled, so it counts
+        // as a confirmed check-in for the alignment protocol's staleness gate.
+        markVerified();
       }
     }
   }
