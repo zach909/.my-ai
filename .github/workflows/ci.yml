@@ -301,8 +301,10 @@ jobs:
 
   android:
     name: Android (APK)
-    needs: [plan, verify]
-    if: ${{ !cancelled() && needs.plan.outputs.android == 'true' && needs.verify.result != 'failure' }}
+    # Gradle only: nothing here runs a browser or the engine, so the browser-driven checks in verify do not gate it.
+    # The version check below still does.
+    needs: [plan]
+    if: ${{ !cancelled() && needs.plan.outputs.android == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
