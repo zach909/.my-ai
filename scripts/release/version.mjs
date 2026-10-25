@@ -45,12 +45,6 @@ const writeJson = (rel, obj) => writeFileSync(file(rel), JSON.stringify(obj, nul
 
 /** Each target knows how to read the version it carries and how to write a new one. */
 export const TARGETS = [
-  { name: 'package-lock.json (root)', get: () => { const j = readJson('package-lock.json'); return [j.version, j.packages?.['']?.version].join('|'); }, want: (v) => `${v}|${v}`,
-    set: (v) => { const j = readJson('package-lock.json'); j.version = v; if (j.packages?.['']) j.packages[''].version = v; writeJson('package-lock.json', j); } },
-  { name: 'desktop-app/package.json', get: () => readJson('desktop-app/package.json').version, want: (v) => v,
-    set: (v) => { const j = readJson('desktop-app/package.json'); j.version = v; writeJson('desktop-app/package.json', j); } },
-  { name: 'desktop-app/package-lock.json', get: () => { const j = readJson('desktop-app/package-lock.json'); return [j.version, j.packages?.['']?.version].join('|'); }, want: (v) => `${v}|${v}`,
-    set: (v) => { const j = readJson('desktop-app/package-lock.json'); j.version = v; if (j.packages?.['']) j.packages[''].version = v; writeJson('desktop-app/package-lock.json', j); } },
   { name: 'browser-extension/manifest.json', get: () => { const j = readJson('browser-extension/manifest.json'); return `${j.version}|${j.version_name ?? ''}`; },
     want: (v) => `${chromeVersion(v)}|${parse(v).pre ? v : ''}`,
     set: (v) => { const j = readJson('browser-extension/manifest.json'); j.version = chromeVersion(v); if (parse(v).pre) j.version_name = v; else delete j.version_name; writeJson('browser-extension/manifest.json', j); } },
