@@ -10,17 +10,9 @@ Guards the spec's Value System invariants (design doc, "Value System"):
   * a punished neuron becomes more plastic; a rewarded neuron becomes less so;
   * clamping to [0, 1] never leaks or invents value.
 
-Run with: python3 test_value_system.py   (pure-stdlib except torch, which
-neurolang.py already requires — no external APIs).
+Run with: python3 test_value_system.py   (pure stdlib -- neurolang.py's own
+tensorlite.py needs nothing outside it either -- no external APIs).
 """
-import sys
-
-try:
-    import torch  # noqa: F401
-except ImportError:
-    print("torch not installed — test_value_system.py needs it (pip install torch)")
-    sys.exit(0)
-
 from neurolang import NeuroRuntime
 
 
@@ -62,8 +54,8 @@ def test_reward_is_zero_sum():
     check(approx(rt.total_value(), before), "total value conserved after a reward")
     rt.reward("b", -0.6)
     check(approx(rt.total_value(), before), "total value conserved after a punishment")
-    check(rt.neurons["a"].vale.item() > 0.5, "positive reward raised the target's value")
-    check(rt.neurons["b"].vale.item() < 0.5, "negative reward lowered the target's value")
+    check(rt.neurons["a"].vale > 0.5, "positive reward raised the target's value")
+    check(rt.neurons["b"].vale < 0.5, "negative reward lowered the target's value")
 
 
 def test_punish_increases_plasticity():
@@ -84,7 +76,7 @@ def test_clamp_conserves_value():
     total = rt.total_value()
     check(approx(total, before), "clamped redistribution still conserves total value")
     for nm, n in rt.neurons.items():
-        v = n.vale.item()
+        v = n.vale
         check(0.0 <= v <= 1.0, f"neuron {nm} value stays within [0, 1] (={v:.4f})")
 
 

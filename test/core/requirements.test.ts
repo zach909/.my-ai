@@ -84,16 +84,43 @@ describe('the heavy tiers stay opt-in', () => {
     expect(all).not.toMatch(/torch|transformers|numpy/i)
   })
 
-  it('still declares torch where it is genuinely needed', () => {
-    // The Python mesh track (neurolang.py, the value system) uses tensors.
-    // Making the default install empty must not mean pretending it has no
-    // needs. The TinyGPT transformer that used to live here is gone -- torch
-    // is still declared, for the track that genuinely still uses it.
-    expect(declaredPackages('model && skills manager/requirements.txt').join(' ')).toMatch(/torch/)
+  it('declares nothing in "model && skills manager" either -- tensorlite.py replaced torch', () => {
+    // neurolang.py's three trainable nets (CodeNet, the retrieval net, the
+    // char-LSTM) used to need torch for autodiff. tensorlite.py is a small
+    // from-scratch reverse-mode autodiff engine written against this file's
+    // own needs (see its docstring), so there is nothing left to install here.
+    expect(declaredPackages('model && skills manager/requirements.txt')).toEqual([])
+  })
+})
+
+describe('neurolang.py and tensorlite.py really do run on the standard library', () => {
+  const DIR = 'model && skills manager'
+
+  it('imports with site-packages disabled', () => {
+    const out = execFileSync(
+      'python3',
+      [
+        '-S',
+        '-c',
+        `import importlib.util, sys; sys.path.insert(0, ${JSON.stringify(path.join(ROOT, DIR))}); ` +
+          `s = importlib.util.spec_from_file_location('m', ${JSON.stringify(path.join(ROOT, DIR, 'neurolang.py'))}); ` +
+          `m = importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.NeuroRuntime.__name__)`,
+      ],
+      { encoding: 'utf8', timeout: 60_000 },
+    )
+    expect(out.trim()).toBe('NeuroRuntime')
   })
 
-  it('no longer claims torch is what the all-to-all mesh needs', () => {
-    const text = readFileSync(path.join(ROOT, 'model && skills manager/requirements.txt'), 'utf8')
-    expect(text).not.toMatch(/all the canonical all-to-all mesh needs/)
+  it('imports nothing outside the standard library', () => {
+    for (const file of ['neurolang.py', 'tensorlite.py']) {
+      const source = readFileSync(path.join(ROOT, DIR, file), 'utf8')
+      const imported = [...source.matchAll(/^\s*(?:from|import)\s+([a-zA-Z_][\w.]*)/gm)].map(m => m[1].split('.')[0])
+      const stdlib = new Set([
+        'ast', 'hashlib', 'math', 'os', 'random', 're', 'sys', 'time', 'pickle',
+        'collections', 'inspect', 'tensorlite', '__future__',
+      ])
+      const outside = [...new Set(imported)].filter(name => !stdlib.has(name))
+      expect(outside, `${file} imports non-stdlib: ${outside.join(', ')}`).toEqual([])
+    }
   })
 })

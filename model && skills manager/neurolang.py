@@ -33,9 +33,7 @@ Syntax:
 import ast, hashlib, math, os, random, re, sys, time
 from collections import Counter
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
+import tensorlite as tl
 
 # ══════════════════════════════════════════════════════════
 #  NEURONS
@@ -48,18 +46,20 @@ DEFAULT_VALE, DEFAULT_DIM, DEFAULT_W, DEFAULT_B = 0.5, 3, 1.0, 0.0
 _DICT_LINK_WEIGHT = 0.5
 
 
-class ElasticNeuron(nn.Module):
+def _clamp01(x): return max(0.0, min(1.0, float(x)))
+
+
+class ElasticNeuron:
     def __init__(self, name, dims=DEFAULT_DIM, vale=DEFAULT_VALE):
-        super().__init__()
         self.name = name
         self.dims = dims
         self.definition = ""
-        self.vale = torch.tensor(vale, dtype=torch.float32).clamp(0, 1)
-        self.register_buffer("state",      torch.zeros(dims))
-        self.register_buffer("next_state", torch.zeros(dims))
-        self.register_buffer("external",   torch.zeros(dims))
-        self.ex_weights: dict[str, torch.Tensor] = {}
-        self.ex_biases:  dict[str, torch.Tensor] = {}
+        self.vale = _clamp01(vale)
+        self.state:      list[float] = [0.0] * dims
+        self.next_state: list[float] = [0.0] * dims
+        self.external:   list[float] = [0.0] * dims
+        self.ex_weights: dict[str, float] = {}
+        self.ex_biases:  dict[str, float] = {}
         # Higher-dimensional thinking: "each neuron maintains temporary state
         # variables describing every other neuron." A connection may target a
         # *named* state variable of another neuron (".other/variable"); each
@@ -78,32 +78,37 @@ class ElasticNeuron(nn.Module):
         return self.var_index[varname]
 
     def set_connection(self, target, weight, bias, var_dim=None):
-        self.ex_weights[target] = torch.tensor(weight, dtype=torch.float32)
-        self.ex_biases[target]  = torch.tensor(bias,   dtype=torch.float32)
+        self.ex_weights[target] = float(weight)
+        self.ex_biases[target]  = float(bias)
         self.ex_vars[target]    = var_dim
 
     def compute_next(self, all_neurons):
-        raw = self.external.clone()
+        raw = list(self.external)
         for name, other in all_neurons.items():
             if name == self.name: continue
-            w = self.ex_weights.get(name, torch.tensor(DEFAULT_W))
-            b = self.ex_biases.get(name,  torch.tensor(DEFAULT_B))
+            w = self.ex_weights.get(name, DEFAULT_W)
+            b = self.ex_biases.get(name,  DEFAULT_B)
             dim = self.ex_vars.get(name)
             # Read the target's whole state (default) or just the one named
             # state variable (dimension) this connection selected; a selected
             # scalar broadcasts across the accumulator's dimensions.
-            signal = other.state if dim is None else other.state[dim]
-            raw = raw + signal * w + b
-        activated = torch.tanh(raw)
-        self.next_state = self.vale * self.state + (1.0 - self.vale) * activated
+            if dim is None:
+                for i in range(self.dims):
+                    raw[i] += other.state[i] * w + b
+            else:
+                contribution = other.state[dim] * w + b
+                for i in range(self.dims):
+                    raw[i] += contribution
+        activated = [math.tanh(r) for r in raw]
+        self.next_state = [self.vale * self.state[i] + (1.0 - self.vale) * activated[i] for i in range(self.dims)]
 
     def apply_next(self):
-        self.state = self.next_state.clone()
+        self.state = list(self.next_state)
 
     def inject(self, values):
-        v = torch.tensor(values, dtype=torch.float32)
-        pad = max(0, self.dims - len(v))
-        self.external = torch.cat([v[:self.dims], torch.zeros(pad)])
+        v = [float(x) for x in values][:self.dims]
+        v += [0.0] * (self.dims - len(v))
+        self.external = v
 
     def plasticity(self):
         """How readily this neuron changes, in [0, 1].
@@ -114,7 +119,7 @@ class ElasticNeuron(nn.Module):
         (1 - vale), so plasticity is exactly that coefficient — a low-value
         neuron admits more of each new activation, a high-value neuron holds
         its state."""
-        return float((1.0 - self.vale).clamp(0, 1).item())
+        return _clamp01(1.0 - self.vale)
 
     def expected_change(self, input_magnitude):
         """Predicted magnitude of state change for a given input magnitude.
@@ -124,13 +129,13 @@ class ElasticNeuron(nn.Module):
         settled update moves the state by (1 - vale) * activation, and the
         activation saturates through tanh, so the predicted change is the
         plasticity gated by how much input actually drives the neuron."""
-        drive = float(torch.tanh(torch.tensor(float(input_magnitude))).abs().item())
+        drive = abs(math.tanh(float(input_magnitude)))
         return self.plasticity() * drive
 
     def summary(self):
         lines = [
             f'\n── Neuron "{self.name}" ──',
-            f'  vale       : {self.vale.item():.4f}',
+            f'  vale       : {self.vale:.4f}',
             f'  plasticity : {self.plasticity():.4f}  (1 - vale; how readily it changes)',
             f'  dims       : {self.dims}',
             f'  state      : {_fv(self.state)}',
@@ -139,13 +144,13 @@ class ElasticNeuron(nn.Module):
         if self.definition: lines.append(f'  definition : "{self.definition}"')
         if self.ex_weights:
             for t, w in self.ex_weights.items():
-                lines.append(f'  → "{t}"  w={w.item():.4f}  b={self.ex_biases[t].item():.4f}')
+                lines.append(f'  → "{t}"  w={w:.4f}  b={self.ex_biases[t]:.4f}')
         else:
             lines.append('  connections: all-to-all (default)')
         return '\n'.join(lines)
 
 
-def _fv(t): return '[' + '  '.join(f'{x:+.4f}' for x in t.tolist()) + ']'
+def _fv(t): return '[' + '  '.join(f'{x:+.4f}' for x in t) + ']'
 
 
 # ══════════════════════════════════════════════════════════
@@ -155,27 +160,30 @@ def _fv(t): return '[' + '  '.join(f'{x:+.4f}' for x in t.tolist()) + ']'
 ENCODE_LEN = 256
 
 
-class CodeNet(nn.Module):
+class CodeNet(tl.Module):
     def __init__(self, in_dim, out_dim, hidden=64):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.Tanh(),
-            nn.Linear(hidden, hidden), nn.Tanh(),
-            nn.Linear(hidden, out_dim),
+        self.net = tl.Sequential(
+            tl.Linear(in_dim, hidden), 'tanh',
+            tl.Linear(hidden, hidden), 'tanh',
+            tl.Linear(hidden, out_dim),
         )
-    def forward(self, x): return self.net(x)
+    def __call__(self, x): return self.net(x)
+    def parameters(self): return self.net.parameters()
+    def state(self): return self.net.state()
+    def load_state(self, s): self.net.load_state(s)
 
 
 def _encode_code(code):
     b = code.encode('utf-8', errors='replace')
-    hist = torch.zeros(256)
+    hist = [0.0] * 256
     for byte in b: hist[byte] += 1
-    if hist.sum() > 0: hist /= hist.sum()
-    sampled = torch.zeros(ENCODE_LEN)
+    total = sum(hist)
+    if total > 0: hist = [h / total for h in hist]
+    sampled = [0.0] * ENCODE_LEN
     if b:
         for i in range(ENCODE_LEN):
             sampled[i] = b[int(i * len(b) / ENCODE_LEN)] / 255.0
-    return torch.cat([hist, sampled])
+    return hist + sampled
 
 
 def _probe_python(code, n=200):
@@ -198,13 +206,20 @@ def _probe_python(code, n=200):
         try:
             r = fn(*xs)
             if isinstance(r, (int, float)):
-                pairs.append((torch.tensor(xs, dtype=torch.float32),
-                               torch.tensor([float(r)], dtype=torch.float32)))
+                pairs.append((xs, [float(r)]))
             elif isinstance(r, (list, tuple)):
-                pairs.append((torch.tensor(xs, dtype=torch.float32),
-                               torch.tensor([float(v) for v in r], dtype=torch.float32)))
+                pairs.append((xs, [float(v) for v in r]))
         except Exception: continue
     return pairs if len(pairs) > 10 else None
+
+
+def _batch_mse(model, samples):
+    """Average MSE over `samples` ((x, y) float-list pairs), one scalar graph --
+    the pure-Python equivalent of torch's batched mse_loss(model(xs), ys)."""
+    losses = [tl.mse_loss(model(tl.V.leaf(x)), tl.V.leaf(y)) for x, y in samples]
+    total = losses[0]
+    for l in losses[1:]: total = total + l
+    return total * tl.V.leaf([1.0 / len(losses)])
 
 
 def train_codenet(name, code, save_dir='.', epochs=300, lr=1e-3):
@@ -213,16 +228,16 @@ def train_codenet(name, code, save_dir='.', epochs=300, lr=1e-3):
     pairs = _probe_python(code)
 
     if pairs:
-        in_d, out_d = pairs[0][0].shape[0], pairs[0][1].shape[0]
+        in_d, out_d = len(pairs[0][0]), len(pairs[0][1])
         mode = 'function_approximation'
         print(f'  mode     : {mode}  ({len(pairs)} samples, arity={in_d})')
         model = CodeNet(in_d, out_d)
-        xs = torch.stack([p[0] for p in pairs])
-        ys = torch.stack([p[1] for p in pairs])
-        opt = optim.Adam(model.parameters(), lr=lr)
+        opt = tl.Adam(model.parameters(), lr=lr)
+        loss = None
         for ep in range(epochs):
-            loss = nn.functional.mse_loss(model(xs), ys)
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad()
+            loss = _batch_mse(model, pairs)
+            loss.backward(); opt.step()
             if (ep + 1) % 100 == 0: print(f'  epoch {ep+1:>4}  loss={loss.item():.6f}')
         final = loss.item()
     else:
@@ -230,18 +245,20 @@ def train_codenet(name, code, save_dir='.', epochs=300, lr=1e-3):
         mode = 'embedding'
         print(f'  mode     : {mode}')
         model = CodeNet(in_d, out_d)
-        tgt = emb.unsqueeze(0)[:, :out_d]
-        opt = optim.Adam(model.parameters(), lr=lr)
+        tgt = emb[:out_d]
+        opt = tl.Adam(model.parameters(), lr=lr)
+        loss = None
         for ep in range(epochs):
-            loss = nn.functional.mse_loss(model(emb.unsqueeze(0)), tgt)
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad()
+            loss = tl.mse_loss(model(tl.V.leaf(emb)), tl.V.leaf(tgt))
+            loss.backward(); opt.step()
         final = loss.item()
         print(f'  loss     : {final:.6f}')
 
     path = os.path.join(save_dir, f'{name}.codenet')
     meta = dict(name=name, mode=mode, in_dim=in_d, out_dim=out_d,
                 loss=final, hash=hashlib.sha256(code.encode()).hexdigest()[:12])
-    torch.save({'meta': meta, 'state': model.state_dict()}, path)
+    tl.save({'meta': meta, 'state': model.state()}, path)
     print(f'  saved    : {path}')
     return meta
 
@@ -288,19 +305,22 @@ class _TFIndex:
         return out[:k]
 
     def tensor(self, vec):
-        t = torch.zeros(len(self.vocab))
-        for i, w in enumerate(self.vocab): t[i] = vec.get(w, 0)
-        return t
+        return [float(vec.get(w, 0)) for w in self.vocab]
 
 
-class _RetrievalNet(nn.Module):
-    def __init__(self, V, h=128):
-        super().__init__()
-        self.qe = nn.Sequential(nn.Linear(V,h),nn.Tanh(),nn.Linear(h,h//2),nn.Tanh())
-        self.de = nn.Sequential(nn.Linear(V,h),nn.Tanh(),nn.Linear(h,h//2),nn.Tanh())
-        self.sc = nn.Linear(h, 1)
-    def forward(self, q, d):
-        return torch.sigmoid(self.sc(torch.cat([self.qe(q), self.de(d)], -1)))
+class _RetrievalNet(tl.Module):
+    def __init__(self, vocab_size, h=128):
+        self.qe = tl.Sequential(tl.Linear(vocab_size,h),'tanh',tl.Linear(h,h//2),'tanh')
+        self.de = tl.Sequential(tl.Linear(vocab_size,h),'tanh',tl.Linear(h,h//2),'tanh')
+        self.sc = tl.Linear(h, 1)
+    def __call__(self, q, d):
+        return self.sc(tl.V.cat([self.qe(q), self.de(d)])).sigmoid()
+    def parameters(self):
+        return self.qe.parameters() + self.de.parameters() + self.sc.parameters()
+    def state(self):
+        return {'qe': self.qe.state(), 'de': self.de.state(), 'sc': self.sc.state()}
+    def load_state(self, s):
+        self.qe.load_state(s['qe']); self.de.load_state(s['de']); self.sc.load_state(s['sc'])
 
 
 class NetSearchManager:
@@ -319,7 +339,7 @@ class NetSearchManager:
         if not self.idx.vocab: print('[NetSearch] No corpus.'); return
         V = len(self.idx.vocab)
         self.model = _RetrievalNet(V)
-        opt = optim.Adam(self.model.parameters(), lr=lr)
+        opt = tl.Adam(self.model.parameters(), lr=lr)
         pairs = []
         for i, doc in enumerate(self.idx.docs):
             qv = self.idx.tensor(self.idx.qvec(doc))
@@ -330,9 +350,10 @@ class NetSearchManager:
         for ep in range(epochs):
             total = 0.0
             for q, d, lbl in pairs:
-                p = self.model(q.unsqueeze(0), d.unsqueeze(0)).squeeze()
-                loss = nn.functional.binary_cross_entropy(p, torch.tensor(lbl))
-                opt.zero_grad(); loss.backward(); opt.step(); total += loss.item()
+                opt.zero_grad()
+                p = self.model(tl.V.leaf(q), tl.V.leaf(d))
+                loss = tl.bce_loss(p, lbl)
+                loss.backward(); opt.step(); total += loss.item()
             if (ep+1) % 50 == 0: print(f'  epoch {ep+1:>4}  loss={total/len(pairs):.4f}')
         self.trained = True; print('[NetSearch] Training complete.')
 
@@ -345,13 +366,11 @@ class NetSearchManager:
 
     def neural_search(self, query, k=5):
         if not self.trained: print('[NetSearch] Not trained.'); return []
-        V = len(self.idx.vocab); qv = self.idx.tensor(self.idx.qvec(query))
+        qv = self.idx.tensor(self.idx.qvec(query))
         scores = []
-        self.model.eval()
-        with torch.no_grad():
-            for i, doc in enumerate(self.idx.docs):
-                dv = self.idx.tensor(self.idx.tfidf[i])
-                scores.append((self.model(qv.unsqueeze(0), dv.unsqueeze(0)).item(), doc))
+        for i, doc in enumerate(self.idx.docs):
+            dv = self.idx.tensor(self.idx.tfidf[i])
+            scores.append((self.model(tl.V.leaf(qv), tl.V.leaf(dv)).item(), doc))
         scores.sort(reverse=True)
         print(f'\n[NetSearch] Neural search: "{query}"')
         for s, d in scores[:k]: print(f'  {s:.4f}  {d[:80]}')
@@ -359,17 +378,17 @@ class NetSearchManager:
 
     def save(self, path):
         if not self.model: return
-        torch.save({'vocab':self.idx.vocab,'idf':self.idx.idf,'docs':self.idx.docs,
-                    'tfidf':self.idx.tfidf,'model':self.model.state_dict()}, path)
+        tl.save({'vocab':self.idx.vocab,'idf':self.idx.idf,'docs':self.idx.docs,
+                 'tfidf':self.idx.tfidf,'model':self.model.state()}, path)
         print(f'[NetSearch] Saved → {path}')
 
     def load(self, path):
-        ck = torch.load(path, weights_only=False)
+        ck = tl.load(path)
         self.idx.vocab=ck['vocab']; self.idx.idf=ck['idf']
         self.idx.docs=ck['docs'];   self.idx.tfidf=ck['tfidf']
         V = len(self.idx.vocab)
         self.model = _RetrievalNet(V)
-        self.model.load_state_dict(ck['model']); self.model.eval()
+        self.model.load_state(ck['model'])
         self.trained = True
         print(f'[NetSearch] Loaded from {path}')
 
@@ -403,13 +422,11 @@ class SkillExpert:
         if not self.trained or not self._search.idx.vocab:
             return 0.0
         qv = self._search.idx.tensor(self._search.idx.qvec(text))
-        self._search.model.eval()
-        with torch.no_grad():
-            scores = []
-            for i in range(min(5, len(self._search.idx.docs))):
-                dv = self._search.idx.tensor(self._search.idx.tfidf[i])
-                s = self._search.model(qv.unsqueeze(0), dv.unsqueeze(0)).item()
-                scores.append(s)
+        scores = []
+        for i in range(min(5, len(self._search.idx.docs))):
+            dv = self._search.idx.tensor(self._search.idx.tfidf[i])
+            s = self._search.model(tl.V.leaf(qv), tl.V.leaf(dv)).item()
+            scores.append(s)
         return max(scores) if scores else 0.0
 
 
@@ -417,16 +434,22 @@ class SkillExpert:
 #  SCRIPT AI  (char-LSTM learns and generates NeuriLang)
 # ══════════════════════════════════════════════════════════
 
-class _CharLSTM(nn.Module):
+class _CharLSTM(tl.Module):
     def __init__(self, vocab_size: int, hidden: int = 128, layers: int = 2):
-        super().__init__()
-        self.emb  = nn.Embedding(vocab_size, 32)
-        self.lstm = nn.LSTM(32, hidden, layers, batch_first=True)
-        self.head = nn.Linear(hidden, vocab_size)
+        self.emb  = tl.Embedding(vocab_size, 32)
+        self.lstm = tl.LSTMStack(32, hidden, layers)
+        self.head = tl.Linear(hidden, vocab_size)
 
-    def forward(self, x, h=None):
-        out, h = self.lstm(self.emb(x), h)
-        return self.head(out), h
+    def step(self, idx: int, state):
+        """One token in, logits + the updated (h, c) per layer out -- the
+        incremental form torch's nn.LSTM gave via forward(x, h), used both for
+        a whole sequence (called once per position) and for generation (called
+        once per newly sampled token, reusing the running state)."""
+        h, state = self.lstm.step(self.emb(idx), state)
+        return self.head(h), state
+
+    def parameters(self):
+        return self.emb.parameters() + self.lstm.parameters() + self.head.parameters()
 
 
 class ScriptAI:
@@ -445,15 +468,22 @@ class ScriptAI:
         self.idx2char = chars
         V = len(chars)
         self.model = _CharLSTM(V)
-        opt = optim.Adam(self.model.parameters(), lr=lr)
+        opt = tl.Adam(self.model.parameters(), lr=lr)
         enc = [self.char2idx.get(c, V - 1) for c in source]
-        xs = torch.tensor(enc[:-1]).unsqueeze(0)
-        ys = torch.tensor(enc[1:]).unsqueeze(0)
+        xs, ys = enc[:-1], enc[1:]
         print(f'[ScriptAI] Learning from {len(source)} chars, vocab={V}')
+        loss = None
         for ep in range(epochs):
-            logits, _ = self.model(xs)
-            loss = nn.functional.cross_entropy(logits.squeeze(0), ys.squeeze(0))
-            opt.zero_grad(); loss.backward(); opt.step()
+            opt.zero_grad()
+            state = self.model.lstm.init_state()
+            losses = []
+            for xi, yi in zip(xs, ys):
+                logits, state = self.model.step(xi, state)
+                losses.append(tl.cross_entropy(logits, yi))
+            loss = losses[0]
+            for l in losses[1:]: loss = loss + l
+            loss = loss * tl.V.leaf([1.0 / len(losses)])
+            loss.backward(); opt.step()
             if (ep + 1) % 100 == 0:
                 print(f'  epoch {ep+1:>4}  loss={loss.item():.4f}')
         self.trained = True
@@ -464,22 +494,22 @@ class ScriptAI:
             print('[ScriptAI] Not trained. Use: script@learn'); return ''
         if not seed:
             seed = random.choice([c for c in self.char2idx if c not in ('\x00', '\n')])
-        self.model.eval()
         enc = [self.char2idx.get(c, len(self.char2idx) - 1) for c in seed]
-        x = torch.tensor(enc).unsqueeze(0)
         out = list(seed)
-        h = None
-        with torch.no_grad():
-            logits, h = self.model(x, h)
-            for _ in range(max_len - len(seed)):
-                last = logits[:, -1, :] / max(temp, 1e-6)
-                idx = torch.multinomial(torch.softmax(last, -1), 1).item()
-                ch = self.idx2char[idx]
-                out.append(ch)
-                if ch == '\n' and len(out) > len(seed) + 6:
-                    break
-                x = torch.tensor([[idx]])
-                logits, h = self.model(x, h)
+        state = self.model.lstm.init_state()
+        logits = None
+        for idx in enc:
+            logits, state = self.model.step(idx, state)
+        for _ in range(max_len - len(seed)):
+            scaled = [x / max(temp, 1e-6) for x in logits.data]
+            m = max(scaled)
+            weights = [math.exp(s - m) for s in scaled]  # sample_categorical normalises
+            idx = tl.sample_categorical(weights)
+            ch = self.idx2char[idx]
+            out.append(ch)
+            if ch == '\n' and len(out) > len(seed) + 6:
+                break
+            logits, state = self.model.step(idx, state)
         result = ''.join(out).strip()
         print(f'[ScriptAI] Generated: {result}')
         return result
@@ -610,12 +640,12 @@ class NeuroRuntime:
             self.neurons[name] = ElasticNeuron(name, self.dims, DEFAULT_VALE)
 
     def set_vale(self, name, v):
-        self._req(name); self.neurons[name].vale = torch.tensor(v).clamp(0, 1)
+        self._req(name); self.neurons[name].vale = _clamp01(v)
 
     def total_value(self):
         """Sum of all neuron values — the conserved quantity of the zero-sum
         Value System."""
-        return float(sum(float(n.vale.item()) for n in self.neurons.values()))
+        return float(sum(n.vale for n in self.neurons.values()))
 
     def reward(self, name, r, rate=0.2):
         """Reinforce or punish a neuron, conserving total value (zero-sum).
@@ -641,7 +671,7 @@ class NeuroRuntime:
             return self.total_value()
 
         # 1. Clamp the target move to what its own [0, 1] range allows.
-        cur = float(target.vale.item())
+        cur = float(target.vale)
         applied = max(-cur, min(1.0 - cur, desired))
         # 2. Donors must collectively move by -applied (they give value when the
         #    target gains, receive it when the target loses). Spread that across
@@ -654,9 +684,9 @@ class NeuroRuntime:
             share = donor_needed / len(pool)
             still = []
             for n in pool:
-                v = float(n.vale.item())
+                v = float(n.vale)
                 move = max(-v, min(1.0 - v, share))
-                n.vale = torch.tensor(v + move).clamp(0, 1)
+                n.vale = _clamp01(v + move)
                 donor_moved += move
                 donor_needed -= move
                 if abs(share - move) > 1e-9:   # donor clamped; still has a deficit share
@@ -666,7 +696,7 @@ class NeuroRuntime:
             pool = still
         # 3. Move the target by exactly the negative of what donors moved, so
         #    total_value() is invariant even when some donors were clamped.
-        target.vale = torch.tensor(cur - donor_moved).clamp(0, 1)
+        target.vale = _clamp01(cur - donor_moved)
         return self.total_value()
 
     def set_conn(self, src, tgt, weight, bias, varname=None):
@@ -729,7 +759,7 @@ class NeuroRuntime:
         for n in self.neurons.values(): n.compute_next(self.neurons)
         for n in self.neurons.values(): n.apply_next()
         self.tick += 1
-        return {nm: n.state.tolist() for nm, n in self.neurons.items()}
+        return {nm: list(n.state) for nm, n in self.neurons.items()}
 
     def run(self, ticks):
         results = []
@@ -830,7 +860,7 @@ def _print_trace(results):
     for tick, snap in results:
         print(f'=== TICK {tick:>4} ===')
         for name, state in snap.items():
-            print(f'  {name:>16}.state = {_fv(torch.tensor(state))}')
+            print(f'  {name:>16}.state = {_fv(state)}')
     print()
 
 
