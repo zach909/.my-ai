@@ -32,6 +32,7 @@ import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AVATAR_HTML } from './avatar.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute, isPwaRoute } from './ambient.js';
+import { VISUAL_CLIENT_JS, VISUAL_CSS, parseVisualEvent, plainText, visualEventMessage, visualSkillsFor } from './visuals.js';
 import { configFile } from './platform/app-paths.js';
 import { handlePlatformRoutes, isPlatformRoute } from './platform/routes.js';
 import { SETTINGS_PAGE } from './platform/settings-page.js';
@@ -723,7 +724,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     position: relative;
     z-index: 1;
   }
-
+${VISUAL_CSS}
 </style>
 </head>
 <body>
@@ -741,6 +742,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   <input type="text" id="input" placeholder="Type a message..." autofocus>
   <button id="send-btn">Send</button>
 </div>
+<script>${VISUAL_CLIENT_JS}</script>
 <script>
   const chat = document.getElementById('chat-container');
   const input = document.getElementById('input');
@@ -937,8 +939,14 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
       div.appendChild(btn);
     }
     const content = document.createElement('div');
-    content.textContent = text;
+    // A visual in the message is drawn as a live panel and the prose around it stays text. content holds only
+    // the prose, so a message with a panel gets no pen: editing the prose alone would drop the panel's code.
+    const drawn = (type === 'ai' || type === 'user') ? ncVisuals.split(text) : [];
+    const hasVisual = drawn.some(p => p.kind === 'visual');
+    content.textContent = hasVisual ? drawn.filter(p => p.kind === 'text').map(p => p.text).join('\\n') : text;
+    if (hasVisual && !content.textContent) content.style.display = 'none';
     div.appendChild(content);
+    if (hasVisual) ncVisuals.attach(div, text);
     const ts = document.createElement('div');
     ts.className = 'timestamp';
     if (type === 'ai') {
@@ -953,7 +961,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
       pen.title = 'Edit what the AI said';
       pen.setAttribute('aria-label', 'Edit what the AI said');
       pen.onclick = () => openEditor(div, content, ts, pen, entry, (next) => { current = next; });
-      ts.appendChild(pen);
+      if (!hasVisual) ts.appendChild(pen);
 
       // Three dots, next to the pen: what the answer was built from. Closed
       // by default -- it is reference, not part of reading the reply.
@@ -1027,21 +1035,33 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
       statusText.textContent = 'Disconnected';
     }
   }
-  async function sendMessage(msg) {
-    if (!msg.trim()) return;
+  // One turn at a time. A visual can fire an event while the last answer is still on its way; that event is
+  // dropped (the panel is told it is busy) rather than queued behind a screen the user has already moved past.
+  let inFlight = false;
+  async function sendMessage(msg, visualEvent) {
+    if (!msg.trim() || inFlight) return;
+    inFlight = true;
+    ncVisuals.setBusy(true);
     const time = new Date().toLocaleTimeString();
     addMessage('user', msg, time);
     chatHistory.push({role: 'user', content: msg, time});
     save();
-    input.value = '';
+    if (!visualEvent) input.value = '';
     input.disabled = true;
     sendBtn.disabled = true;
     addThinking();
     try {
+      // The code of a panel stays on this page: the server gets "[visual]" in its place, in the message and in
+      // the history, and for a panel's event it gets the event itself.
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({message: msg, history: chatHistory.map(({role, content}) => ({role, content}))})
+        body: JSON.stringify({
+          message: ncVisuals.plain(msg),
+          visuals: ncVisuals.enabled(),
+          visualEvent,
+          history: chatHistory.map(({role, content}) => ({role, content: ncVisuals.plain(content)}))
+        })
       });
       const data = await res.json();
       removeThinking();
@@ -1057,11 +1077,20 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
       } else if (data.error) { addMessage('error', 'Error: ' + data.error); }
     } catch { removeThinking(); addMessage('error', 'Error: Unable to reach server'); }
     finally {
+      inFlight = false;
+      ncVisuals.setBusy(false);
       input.disabled = false;
       sendBtn.disabled = false;
       input.focus();
     }
   }
+  // The Visual button and workbench, and the way a panel's events become turns. The label is only what the
+  // transcript shows; the server rebuilds the turn from the validated event.
+  ncVisuals.install({
+    input, sendBtn,
+    send: (text) => sendMessage(text),
+    onEvent: (name, data) => sendMessage('▸ ' + name + (data === null ? '' : ' ' + JSON.stringify(data)), {name, data})
+  });
   const clearChat = () => {
     if (confirm('Clear chat history?')) {
       chat.innerHTML = '';
@@ -4229,8 +4258,18 @@ export class WebServer {
     if (pathname === '/api/chat' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as
-          { message?: string; history?: Array<{ role?: string; content?: string }> } | null;
-        const message = body?.message;
+          { message?: string; visuals?: boolean; visualEvent?: unknown; history?: Array<{ role?: string; content?: string }> } | null;
+        // A visual panel on the page reports something: the turn is built here from the validated event, not
+        // taken from the text the page chose to show. Without one, a fenced visual in the message is code the
+        // page drew and the mesh never needs (its doorway keeps 200 characters), so it is replaced by "[visual]".
+        const visualEvent = body?.visualEvent === undefined ? null : parseVisualEvent(body.visualEvent);
+        if (body?.visualEvent !== undefined && !visualEvent) {
+          this.sendJson(res, { error: 'Bad visual event' }, 400);
+          return;
+        }
+        const message = visualEvent
+          ? visualEventMessage(visualEvent)
+          : (typeof body?.message === 'string' ? plainText(body.message) : body?.message);
         if (!message || typeof message !== 'string') {
           this.sendJson(res, { error: 'Missing message field' }, 400);
           return;
@@ -4248,7 +4287,7 @@ export class WebServer {
           ? body.history
               .filter((h): h is { role: string; content: string } =>
                 typeof h?.role === 'string' && typeof h?.content === 'string')
-              .map(h => `${h.role}: ${h.content}`)
+              .map(h => `${h.role}: ${plainText(h.content)}`)
           : undefined;
         // What the user told it about themselves and their goals, back in
         // memory after a restart before the first reply needs it.
@@ -4256,7 +4295,8 @@ export class WebServer {
         const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
         let response: string;
         try {
-          response = await this.runner.generate(message, history);
+          // When the page asked for visuals the AI is told to act as the back end (see interface/visuals.ts).
+          response = await this.runner.generate(message, history, visualSkillsFor(body));
         } catch (err) {
           activityEnd(activity, false, err instanceof Error ? err.message : String(err));
           throw err;
