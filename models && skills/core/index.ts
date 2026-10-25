@@ -104,6 +104,8 @@ export { SelfImprovement } from './self-improvement';         // ASI §5
 export type { Improvement } from './self-improvement';
 export { AutonomousLearner } from './autonomous-learner';     // ASI §3
 export type { LearnDecision, LearnResult, LearnOptions } from './autonomous-learner';
+export { CuriosityDrive, isSafeTopic, factsAbout } from './curiosity';          // intrinsic drive to explore
+export type { Interest, Exploration, CuriosityStatus, GapSource, Mood } from './curiosity';
 export { PredictionEngine } from './prediction-engine';       // ASI §10
 export type { Prediction, PredictedOutcome, Comparison } from './prediction-engine';
 export { DiscoveryEngine } from './discovery-engine';         // ASI §11

@@ -5576,6 +5576,42 @@ export class WebServer {
       return;
     }
 
+    // Curiosity (models && skills/core/curiosity.ts): the drive to find out what
+    // it does not know.
+    //   GET  /api/curiosity  -- mood, what it is wondering about, what it just explored
+    //   POST /api/curiosity  -- { action: 'pause' | 'resume' | 'step' | 'wonder', topic? }
+    // 'wonder' hands it a question; 'step' explores the most interesting one now
+    // instead of waiting for the next beat (still bounded by the hourly budget).
+    if (pathname === '/api/curiosity') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        if (method === 'GET') { this.sendJson(res, system.curiosity.status()); return; }
+        if (method !== 'POST') { this.sendJson(res, { error: 'GET or POST required' }, 405); return; }
+        const body = await this.parseBody(req) as { action?: string; topic?: string } | null;
+        const action = String(body?.action ?? '');
+        if (action === 'pause' || action === 'resume') {
+          system.curiosity.setPaused(action === 'pause');
+          system.saveCuriosity();
+        } else if (action === 'wonder') {
+          const interest = system.curiosity.wonder(String(body?.topic ?? ''), 'asked', 0.9);
+          if (!interest) { this.sendJson(res, { error: 'not something it can look into (empty, too long, already known, or it looks private)' }, 400); return; }
+          system.saveCuriosity();
+        } else if (action === 'step') {
+          const exploration = await system.curiosityTick();
+          this.sendJson(res, { exploration, status: system.curiosity.status() });
+          return;
+        } else {
+          this.sendJson(res, { error: "action must be 'pause', 'resume', 'step' or 'wonder'" }, 400);
+          return;
+        }
+        this.sendJson(res, system.curiosity.status());
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
     // Yes/no questions with a probability (models && skills/core/yes-no.ts):
     //   GET  /api/yes-no        -- the questions taught so far
     //   POST /api/yes-no/teach  -- { question, text, answer: boolean }

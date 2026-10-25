@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, readFileSync } from "node:fs";
 import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -48,6 +48,10 @@ import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.j
 import { SelfModel } from "../models && skills/core/self-model.js";
 import { SelfImprovement } from "../models && skills/core/self-improvement.js";
 import { AutonomousLearner } from "../models && skills/core/autonomous-learner.js";
+import { CuriosityDrive, factsAbout } from "../models && skills/core/curiosity.js";
+import { writeJsonAtomic } from "../models && skills/core/atomic-write.js";
+import { dataRoot } from "../interface/platform/app-paths.js";
+import { searxngSearch } from "../plugins/searxng.js";
 import { PredictionEngine } from "../models && skills/core/prediction-engine.js";
 import { DoorwayRegistry } from "../models && skills/core/doorways.js";
 import { LiveStreams, PreNeedCache } from "../models && skills/core/live-content.js";
@@ -303,6 +307,9 @@ export class NeuroclawSystem {
   /** How well each net skill has predicted before, and which are switched off for it. Shared by every router below. */
   readonly skillLedger: SkillAccuracyLedger;
   discovery: DiscoveryEngine;
+  /** The standing drive to find out what it does not know (curiosity.ts): wonders, explores, checks it learned, wonders more. */
+  curiosity: CuriosityDrive;
+  private curiosityBusy = false;
   /** Self-improvement framework Phase 1 (Steps 1-7): real component/dependency map, kept in sync with measured performance below. */
   architecture: ArchitectureMapper;
   /** Self-improvement framework Phase 3 (Steps 35-49): real latency/CPU/memory/error measurement per public entry point. */
@@ -538,6 +545,31 @@ export class NeuroclawSystem {
     // Scientific & creative discovery (ASI §11): hypothesis generation/testing
     // and creative concept combination over the same knowledge graph.
     this.discovery = new DiscoveryEngine(this.knowledge);
+    // Curiosity: nothing above learns unless it is handed something. This is
+    // the part that goes and looks. It explores through the same learner as
+    // every other fact, only ever READS (memory, and the owner's own SearXNG if
+    // NEUROCLAW_CURIOSITY_WEB=1), and each topic first passes the veto.
+    this.curiosity = new CuriosityDrive(this.knowledge, this.learner, {
+      explore: (topic) => this.curiosityExplore(topic),
+      allow: (topic) => {
+        const verdict = this.veto.evaluate({
+          id: `curiosity:${Date.now()}`,
+          name: `look into ${topic}`,
+          capabilities: [process.env.NEUROCLAW_CURIOSITY_WEB === "1" ? "network-read" : "memory-read"],
+          reversible: true,
+          externalEffect: false,
+        });
+        // Nobody is there to confirm anything, so "needs confirmation" means no.
+        return verdict.allowed && !verdict.requiresConfirmation;
+      },
+    });
+    if (!process.env.VITEST) {
+      this.restoreCuriosity();
+      if (process.env.NEUROCLAW_CURIOSITY !== "0") {
+        const every = Number(process.env.NEUROCLAW_CURIOSITY_INTERVAL_MS) || 5 * 60_000;
+        setInterval(() => void this.curiosityTick(), every).unref();
+      }
+    }
 
     // Self-improvement framework Phase 1/3 (306-step plan): both classes were
     // fully built and unit-tested (`test/core/system-tests.test.ts`) but never
@@ -591,6 +623,7 @@ export class NeuroclawSystem {
     register("transfer", "Knowledge Transfer", "learning", ["knowledge"], ["problem"], ["cross-domain hint"]);
     register("discovery", "Discovery Engine", "learning", ["knowledge"], ["observation"], ["hypothesis/combination"]);
     register("learner", "Autonomous Learner", "learning", ["knowledge"], ["information"], ["learn decision"]);
+    register("curiosity", "Curiosity", "learning", ["knowledge", "learner", "veto"], ["open questions"], ["exploration / what it learned"]);
     register("reasoner", "Reasoning Engine", "reasoning", ["memory", "mistakes", "hive", "knowledge", "selfModel", "discovery", "predictor"], ["problem"], ["reasoning result"]);
     register("critic", "Critic", "safety", ["knowledge", "math", "mistakes"], ["claim/candidate answers"], ["verification report"]);
     // The nine public action-taking entry points (`trackCall()`'s component
@@ -1400,6 +1433,8 @@ export class NeuroclawSystem {
     //    gating the action, so a genuinely dangerous request (not a fixed
     //    "reversible: true" regardless of content) actually reaches the
     //    AlignmentVeto's irreversible/external-effect confirmation rule.
+    // Hearing something it cannot answer is the strongest reason to go and look.
+    try { this.curiosity.noticeText(input); } catch { /* wondering is never allowed to break answering */ }
     const prediction = this.predictor.predict(`respond to: ${input}`);
     const predictedDanger = prediction.outcomes.some(o => o.dangerous);
 
@@ -1560,6 +1595,50 @@ export class NeuroclawSystem {
    * invoked (the same "creation" path a user request would trigger) rather
    * than a parallel mechanism.
    */
+  /**
+   * Where curiosity goes to find out. Reads only. Its own memory first (which
+   * keeps its own privacy gate); the owner's SearXNG only when the owner turned
+   * that on. A web snippet comes back as plain statements and goes through the
+   * learner like any other fact, at the learner's ordinary reliability: it is
+   * NOT corroborated across sources the way ResearchPlugin.conductResearch()
+   * does, so a single page's claim is held as lightly as the learner holds it.
+   */
+  private async curiosityExplore(topic: string): Promise<string[]> {
+    const facts: string[] = [];
+    for (const hit of this.memory.retrieve(topic, { topK: 5, minScore: 0.1 })) facts.push(...factsAbout(topic, hit.item.content));
+    if (process.env.NEUROCLAW_CURIOSITY_WEB === "1") {
+      for (const hit of await searxngSearch(topic, 5)) facts.push(...factsAbout(topic, `${hit.title}. ${hit.snippet}`, 2));
+    }
+    return [...new Set(facts)];
+  }
+
+  private curiosityFile(): string {
+    return process.env.NEUROCLAW_CURIOSITY_FILE ?? join(dataRoot(), "curiosity.json");
+  }
+
+  private restoreCuriosity(): void {
+    try { this.curiosity.restore(JSON.parse(readFileSync(this.curiosityFile(), "utf8"))); } catch { /* first run, or unreadable: start with a clean slate */ }
+  }
+
+  saveCuriosity(): void {
+    try { writeJsonAtomic(this.curiosityFile(), this.curiosity.toJSON()); } catch { /* a failed save is retried on the next change; it must not stop the drive */ }
+  }
+
+  /** One beat of wanting to know. Never overlaps itself, never throws, and saves what it found. */
+  async curiosityTick(): Promise<import("../models && skills/core/curiosity.js").Exploration | null> {
+    if (this.curiosityBusy) return null;
+    this.curiosityBusy = true;
+    try {
+      const done = await this.curiosity.step();
+      if (done && !done.skipped) this.saveCuriosity();
+      return done;
+    } catch {
+      return null; // curiosity is never allowed to take the system down
+    } finally {
+      this.curiosityBusy = false;
+    }
+  }
+
   async learn(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
     if (!this.initialized) await this.initialize();
     return this.trackCall("learn", async () => this.learnImpl(information, opts));
@@ -1567,6 +1646,8 @@ export class NeuroclawSystem {
 
   private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
     let result = this.learner.learn(information, opts);
+    // A disagreement, or a thing it has no picture of yet, is a question.
+    try { this.curiosity.noticeLearned(result); } catch { /* as above */ }
 
     // Ask the MESH whether it has anything that handles this.
     //
