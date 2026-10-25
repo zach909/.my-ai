@@ -114,7 +114,11 @@ before(async () => {
   }
   browser = await Browser.launch({ extensions: [path.join(extDir, 'unpacked')] });
   for (let i = 0; i < 40 && !swTarget; i++) {
-    swTarget = (await browser.targets()).find((t) => t.type === 'service_worker' && t.url.startsWith('chrome-extension://'));
+    // Chromium also runs its own built-in extensions, each with a service worker; ours is the one whose manifest says so.
+    for (const t of (await browser.targets()).filter((x) => x.type === 'service_worker' && x.url.startsWith('chrome-extension://'))) {
+      const sw = await browser.attach(t);
+      try { if (await sw.eval('chrome.runtime.getManifest().name') === manifest.name) { swTarget = t; break; } } catch { /* not ours */ } finally { sw.s.close(); }
+    }
     if (!swTarget) await sleep(250);
   }
   if (swTarget) extId = new URL(swTarget.url).host;

@@ -76,11 +76,13 @@ jobs:
       NEUROCLAW_REQUIRE_BROWSER: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true  # the repo keeps *.png in Git LFS; the icon check and the extension zip need the real files
       - run: node scripts/release/use-node.mjs 22
       - name: One version everywhere
         run: node scripts/release/version.mjs check
       - name: Install the build tools named in package.json (typescript, vitest; nothing else)
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
       - name: Type check
         run: node node_modules/typescript/bin/tsc -p tsconfig.backend.json --noEmit
       - name: Build the backend
@@ -115,10 +117,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true  # the repo keeps *.png in Git LFS; the icon check and the extension zip need the real files
       - run: node scripts/release/use-node.mjs 22
       - run: node scripts/release/version.mjs check
       - name: Install the build tools named in package.json (typescript, vitest; nothing else)
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
       - run: node scripts/build-backend.mjs
       - run: node scripts/release/make-icons.mjs --check
       - name: Package
@@ -140,7 +144,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: node scripts/release/use-node.mjs 22
       - name: Install the build tools named in package.json (typescript, vitest; nothing else)
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
       - run: node scripts/build-backend.mjs
       - name: Stage the app payload
         run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
@@ -167,7 +171,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: node scripts/release/use-node.mjs 22
       - name: Install the build tools named in package.json (typescript, vitest; nothing else)
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
       - run: node scripts/build-backend.mjs
       - name: Stage the app payload
         run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
@@ -197,7 +201,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: node scripts/release/use-node.mjs 22
       - name: Install the build tools named in package.json (typescript, vitest; nothing else)
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
       - run: node scripts/build-backend.mjs
       - name: Stage the app payload
         run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
@@ -250,7 +254,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: node scripts/release/use-node.mjs 22
       - name: Install the build tools named in package.json (typescript, vitest; nothing else)
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
       - run: node scripts/build-backend.mjs
       - name: Stage the app payload
         run: node scripts/release/stage-app.mjs build/stage --channel "$CHANNEL" --commit "${{ github.sha }}"
@@ -387,7 +391,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: node scripts/release/use-node.mjs 22
       - name: Install the build tools named in package.json (typescript, vitest; nothing else)
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm install --ignore-scripts --legacy-peer-deps --no-audit --no-fund
       - run: node scripts/build-backend.mjs
       - name: The tag matches the application version
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
