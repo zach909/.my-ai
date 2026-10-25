@@ -175,6 +175,12 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine', 'installWithoutTerminal']], tests: [n('test/platform/packaging.test.mjs')], onlyOn: ['windows', 'linux', 'macos'],
   },
   {
+    id: 'ai-os', title: 'AI OS mode (start with the computer)', description: 'Makes the engine part of the computer\'s sign-in, so the AI is running before any window is opened: a systemd user service or autostart entry on Linux, a LaunchAgent on macOS, a hidden per-user startup script on Windows. Per-user, undone with one switch, and it grants the agent no extra access.',
+    implementation: ['interface/platform/ai-os.ts', 'interface/platform/routes.ts', 'interface/platform/settings-page.ts', 'scripts/ai-os.mjs'],
+    routes: ['GET /api/ai-os', 'POST /api/ai-os'],
+    needs: [['localEngine', 'backgroundService']], tests: [n('test/platform/ai-os.test.mjs')], onlyOn: ['windows', 'linux', 'macos'],
+  },
+  {
     id: 'source-updates', title: 'Source updates', description: 'For git checkouts: how far behind origin, and a safe fast-forward.',
     implementation: ['models && skills/core/auto-update.ts', 'scripts/update-check.mjs'],
     routes: ['GET /api/updates', 'POST /api/updates/apply'],

@@ -11,18 +11,15 @@
 #      neuroclaw/ -- excludes .git, node_modules, dist, build artifacts,
 #      and extension-builder's own vendored reference trees (PyTorch/,
 #      Moby/, CMUDict/, DebianInstaller/ -- hundreds of MB of unrelated
-#      third-party source this app's runtime never touches). None of that
-#      exclusion is guesswork: it's the same live vite.config.ts already
-#      excludes from its own dev-server file watcher for the same reason
-#      (see that file's own `ignored` list).
+#      third-party source this app's runtime never touches).
 #   2. `lb config` -- configures a Debian live-build tree for a hybrid
 #      (BIOS + UEFI) bootable ISO.
 #   3. `lb build` -- actually builds it. This downloads a base Debian
 #      system, installs live-usb/config/package-lists/neuroclaw.list.chroot's
 #      packages into it, runs config/hooks/live/0100-neuroclaw-setup.hook.chroot
-#      (npm ci + a first build) inside that chroot, then assembles the
+#      (npm install + a first build) inside that chroot, then assembles the
 #      squashfs + ISO. Expect this to take a while (a real network fetch of
-#      a base system plus `npm ci` and a `tsc` build) and a genuinely large
+#      a base system plus `npm install` and a `tsc` build) and a genuinely large
 #      amount of free disk (see README.md).
 set -euo pipefail
 

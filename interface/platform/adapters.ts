@@ -77,7 +77,7 @@ const desktopCommon = {
   localEngine: ok('The engine runs on this computer inside the app\'s own Node runtime.'),
   remoteEngine: ok('Point the app at another NeuroClaw server in Settings > Connection.'),
   offlineChat: ok('OneBrain answers with no network. Web search and the store need one.'),
-  backgroundService: some('Runs while the app window is closed only if the app is left running; there is no system service.'),
+  backgroundService: some('Runs while the app window is closed only if the app is left running, unless AI OS mode is on (Settings > AI OS, or "node scripts/ai-os.mjs enable"): then the computer starts the engine at every sign-in. Per-user login items only; there is no system-wide service.'),
   fileAccess: ok('Through Computer Access: off until you grant a folder.'),
   notifications: ok(),
   voiceInput: some('No speech-to-text is bundled; type, or use the OS dictation shortcut.'),
@@ -93,6 +93,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
     runtime: 'node', updateMechanism: 'manual-download', artifacts: ['windows-installer-exe', 'windows-zip'],
     capabilities: {
       ...desktopCommon,
+      backgroundService: some('AI OS mode starts the engine at sign-in from a hidden script under the per-user Run key (no administrator rights). It is not restarted if it stops. The script and registry commands are generated and checked by tests here, but have not been run on a Windows PC: this repository\'s sandbox has none.'),
       desktopControl: no('No Windows UI Automation tools are wired into the packaged launcher.'),
       systemTray: no('The launcher opens a window; there is no tray icon.'),
       selfUpdate: some('The app reports a newer release and links to the installer. It never replaces itself silently.'),
@@ -106,6 +107,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
     runtime: 'node', updateMechanism: 'manual-download', artifacts: ['linux-deb', 'linux-tarball'],
     capabilities: {
       ...desktopCommon,
+      backgroundService: some('AI OS mode starts the engine at sign-in as a systemd user service that restarts on failure, or as an autostart entry where there is no user manager (a container, WSL). The unit passes systemd-analyze and the enable/disable flow is tested end to end against a throwaway home folder, but it has not been run in a real graphical login session.'),
       desktopControl: some('X11 tools and Linux permission tools exist; Wayland sessions restrict what any app may see or drive.'),
       systemTray: no('The launcher opens a window; there is no tray icon.'),
       selfUpdate: some('The app reports a newer release; install the new .deb or tarball yourself.'),
@@ -119,6 +121,7 @@ export const ADAPTERS: Record<PlatformId, PlatformAdapter> = {
     runtime: 'node', updateMechanism: 'manual-download', artifacts: ['macos-app-zip', 'macos-dmg'],
     capabilities: {
       ...desktopCommon,
+      backgroundService: some('AI OS mode starts the engine at sign-in from a LaunchAgent in ~/Library/LaunchAgents that restarts after a failure. The plist is generated and checked as well-formed XML by tests here, but has not been loaded on a Mac: this repository\'s sandbox has none.'),
       desktopControl: no('The packaged app asks for no Accessibility or Screen Recording permission.'),
       systemTray: no('No menu-bar item; open the app from the Dock.'),
       selfUpdate: some('Reports a newer release and links to the .dmg. Signed, notarised updates need the maintainer\'s Apple credentials, which this repo does not hold.'),

@@ -157,7 +157,7 @@ test('both settings URLs serve the one page, and the page offers every section t
     assert.equal(b.status, 200);
     assert.equal(a.text, b.text, '/app/settings is the same page, not the old overflowing one');
     assert.match(a.text, /<meta name="viewport"/);
-    for (const section of ['General', 'Updates', 'Remote access', 'Computer access', 'Safety', 'Data', 'More', 'About']) assert.ok(a.text.includes(`'${section}'`), `section ${section}`);
+    for (const section of ['General', 'Updates', 'Remote access', 'Computer access', 'AI OS', 'Safety', 'Data', 'More', 'About']) assert.ok(a.text.includes(`'${section}'`), `section ${section}`);
     for (const level of ['observe', 'interact', 'modify', 'execute', 'system', 'privileged']) assert.ok(a.text.includes(`'${level}'`), `access level ${level}`);
     assert.ok(!/innerHTML/.test(a.text.replace(/replaceChildren/g, '')), 'no innerHTML: nothing from the server can run as markup');
   } finally { await srv.stop(); }

@@ -1,15 +1,14 @@
 #!/bin/sh
 # The entire graphical "desktop" this live session ever shows: no panel, no
-# taskbar, no icons -- one fullscreen browser window pointed at the REAL
-# NeuroClaw app on :3000 (Vite -- see neuroclaw-dev.service's own doc
-# comment for why :3000, not the backend's :7861, which serves only a
-# bare-bones fallback page). systemd starts that service independently of
-# this login session (in parallel, not before it), and unlike
-# scripts/launcher.mjs's own self-reloading "Starting..." page, a plain
-# connection-refused error page in chromium does NOT retry itself -- so
-# this waits for something to actually answer on :3000 before ever
-# launching chromium the first time, instead of leaving a dead error page
-# up that nothing here would notice or recover from.
+# taskbar, no icons -- one fullscreen browser window pointed at the NeuroClaw
+# app on :7861, which the backend serves itself (the home chat at /, Settings
+# at /settings). There is no separate frontend server any more. systemd starts
+# that service independently of this login session (in parallel, not before
+# it), and unlike scripts/launcher.mjs's own self-reloading "Starting..." page,
+# a plain connection-refused error page in chromium does NOT retry itself -- so
+# this waits for the engine to actually answer before launching chromium the
+# first time, instead of leaving a dead error page up that nothing here would
+# notice or recover from.
 
 # No screensaver/blanking -- an unattended kiosk going dark mid-demo reads
 # as "it crashed", not "it's idle".
@@ -17,13 +16,13 @@ xset s off
 xset -dpms
 xset s noblank
 
-# `npm run dev` runs a cold `tsc` build plus Vite's own dependency
-# pre-bundle on every boot (nothing under /opt/neuroclaw persists between
-# boots on a plain live session), which is genuinely tens of seconds, not
-# an instant -- see neuroclaw-dev.service's own doc comment. No fixed
-# upper bound: an old/slow machine just waits longer rather than giving up
-# and showing nothing.
-until curl -s -o /dev/null "http://127.0.0.1:3000/"; do
+# `npm run dev` runs a cold `tsc` build on every boot (the build output under
+# /opt/neuroclaw does not persist between boots on a plain live session), which
+# can take a while on slow hardware -- see neuroclaw-dev.service's own doc
+# comment. No fixed upper bound: an old/slow machine just waits longer rather
+# than giving up and showing nothing. /api/status answers 200 only once the
+# engine is really up.
+until curl -sf -o /dev/null "http://127.0.0.1:7861/api/status"; do
   sleep 1
 done
 

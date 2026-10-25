@@ -89,7 +89,7 @@ export const SETTINGS_PAGE = String.raw`<!DOCTYPE html>
   'use strict';
   var LEVELS = ['observe', 'interact', 'modify', 'execute', 'system', 'privileged'];
   var SECTIONS = [
-    ['general', 'General'], ['updates', 'Updates'], ['remote', 'Remote access'], ['access', 'Computer access'],
+    ['general', 'General'], ['updates', 'Updates'], ['remote', 'Remote access'], ['access', 'Computer access'], ['aios', 'AI OS'],
     ['safety', 'Safety'], ['data', 'Data'], ['modules', 'More'], ['about', 'About']
   ];
   var tabs = document.getElementById('tabs'), panel = document.getElementById('panel');
@@ -364,6 +364,36 @@ export const SETTINGS_PAGE = String.raw`<!DOCTYPE html>
       h('div', { class: 'grid' }, links.map(function (l) { return h('a', { href: l[0] }, h('b', { text: l[1] }), h('span', { text: l[2] })); })));
   }
 
+  /* ---------- AI OS mode ---------- */
+  async function aios() {
+    var s = await api('/api/ai-os');
+    var badge = h('span', { class: 'badge', id: 'aios-state' });
+    var outcome = h('p', { class: 'help', id: 'aios-outcome', role: 'status' });
+    function paint(x) { s = x; badge.className = 'badge' + (x.enabled ? ' ok' : ''); badge.textContent = x.enabled ? 'On' : 'Off'; }
+    paint(s);
+    var sw = toggle('aios', s.enabled, async function (v) {
+      outcome.textContent = '';
+      var r = await api('/api/ai-os', { method: 'POST', body: { enabled: v } });
+      paint(r.status); outcome.textContent = r.result.message; say(v ? 'AI OS mode is on.' : 'AI OS mode is off.', 'ok');
+    }, 'Start NeuroClaw when I sign in');
+    sw.disabled = !s.supported || !s.canChange;
+    var bullets = [
+      'Runs the engine in the background from sign-in, with no window open, so the AI is ready the moment you open a window, a browser tab or the Chrome extension on this computer. It listens on this computer only, unless you have set the server up for other devices (which needs a password).',
+      'Gives the agent no extra access. Computer access, tool safety and approvals work exactly as before.',
+      'Does not start a second copy right now. The engine you are using keeps running, and the computer starts it from your next sign-in.',
+      'Changes only your own account, with no administrator rights. Turn the switch off, or run "node scripts/ai-os.mjs disable", to undo it completely.'
+    ];
+    panel.replaceChildren(
+      h('h2', { text: 'AI OS mode' }),
+      h('p', { class: 'nc-dim', text: 'Make this computer one where the AI is always there, instead of an app you have to open.' }),
+      s.supported ? setting('Start NeuroClaw when I sign in', s.summary, h('span', null, badge, ' ', sw), 'aios') : h('p', { class: 'help', id: 'aios-reason', text: s.reason }),
+      s.supported && !s.canChange ? h('p', { class: 'help', id: 'aios-locked', text: 'Only the admin, sitting at this computer, can change this. From a terminal on it: node scripts/ai-os.mjs enable' }) : null,
+      outcome,
+      h('h3', { text: 'What it does, and what it does not' }),
+      h('ul', { style: 'margin:6px 0 0;padding-left:20px;display:grid;gap:8px;font-size:14px;line-height:1.5' }, bullets.map(function (b) { return h('li', { text: b }); }))
+    );
+  }
+
   /* ---------- About ---------- */
   var installPrompt = null;
   window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); installPrompt = e; });
@@ -387,7 +417,7 @@ export const SETTINGS_PAGE = String.raw`<!DOCTYPE html>
     );
   }
 
-  var RENDER = { general: general, updates: updates, remote: remote, access: access, safety: safety, data: data, modules: modules, about: about };
+  var RENDER = { general: general, updates: updates, remote: remote, access: access, aios: aios, safety: safety, data: data, modules: modules, about: about };
 
   function select(id, focus) {
     if (!RENDER[id]) id = 'general';

@@ -14,7 +14,9 @@
  *      NEUROCLAW_KEEP_RUNNING=1). A server that was already running is left alone.
  *
  * It asks for no privileges, installs no service and touches nothing outside the
- * app's own folders (~/.neuroclaw and the per-user app copy).
+ * app's own folders (~/.neuroclaw and the per-user app copy). Starting the engine at
+ * every sign-in is a separate opt-in, AI OS mode (scripts/ai-os.mjs), which runs this
+ * with --no-window.
  *
  * Flags: --no-window (start/attach and print "READY <url>", for the macOS host),
  *        --stop (stop a server this launcher started), --port <n>, --help.
