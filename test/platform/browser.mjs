@@ -141,7 +141,8 @@ export class Browser {
     const args = [
       '--headless=new', '--no-sandbox', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
       '--disable-dev-shm-usage', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-      ...(extensions.length ? [`--load-extension=${extensions.join(',')}`, `--disable-extensions-except=${extensions.join(',')}`] : []),
+      // Branded Chrome 137+ ignores --load-extension unless this feature is switched off; other builds accept it anyway.
+      ...(extensions.length ? ['--disable-features=DisableLoadExtensionCommandLineSwitch', `--load-extension=${extensions.join(',')}`, `--disable-extensions-except=${extensions.join(',')}`] : []),
       ...extraArgs, 'about:blank',
     ];
     const child = spawn(bin, args, { stdio: ['ignore', 'ignore', 'pipe'] });
