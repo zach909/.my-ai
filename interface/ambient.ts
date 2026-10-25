@@ -510,5 +510,7 @@ export function injectAmbient(html: string): string {
   if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `${head}</head>`);
   else if (/<body[\s>]/i.test(out)) out = out.replace(/<body/i, `${head}<body`);
   else return html;
-  return /<\/body>/i.test(out) ? out.replace(/<\/body>/i, `${script}</body>`) : out + script;
+  // The page's own closing tag is the last one: an earlier "</body>" can sit inside a script's string.
+  const closing = out.toLowerCase().lastIndexOf('</body>');
+  return closing >= 0 ? out.slice(0, closing) + script + out.slice(closing) : out + script;
 }
