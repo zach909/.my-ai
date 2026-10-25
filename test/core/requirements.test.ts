@@ -83,17 +83,4 @@ describe('the heavy tiers stay opt-in', () => {
     const all = declaredPackages('requirements.txt').join(' ')
     expect(all).not.toMatch(/torch|transformers|numpy/i)
   })
-
-  it('still declares torch where it is genuinely needed', () => {
-    // The Python mesh track (neurolang.py, the value system) uses tensors.
-    // Making the default install empty must not mean pretending it has no
-    // needs. The TinyGPT transformer that used to live here is gone -- torch
-    // is still declared, for the track that genuinely still uses it.
-    expect(declaredPackages('model && skills manager/requirements.txt').join(' ')).toMatch(/torch/)
-  })
-
-  it('no longer claims torch is what the all-to-all mesh needs', () => {
-    const text = readFileSync(path.join(ROOT, 'model && skills manager/requirements.txt'), 'utf8')
-    expect(text).not.toMatch(/all the canonical all-to-all mesh needs/)
-  })
 })

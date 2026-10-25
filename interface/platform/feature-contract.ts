@@ -50,9 +50,9 @@ const ENGINE: CapabilityId[][] = [['localEngine'], ['remoteEngine']];
 export const FEATURES: Feature[] = [
   {
     id: 'chat', title: 'Chat', description: 'Talk to the agent; replies come from the OneBrain mesh through the bit-level Zip Loop.',
-    implementation: ['interface/web-server.ts', 'interface/runner.ts', 'models && skills/llm.js'],
+    implementation: ['interface/web-server.ts', 'interface/runner.ts', 'interface/visuals.ts', 'models && skills/llm.js'],
     routes: ['POST /api/chat', 'POST /api/chat/messages', 'POST /api/chat/correct', 'GET /api/status'],
-    needs: ENGINE, tests: [v('test/core/zip-loop-send.test.ts'), v('test/core/chat-send-gate.test.ts'), n('test/platform/engine.test.mjs')],
+    needs: ENGINE, tests: [v('test/core/zip-loop-send.test.ts'), v('test/core/chat-send-gate.test.ts'), n('test/platform/engine.test.mjs'), n('test/platform/visuals.test.mjs')],
   },
   {
     id: 'chat-history', title: 'Chat history', description: 'Saved threads, search, pinning, export and import.',
@@ -205,7 +205,6 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine'], ['remoteEngine']], tests: [n('test/platform/version.test.mjs'), n('test/platform/ci.test.mjs'), n('test/platform/release-manifest.test.mjs')],
   },
   {
-    id: 'root-access', title: 'Root access, complete route access', description: 'Not actually complete yet, named that way because that is the goal: a systemd action run as root through pkexec (the OS authentication dialog is the approval), gated by a deny-by-default allowlist, is the one route with a real adapter today. plugins/linux-permission-tools.ts specifies 100+ other Linux capabilities (package management, firewall rules, local accounts, mounting, ACLs, SELinux/AppArmor, ...); every one of them still fails closed with an honest "not implemented" rather than a fake success. Windows and macOS have no privilege-broker adapter at all.',
     id: 'root-access', title: 'Root / system access', description: 'Linux only, and only one thing: a systemd unit action (status/start/stop/restart/enable/disable) run through pkexec, whose OS authentication dialog is the approval, gated by a deny-by-default allowlist (Settings > Access). Not root shell access and not "complete" root access -- the tool enum\'s other 100+ operations (package install, firewall rules, local accounts, mounting, security policy) all fail closed as not implemented, and Windows and macOS have no privilege-broker adapter at all.',
     implementation: ['models && skills/core/linux-privilege-broker.ts', 'plugins/linux-permission-tools.ts', 'plugins/linux-permission-plugin.ts'],
     routes: ['GET /api/linux-privilege-broker', 'POST /api/linux-privilege-broker'],
@@ -218,13 +217,12 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine']], tests: [v('test/core/safety-routes.test.ts'), v('test/core/tool-safety.test.ts')],
   },
   {
-    id: 'system-permissions', title: 'System permissions, multi-desktop, multi-mouse and multi-keyboard', description: 'Every OS-level permission this project has a name for, in one place: Computer access’s switches and per-capability grants (real, everywhere), Root access’s one pkexec-backed operation and 100+ still-unimplemented tool descriptors (Linux only), the agent sandbox’s confinement (real, everywhere), and multiple virtual desktops/workspaces plus telling separate physical mice and keyboards apart (asked for; not built anywhere — no standard web API exists to detect which physical input device sent an event, and this app has no native per-OS layer that could). Shown here as one bundle so the gap is visible in the same place as what is real, rather than only in prose.',
+    id: 'system-permissions', title: 'System permissions, multi-desktop, multi-mouse and multi-keyboard', description: 'Every OS-level permission this project has a name for, in one place: Computer access’s switches and per-capability grants (real, everywhere), Root access’s one pkexec-backed operation and 100+ still-unimplemented tool descriptors (Linux only), the agent sandbox’s confinement (real, everywhere), named in-app workspaces (real, everywhere -- see the "Virtual workspaces" row above, not OS-level desktop switching), and telling separate physical mice and keyboards apart by device enumeration only -- real on Linux, Windows and macOS (reading each OS\'s own device list; never the live input stream, which would be a keylogger), still not possible on ChromeOS, Android or iOS. Shown here as one bundle so the gap is visible in the same place as what is real, rather than only in prose; the capability matrix below has the same facts broken out per platform (systemPermissions, multiDesktop, multiMouse, multiKeyboard).',
     implementation: ['models && skills/core/access-manager.ts', 'models && skills/core/access-settings.ts', 'models && skills/core/linux-privilege-broker.ts', 'models && skills/core/danger-protocol.ts', 'interface/platform/adapters.ts'],
     routes: ['GET /api/access', 'GET /api/linux-privilege-broker', 'GET /api/agent'],
-    needs: [['multiSeatInput']], tests: [v('test/core/access-switches.test.ts'), v('test/core/linux-privilege-broker.test.ts'), v('test/core/agent-protocol.test.ts')],
+    needs: [['systemPermissions']], tests: [v('test/core/access-switches.test.ts'), v('test/core/linux-privilege-broker.test.ts'), v('test/core/agent-protocol.test.ts')],
   },
   {
-    id: 'terminal', title: 'Terminal access', description: 'A tool the agent can use to run shell commands, with output capture and a best-effort guardrail against the most common catastrophic accidents; gated by the same ask-first/approval system as every other risky tool.',
     id: 'terminal', title: 'Terminal', description: 'A tool the agent can use to run shell commands on this device and read back their output, gated by the same ask-first/approval system as every other risky tool and with a best-effort guardrail against the most common catastrophic accidents (it is a sandboxed shell-command tool, not an open terminal emulator and not a path to extra privileges beyond the agent\'s own).',
     implementation: ['plugins/terminal.ts'],
     routes: [],

@@ -1,6 +1,5 @@
 # NeuroClaw - Artificial Superintelligence System
-
-built FOR EDU USES ONLY
+this is educational project 
 
 please spread the word
 
@@ -601,9 +600,9 @@ Hand-written `.js` + `.d.ts` pairs are compiled or authored JavaScript with matc
 | `live-usb/config/includes.chroot/etc/systemd/system/multi-user.target.wants/neuroclaw-dev.service` | Symlink that enables that unit at boot. |
 | `live-usb/config/package-lists/neuroclaw.list.chroot` | Debian packages baked into the image (Xorg, openbox, Chromium, Node, installer, …). |
 
-#### `model && skills manager/` — Python NeuroLang stack
+#### `model && skills manager/` — Legacy files
 
-Several files here still describe or import the retired `tinygpt/` package, which is no longer in the repo.
+Historical directory containing legacy configuration and data files. Most of the Python implementation from this era has been removed; the current implementation uses `asi_core/` exclusively (stdlib only).
 
 | File | What it does |
 |---|---|
@@ -611,12 +610,8 @@ Several files here still describe or import the retired `tinygpt/` package, whic
 | `model && skills manager/CLAUDE.md` | One-line pointer to `AGENTS.md`. |
 | `model && skills manager/README.md` | README for the former TinyGPT/mesh Python model stack (mostly historical). |
 | `model && skills manager/main.py` | CLI entry point: `build` a NeuroLang program, `code2net`, or `netsearch`. |
-| `model && skills manager/neurolang.py` | The PyTorch-backed NeuroLang interpreter: elastic neurons, zero-sum value, skills, Code-to-Net, and Net Search. |
 | `model && skills manager/example_experts.nl` | Sample NeuroLang program that declares code-analysis, search, and skill experts. |
-| `model && skills manager/test_value_system.py` | Tests for the zero-sum value-system invariants in `neurolang.py`. |
 | `model && skills manager/unifid_brain.py` | A misspelled, ≈3,500-line concatenation of several `asi_core` modules. It uses relative imports, so it doesn't run on its own. `asi_core/unified_brain.py` is the maintained version. |
-| `model && skills manager/requirements.txt` | PyTorch and NumPy requirements for this Python track only. The main mesh doesn't need them. |
-| `model && skills manager/interface/server.py` | Browser chat server for a TinyGPT checkpoint. It imports `tinygpt`, which no longer exists. |
 | `model && skills manager/data/contracts.json` | Fixed "when X, reply Y" response contracts from the TinyGPT era. |
 | `model && skills manager/data/pretrain/sample.md` | Tiny sample pretraining corpus. |
 | `model && skills manager/data/sft/chat.jsonl` | Tiny sample fine-tuning chat dataset. |
