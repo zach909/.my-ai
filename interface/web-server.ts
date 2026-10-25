@@ -32,7 +32,8 @@ import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AVATAR_HTML } from './avatar.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute, isPwaRoute } from './ambient.js';
-import { VISUAL_CLIENT_JS, VISUAL_CSS, parseVisualEvent, plainText, visualEventMessage, visualSkillsFor } from './visuals.js';
+import { VISUAL_CLIENT_JS, VISUAL_CSS, parseVisualEvent, plainText, visualAppPage, visualEventMessage, visualSkillsFor } from './visuals.js';
+import { VisualAppError, VisualAppStore, isUnavailable } from '../models && skills/core/visual-apps.js';
 import { configFile } from './platform/app-paths.js';
 import { handlePlatformRoutes, isPlatformRoute } from './platform/routes.js';
 import { SETTINGS_PAGE } from './platform/settings-page.js';
@@ -1438,6 +1439,8 @@ export class WebServer {
   private decoyTimer: ReturnType<typeof setInterval> | null = null;
   private healTimer: ReturnType<typeof setInterval> | null = null;
   private port = 0;
+  /** Apps made from visuals (models && skills/core/visual-apps.ts). Saved on this device; a launcher is written only after a preview is approved. */
+  private visualApps = new VisualAppStore();
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
   private readonly remoteAccessLock = new PasswordLock();
@@ -2706,6 +2709,60 @@ export class WebServer {
     // not be rebuilt and overflowed on phones; it now opens the same page.
     if ((pathname === '/settings' || pathname === '/app/settings') && (method === 'GET' || method === 'HEAD')) {
       this.sendHtml(res, SETTINGS_PAGE);
+      return;
+    }
+    // ── Visual apps: a visual kept as an app, and put on this computer only after the owner has seen what
+    // would be written and approved it (see models && skills/core/visual-apps.ts). The AI proposes (an app is a
+    // visual in a reply); nothing here is reachable from a chat turn.
+    const visualAppPageMatch = pathname.match(/^\/visual-apps\/([a-z0-9-]{1,48})$/);
+    if (visualAppPageMatch && (method === 'GET' || method === 'HEAD')) {
+      const app = this.visualApps.get(visualAppPageMatch[1]);
+      if (!app) { this.sendJson(res, { error: 'No such app.' }, 404); return; }
+      this.sendHtml(res, visualAppPage(app));
+      return;
+    }
+    if (pathname === '/api/visual-apps' && method === 'GET') {
+      this.sendJson(res, { apps: this.visualApps.list().map(a => ({ id: a.id, name: a.name, createdAt: a.createdAt, launcher: a.launcher ?? null })) });
+      return;
+    }
+    const visualAppMatch = pathname.match(/^\/api\/visual-apps(?:\/([a-z0-9-]{1,48})(?:\/(preview|install))?)?$/);
+    if (visualAppMatch && (method === 'POST' || method === 'DELETE')) {
+      if (!isOwnerOrAdmin()) {
+        this.sendJson(res, { error: 'Only the owner or an admin may make or install apps.' }, 403);
+        return;
+      }
+      const [, id, action] = visualAppMatch;
+      // A launcher is a file on the computer this server runs on, so it is only written, or removed, when the
+      // request comes from that computer. From anywhere else the app is still saved and opens at its page.
+      const needsThisMachine = action === 'preview' || action === 'install' || (method === 'DELETE' && !!id && !!this.visualApps.get(id)?.launcher);
+      if (needsThisMachine && !this.isFromThisMachine(req)) {
+        this.sendJson(res, { error: 'Putting an app on a computer has to be done from that computer. Open this page there.' }, 403);
+        return;
+      }
+      const host = String(req.headers.host ?? '');
+      const baseUrl = `http://${/^[A-Za-z0-9.:\[\]-]{1,100}$/.test(host) ? host : `127.0.0.1:${this.port}`}`;
+      try {
+        if (!id && method === 'POST') {
+          const body = await this.parseBody(req, 256 * 1024) as { name?: unknown; code?: unknown } | null;
+          const app = this.visualApps.save(body?.name, body?.code);
+          this.sendJson(res, { app: { id: app.id, name: app.name, createdAt: app.createdAt } }, 201);
+        } else if (id && action === 'preview' && method === 'POST') {
+          await this.parseBody(req).catch(() => null);
+          const shown = this.visualApps.preview(id, baseUrl);
+          this.sendJson(res, isUnavailable(shown) ? { unavailable: shown.unavailable } : shown);
+        } else if (id && action === 'install' && method === 'POST') {
+          const body = await this.parseBody(req) as { approval?: unknown } | null;
+          const app = this.visualApps.install(id, body?.approval, baseUrl);
+          this.sendJson(res, { app: { id: app.id, name: app.name, launcher: app.launcher ?? null } });
+        } else if (id && !action && method === 'DELETE') {
+          this.sendJson(res, this.visualApps.remove(id));
+        } else {
+          this.sendJson(res, { error: 'Not found' }, 404);
+        }
+      } catch (err) {
+        if (err instanceof VisualAppError) this.sendJson(res, { error: err.message }, 400);
+        else this.sendError(res, err);
+      }
       return;
     }
     // Store, Builder, and Self-improvement pages (replaced React versions)

@@ -51,6 +51,12 @@ test('the back-end framing fits the 160 characters the doorway keeps, and is sen
   for (const body of [null, {}, { visuals: false }, { visuals: 'yes' }]) assert.deepEqual(V.visualSkillsFor(body), []);
 });
 
+test('the page scripts hold no </head>, </body> or </html>: the server inserts its tags at the first one it finds', () => {
+  for (const [name, js] of [['VISUAL_CLIENT_JS', V.VISUAL_CLIENT_JS], ['VISUAL_CSS', V.VISUAL_CSS]]) {
+    assert.ok(!/<\/(head|body|html)>/i.test(js), `${name} contains a closing page tag`);
+  }
+});
+
 const skip = browserSkip();
 let server, base, browser;
 
@@ -70,7 +76,14 @@ window.show = function (code) {
   return b.querySelector('iframe');
 };
 </script></body></html>`;
-  server = createServer((req, res) => { res.setHeader('content-type', 'text/html'); res.end(html); });
+  // The same security headers the real server sends (WebServer.setSecurityHeaders): a panel's document inherits
+  // the page's CSP, so the sandbox has to be proven under it, not under a bare test server.
+  server = createServer((req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';");
+    res.end(html);
+  });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}/`;
   browser = await Browser.launch();

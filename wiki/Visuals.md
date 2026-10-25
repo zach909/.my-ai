@@ -31,3 +31,16 @@ The panel is an iframe with `sandbox="allow-scripts"` only: no page access, no c
 ## Limits
 
 The mesh keeps 200 characters of a prompt and 160 of each prompting skill, so an event is a name and a little data. The replies come from the mesh, which has not been taught to write panels yet; the framing skill (`visual-backend`) and the event loop are what is in place.
+
+## Apps (with your permission)
+
+Press **make app** on any panel, yours or one the AI wrote. It is two steps and both are yours:
+
+1. **Name it and review.** The app is saved in NeuroClaw (`~/.neuroclaw/visual-apps/`) and the card shows the *exact path and the exact text* of the one file that would be written on this computer. Nothing is on your computer yet.
+2. **Approve.** Only then is the file written: a `.desktop` entry in `~/.local/share/applications` (Linux), a `.webloc` in `~/Applications` (macOS), or a `.url` shortcut in the Start Menu's Programs folder (Windows). It opens `/visual-apps/<id>` on this NeuroClaw and does nothing else.
+
+The AI can propose an app (it is a visual in a reply) but cannot install one: there is no chat or tool path to the install routes, they are for the owner or an admin, and an install needs the approval the preview returned (one use, expires in 5 minutes). Cancel deletes the saved draft. **Remove it** takes out the launcher this wrote and leaves a file someone replaced alone.
+
+Installing has to be done from the computer NeuroClaw runs on, since the launcher is a file there. From a phone or another PC the app is still saved and opens at its page; on Android, iPhone and ChromeOS use "Add to home screen" / "Install app" on that page.
+
+An installed app is the panel at full width. What it reports goes to the AI like any panel's events, and a panel in the answer replaces the one on screen.
