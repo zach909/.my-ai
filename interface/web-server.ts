@@ -53,6 +53,7 @@ import { setNameGuard } from '../models && skills/core/points.js';
 import { isComputerAdministrator } from '../models && skills/core/computer-admin.js';
 import { handleAgentRoutes, isAgentRoute } from './agent-routes.js';
 import { agentAlive } from '../models && skills/core/agent-profile.js';
+import { sharedMindReader, tapOfEngine } from '../models && skills/core/mind-reader.js';
 import { armDecoy, armHoneypot, recordEvent, setEscapeHook, setFireHook, standing, watchDecoy, watchHoneypot } from '../models && skills/core/danger-protocol.js';
 import { ANONYMOUS, OWNER, dataDir, isOwnerOrAdmin, runAs, runAutonomously, setLearnPolicy, who } from '../models && skills/core/user-context.js';
 import { sharedToolGate } from '../models && skills/core/tool-safety.js';
@@ -1545,6 +1546,9 @@ export class WebServer {
     setNameGuard(name => nameBelongsToAnotherAccount(getAccounts(), name));
     // The alignment protocol: when it deletes the agent, everything the agent was doing on its own stops too.
     setFireHook(reason => this.onAgentRemoved(reason));
+    // The mind reader: a second model that reads which of the main network's neurons are firing. It is handed a read-only
+    // tap (neuron count, energy, group) and nothing that writes; the engine is fetched each time so a swapped one is followed.
+    sharedMindReader().attach(tapOfEngine(() => this.runner.getLLM().hyperEngine));
     // A sandbox breach is not something to find out about next time someone
     // happens to open Commons: push a real OS notification too, if the
     // notifications plugin is active (watchDecoy already logs loudly and
