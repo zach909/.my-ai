@@ -382,6 +382,37 @@ export class PluginRegistry {
     return typeof result === "string" ? result : JSON.stringify(result);
   }
 
+  /**
+   * Runs one named tool for a caller that is not a chat message (an installed visual app), through the same
+   * gate dispatch() uses: the danger protocol, the owner-only rule and the approval queue all apply, so a risky
+   * tool is held for a person and nothing here is a way around it. The caller named the tool, so the call is
+   * "pointed at" it and gets the full hold score.
+   *
+   * held: waiting for a person (or decided by the judge agent; the text says which). refused: stopped outright
+   * (no agent, sandbox, not the owner). declined: the tool had nothing to do for that request.
+   */
+  async runTool(pluginId: string, input: string): Promise<{ status: "ran" | "held" | "refused" | "declined" | "unavailable"; text: string }> {
+    const plugin = this.activePlugins.has(pluginId) ? this.plugins.get(pluginId) : undefined;
+    if (!plugin) return { status: "unavailable", text: `${pluginId} is not switched on on this computer.` };
+    let acts: boolean | undefined;
+    try { acts = (plugin as { wouldAct?(m: unknown): boolean }).wouldAct?.(input); } catch { acts = true; }  // fail closed, as dispatch() does
+    const HOLD = 4;
+    const verdict = this.gate?.checkAsync
+      ? await this.gate.checkAsync(pluginId, input, HOLD, acts)
+      : this.gate?.check(pluginId, input, HOLD, acts);
+    if (verdict && verdict.allow === false) {
+      this.lastHandledBy = null;
+      const v = verdict as { message: string; approvalId?: string };
+      return { status: v.approvalId ? "held" : "refused", text: v.message };
+    }
+    let result: unknown;
+    try { result = await plugin.onMessage?.(input); } catch (err) { return { status: "declined", text: `It failed: ${err instanceof Error ? err.message : String(err)}` }; }
+    if (result == null) return { status: "declined", text: "That tool had nothing to do for this request." };
+    this.firePluginNeurons(pluginId);
+    this.lastHandledBy = pluginId;
+    return { status: "ran", text: (typeof result === "string" ? result : JSON.stringify(result)).slice(0, 2000) };
+  }
+
   // Route an input to the most relevant active plugin, scoring every plugin's
   // declared capabilities rather than walking a hardcoded list.
   async dispatch(input: string, intent: string): Promise<string | null> {

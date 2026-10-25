@@ -210,6 +210,24 @@ export const VISUAL_CSS = `
   .nc-visual iframe { display: block; width: 100%; height: 120px; border: 0; background: transparent; transition: height 0.25s ease; }
   .nc-visual pre { margin: 0; padding: 10px 16px; max-height: 260px; overflow: auto; white-space: pre-wrap; border-top: 1px solid var(--border);
     font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .nc-visual-buttons { display: flex; gap: 6px; }
+  #nc-app-card { margin: 0 24px 8px; padding: 14px 18px; border: 1px solid var(--border); border-radius: 32px; max-height: 70vh; overflow: auto; position: relative; z-index: 1;
+    background: rgba(255, 240, 232, 0.08); backdrop-filter: blur(26px) saturate(1.5); font-size: 13px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 16px 36px rgba(0, 0, 0, 0.35), 0 0 28px rgba(255, 154, 132, 0.08); }
+  #nc-app-card p { margin: 6px 0; } #nc-app-card .nc-dim { opacity: 0.62; }
+  #nc-app-card input[type=text] { width: 100%; margin: 8px 0; font: inherit; color: var(--text); background: rgba(255, 240, 232, 0.07);
+    border: 1px solid var(--border); border-radius: 999px; padding: 8px 14px; outline: none; }
+  #nc-app-card input[type=text]:focus { border-color: rgba(255, 154, 132, 0.6); }
+  #nc-app-card button, #nc-app-card a { font: inherit; color: var(--text); background: rgba(255, 238, 230, 0.07); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 14px; cursor: pointer; text-decoration: none; transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s; }
+  #nc-app-card button:hover, #nc-app-card a:hover { background: rgba(255, 154, 132, 0.28); transform: translateY(-2px) scale(1.03); }
+  #nc-app-card button:active { transform: scale(0.95); }
+  #nc-app-card .primary { background: rgba(255, 154, 132, 0.16); border-color: rgba(255, 154, 132, 0.5); color: var(--primary-light); }
+  #nc-app-card .nc-bench-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; margin-top: 10px; }
+  #nc-app-card .nc-card-path, #nc-app-card .nc-card-pre { display: block; padding: 8px 14px; border-radius: 18px; background: rgba(14, 10, 12, 0.55); border: 1px solid var(--border);
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; white-space: pre-wrap; margin: 6px 0; }
+  #nc-app-card .nc-card-msg { color: #ff9aa8; min-height: 1.2em; }
+  @media (max-width: 520px) { #nc-app-card { margin: 0 16px 8px; } }
   #nc-visual-btn { padding: 12px 20px; min-height: 44px; }
   #nc-bench { margin: 0 24px 8px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 32px; max-height: 70vh; overflow: auto;
     background: rgba(255, 240, 232, 0.08); backdrop-filter: blur(26px) saturate(1.5);
@@ -247,7 +265,7 @@ var ncVisuals = (function () {
   var DATA_MAX = ${VISUAL_EVENT_DATA_MAX};
   var HEIGHT_MIN = 60, HEIGHT_MAX = 640;
   var NL = String.fromCharCode(10), FENCE = String.fromCharCode(96, 96, 96);
-  var frames = {}, seq = 0, busy = false, handler = null;
+  var frames = {}, seq = 0, busy = false, handler = null, area = null;
 
   function plain(text) {
     var parts = split(text);
@@ -273,7 +291,14 @@ var ncVisuals = (function () {
       + 'var a=t.getAttribute("data-ai");if(a)d.ask=a.slice(0,120);window.ai.send(name,d)},0)}'
       + 'addEventListener("click",function(e){auto("click",e)},true);'
       + 'addEventListener("change",function(e){auto("change",e)},true);'
-      + 'addEventListener("message",function(e){var m=e.data;if(!m||m.nc!=="visual-host"||m.type!=="busy")return;'
+      // ai.os(tool, request) asks this computer to do something. It works only inside an installed app the owner
+      // has allowed that tool for; in a chat panel it rejects. The answer is {status, text}: status "held" means
+      // a risky tool is waiting for the owner's OK in Settings and nothing has been done.
+      + 'var osq={},rid=0;window.ai.os=function(t,r){return new Promise(function(ok,no){var k=++rid;osq[k]={ok:ok,no:no};'
+      + 'post({type:"os",rid:k,tool:String(t),request:String(r)})})};'
+      + 'addEventListener("message",function(e){var m=e.data;if(!m||m.nc!=="visual-host")return;'
+      + 'if(m.type==="os-result"){var q=osq[m.rid];if(!q)return;delete osq[m.rid];if(m.ok)q.ok(m.value);else q.no(new Error(String(m.value)));return}'
+      + 'if(m.type!=="busy")return;'
       + 'window.ai.busy=!!m.value;document.documentElement.toggleAttribute("data-busy",!!m.value);'
       + 'dispatchEvent(new CustomEvent("ai:busy",{detail:!!m.value}))});'
       + 'var last=0;function fit(){var h=Math.ceil(document.documentElement.getBoundingClientRect().height);'
@@ -284,7 +309,9 @@ var ncVisuals = (function () {
 
   function srcdoc(id, code) {
     return '<!doctype html><html><head><meta charset="utf-8">' + META + '<style>' + BASE + '</style><script>'
-      + bridge(id) + '</' + 'script></head><body>' + code + '</body></html>';
+      // The closing head, body and html tags are split here so this script never holds one whole: the server
+      // inserts its own tags at the first one it finds in a page, and must not find one inside a string.
+      + bridge(id) + '</' + 'script></' + 'head><body>' + code + '</' + 'body></' + 'html>';
   }
 
   function tell(entry, value) {
@@ -301,6 +328,18 @@ var ncVisuals = (function () {
       if (h > 0) entry.el.style.height = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, h)) + 'px';
       return;
     }
+    if (m.type === 'os') {
+      var rid = Number(m.rid);
+      var back = function (ok, value) {
+        try { entry.el.contentWindow.postMessage({ nc: 'visual-host', type: 'os-result', rid: rid, ok: ok, value: value }, '*'); } catch (x) { /* frame is gone */ }
+      };
+      if (!entry.os) return back(false, 'Only an installed app the owner has allowed can ask for that; a panel in the chat cannot.');
+      if (typeof m.tool !== 'string' || !/^[a-z0-9-]{1,48}$/.test(m.tool) || typeof m.request !== 'string' || !m.request.trim() || m.request.length > 600) return back(false, 'That request is not valid.');
+      if (entry.osBusy) return back(false, 'One request at a time.');
+      entry.osBusy = true;
+      entry.os(m.tool, m.request).then(function (v) { back(true, v); }, function (e) { back(false, e && e.message ? e.message : 'Refused.'); }).then(function () { entry.osBusy = false; });
+      return;
+    }
     if (m.type !== 'event' || typeof m.name !== 'string' || !NAME.test(m.name)) return;
     var json;
     try { json = JSON.stringify(m.data === undefined ? null : m.data); } catch (x) { return; }
@@ -311,8 +350,149 @@ var ncVisuals = (function () {
     handler(m.name, data);
   });
 
+  function call(method, url, body) {
+    return fetch(url, { method: method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { if (!r.ok) throw new Error(j.error || 'Something went wrong.'); return j; }); });
+  }
+
+  /**
+   * Turn a panel into an app, in two steps that are both the person's: review exactly what would be written on
+   * this computer, then approve it. Nothing is written until the second click, and Cancel leaves nothing behind.
+   */
+  function offerApp(code) {
+    if (!area) return;
+    var old = document.getElementById('nc-app-card');
+    if (old) old.remove();
+    var card = document.createElement('div');
+    card.id = 'nc-app-card';
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-label', 'Make this an app');
+    area.parentNode.insertBefore(card, area);
+    var saved = null;
+    function row(tag, text, cls) { var e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; card.appendChild(e); return e; }
+    function btn(text, fn, primary) { var b = document.createElement('button'); b.type = 'button'; b.textContent = text; if (primary) b.className = 'primary'; b.onclick = fn; return b; }
+    function actions() { var a = document.createElement('div'); a.className = 'nc-bench-actions'; card.appendChild(a); return a; }
+    function close(forget) {
+      if (forget && saved) call('DELETE', '/api/visual-apps/' + saved.id).catch(function () { /* nothing was installed */ });
+      card.remove();
+    }
+    function ask() {
+      card.textContent = '';
+      row('strong', 'Make this an app');
+      row('p', 'Pick a name. Nothing is put on your computer until you have seen what it would be and said yes.', 'nc-dim');
+      var name = document.createElement('input');
+      name.type = 'text'; name.maxLength = 40; name.placeholder = 'App name'; name.setAttribute('aria-label', 'App name');
+      card.appendChild(name);
+      var msg = row('p', '', 'nc-card-msg');
+      var a = actions();
+      a.appendChild(btn('Cancel', function () { close(true); }));
+      a.appendChild(btn('Review', function () {
+        msg.textContent = '';
+        call('POST', '/api/visual-apps', { name: name.value, code: code })
+          .then(function (j) { saved = j.app; return call('POST', '/api/visual-apps/' + saved.id + '/preview', {}); })
+          .then(review)
+          .catch(function (e) { msg.textContent = e.message; });
+      }, true));
+      name.focus();
+    }
+    function review(j) {
+      card.textContent = '';
+      row('strong', saved.name);
+      if (j.unavailable) {
+        row('p', j.unavailable);
+        row('p', 'It is saved in NeuroClaw and opens at ' + location.origin + '/visual-apps/' + saved.id, 'nc-dim');
+        var u = actions();
+        u.appendChild(btn('Remove', function () { close(true); }));
+        u.appendChild(btn('Keep it here', function () { close(false); }, true));
+        return;
+      }
+      row('p', 'Approving writes one file on this computer, at:');
+      row('code', j.plan.path, 'nc-card-path');
+      row('p', 'with this content:', 'nc-dim');
+      row('pre', j.plan.content, 'nc-card-pre');
+      row('p', 'It opens ' + j.plan.url + ' and does nothing else. You can remove it here at any time.', 'nc-dim');
+      var msg = row('p', '', 'nc-card-msg');
+      var a = actions();
+      a.appendChild(btn('Cancel', function () { close(true); }));
+      a.appendChild(btn('Keep it here only', function () { close(false); }));
+      a.appendChild(btn('Approve and install', function () {
+        call('POST', '/api/visual-apps/' + saved.id + '/install', { approval: j.approval })
+          .then(function () {
+            card.textContent = '';
+            row('strong', saved.name + ' is installed');
+            row('p', 'Find it with your other apps, or open it now.');
+            var done = actions();
+            var link = document.createElement('a'); link.href = '/visual-apps/' + saved.id; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open ' + saved.name;
+            done.appendChild(link);
+            done.appendChild(btn('Let it change this computer...', function () { offerOs(saved); }));
+            done.appendChild(btn('Remove it', function () { call('DELETE', '/api/visual-apps/' + saved.id).then(function () { close(false); }).catch(function (e) { msg.textContent = e.message; }); }));
+            done.appendChild(btn('Done', function () { close(false); }, true));
+          })
+          .catch(function (e) { msg.textContent = e.message; });
+      }, true));
+    }
+    ask();
+  }
+
+  /**
+   * Let an installed app ask this computer to do things. Same two steps as installing: choose, review exactly
+   * what it would be allowed to ask for, approve. Even then each request goes through the tool gate, so the
+   * risky ones still wait for the owner, one call at a time.
+   */
+  function offerOs(app) {
+    if (!area) return;
+    var old = document.getElementById('nc-app-card');
+    if (old) old.remove();
+    var card = document.createElement('div');
+    card.id = 'nc-app-card';
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-label', 'What ' + app.name + ' may ask this computer to do');
+    area.parentNode.insertBefore(card, area);
+    function row(tag, text, cls) { var e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; card.appendChild(e); return e; }
+    function btn(text, fn, primary) { var b = document.createElement('button'); b.type = 'button'; b.textContent = text; if (primary) b.className = 'primary'; b.onclick = fn; return b; }
+    function actions() { var a = document.createElement('div'); a.className = 'nc-bench-actions'; card.appendChild(a); return a; }
+    row('strong', 'What may ' + app.name + ' ask this computer to do?');
+    row('p', 'Nothing by default. Pick what it may ask for. Anything risky still waits for your OK in Settings each time, and your access settings still apply.', 'nc-dim');
+    var boxes = [];
+    var list = document.createElement('div');
+    card.appendChild(list);
+    var msg = row('p', '', 'nc-card-msg');
+    var a = actions();
+    a.appendChild(btn('Cancel', function () { card.remove(); }));
+    var go = btn('Review', function () {
+      var tools = boxes.filter(function (b) { return b.box.checked; }).map(function (b) { return b.id; });
+      msg.textContent = '';
+      call('POST', '/api/visual-apps/' + app.id + '/os-preview', { tools: tools }).then(function (j) { review(tools, j); }).catch(function (e) { msg.textContent = e.message; });
+    }, true);
+    a.appendChild(go);
+    call('GET', '/api/visual-apps/os-tools').then(function (j) {
+      j.tools.forEach(function (t) {
+        var label = document.createElement('label');
+        label.style.cssText = 'display:flex;gap:10px;align-items:flex-start;margin:6px 0';
+        var box = document.createElement('input'); box.type = 'checkbox';
+        var text = document.createElement('span'); text.textContent = t.label + ': ' + t.why;
+        label.appendChild(box); label.appendChild(text); list.appendChild(label);
+        boxes.push({ id: t.id, box: box });
+      });
+    }).catch(function (e) { msg.textContent = e.message; });
+    function review(tools, j) {
+      card.textContent = '';
+      row('strong', app.name + ' would be allowed to ask for:');
+      j.tools.forEach(function (t) { row('p', t.label + ': ' + t.why); });
+      row('p', 'It cannot do anything by itself: each request is shown on its page, goes through the same safety checks as the AI, and the risky ones wait for you.', 'nc-dim');
+      var m2 = row('p', '', 'nc-card-msg');
+      var b = actions();
+      b.appendChild(btn('Cancel', function () { card.remove(); }));
+      b.appendChild(btn('Allow', function () {
+        call('POST', '/api/visual-apps/' + app.id + '/os-grant', { tools: tools, approval: j.approval })
+          .then(function () { card.textContent = ''; row('strong', app.name + ' may now ask for ' + tools.length + (tools.length === 1 ? ' thing' : ' things') + '.'); var d = actions(); d.appendChild(btn('Done', function () { card.remove(); }, true)); })
+          .catch(function (e) { m2.textContent = e.message; });
+      }, true));
+    }
+  }
+
   /** One panel: a glass frame, a "code" switch that shows the source, and the sandboxed iframe. */
-  function mount(code, onEvent) {
+  function mount(code, onEvent, os) {
     Object.keys(frames).forEach(function (k) { if (!frames[k].el.isConnected) delete frames[k]; });
     var id = 'v' + (++seq);
     var wrap = document.createElement('div');
@@ -325,8 +505,20 @@ var ncVisuals = (function () {
     toggle.type = 'button';
     toggle.textContent = 'code';
     toggle.setAttribute('aria-expanded', 'false');
+    var buttons = document.createElement('span');
+    buttons.className = 'nc-visual-buttons';
+    // Only where there is a workbench to host the card (the chat page); the app's own page has no need for it.
+    if (area) {
+      var app = document.createElement('button');
+      app.type = 'button';
+      app.textContent = 'make app';
+      app.title = 'Keep this as an app, and put it on this computer if you say so';
+      app.onclick = function () { offerApp(code); };
+      buttons.appendChild(app);
+    }
+    buttons.appendChild(toggle);
     bar.appendChild(label);
-    bar.appendChild(toggle);
+    bar.appendChild(buttons);
     var el = document.createElement('iframe');
     el.setAttribute('sandbox', 'allow-scripts');
     el.setAttribute('referrerpolicy', 'no-referrer');
@@ -342,7 +534,7 @@ var ncVisuals = (function () {
       wrap.appendChild(pre);
       toggle.setAttribute('aria-expanded', 'true');
     };
-    frames[id] = { el: el, onEvent: onEvent || null };
+    frames[id] = { el: el, onEvent: onEvent || null, os: os || null, osBusy: false };
     // Read busy when the frame has loaded, not now: a panel drawn mid-turn may finish loading after the turn ends.
     if (!onEvent) el.addEventListener('load', function () { if (busy) tell(frames[id], true); });
     return wrap;
@@ -371,7 +563,7 @@ var ncVisuals = (function () {
   /** The workbench: write a visual, watch it run, send it to the chat. */
   function install(o) {
     handler = o.onEvent;
-    var area = o.input.parentNode;
+    area = o.input.parentNode;
     var open = document.createElement('button');
     open.type = 'button';
     open.id = 'nc-visual-btn';
@@ -430,6 +622,68 @@ var ncVisuals = (function () {
     };
   }
 
-  return { split: split, plain: plain, attach: attach, setBusy: setBusy, enabled: enabled, install: install, srcdoc: srcdoc };
+  return { split: split, plain: plain, attach: attach, mount: mount, onEvent: function (fn) { handler = fn; }, setBusy: setBusy, enabled: enabled, install: install, srcdoc: srcdoc };
 })();
 `;
+
+const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * The page a saved app opens at (/visual-apps/<id>): the app full width, on the same look as everything else
+ * (the server adds the ring and background). What the app reports goes to the AI like any panel's events,
+ * and a visual in the answer replaces the one on screen: the AI is the back end here too.
+ */
+export function visualAppPage(app: { id: string; name: string; code: string }): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(app.name)}</title>
+<style>
+  :root { --primary: #ff9a84; --primary-light: #ffc4b4; --bg-dark: #110c0e; --border: rgba(255, 228, 218, 0.2); --text: #f8ede9; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg-dark); color: var(--text);
+    font-family: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+  main { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 28px 20px; }
+  h1 { font-size: 18px; font-weight: 500; margin: 0 0 16px; }
+  #app .nc-visual { width: 100%; margin-top: 0; }
+  #say { margin-top: 14px; min-height: 1.4em; opacity: 0.85; overflow-wrap: anywhere; white-space: pre-wrap; }
+  #say.bad { color: #ff9aa8; }
+  #oslog { margin: 14px 0 0; padding: 12px 18px; list-style: none; border: 1px solid var(--border); border-radius: 24px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: rgba(255, 240, 232, 0.05); }
+  #oslog .nc-dim { opacity: 0.62; }
+${VISUAL_CSS}
+</style></head><body>
+<main><h1>${escapeHtml(app.name)}</h1><div id="app"></div><div id="say" role="status" aria-live="polite"></div><ul id="oslog" hidden aria-label="What this app asked this computer to do"></ul></main>
+<script>${VISUAL_CLIENT_JS}</script>
+<script>
+(function () {
+  var host = document.getElementById('app'), say = document.getElementById('say');
+  var NL = String.fromCharCode(10);
+  var logEl = document.getElementById('oslog');
+  function note(text, cls) { var li = document.createElement('li'); li.textContent = text; if (cls) li.className = cls; logEl.appendChild(li); logEl.hidden = false; while (logEl.children.length > 20) logEl.firstChild.remove(); }
+  // What the app asks this computer to do is shown here, every time, whatever the answer.
+  function os(tool, request) {
+    note('Asked ' + tool + ': ' + request);
+    return fetch('/api/visual-apps/' + ${embed(app.id)} + '/os', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool: tool, request: request }) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Refused.'); return j; }); })
+      .then(function (j) { note('  ' + j.status + ': ' + j.text, j.status === 'ran' ? '' : 'nc-dim'); return { status: j.status, text: j.text }; },
+            function (e) { note('  refused: ' + e.message, 'nc-dim'); throw e; });
+  }
+  function show(code) { host.textContent = ''; host.appendChild(ncVisuals.mount(code, undefined, os)); }
+  show(${embed(app.code)});
+  ncVisuals.onEvent(function (name, data) {
+    ncVisuals.setBusy(true);
+    say.className = ''; say.textContent = '...';
+    fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: name, visuals: true, visualEvent: { name: name, data: data } }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.response) throw new Error(j.error || 'No answer.');
+        var parts = ncVisuals.split(j.response), prose = [];
+        parts.forEach(function (p) { if (p.kind === 'visual') show(p.text); else prose.push(p.text); });
+        say.textContent = prose.join(NL);
+      })
+      .catch(function (e) { say.className = 'bad'; say.textContent = e.message; })
+      .then(function () { ncVisuals.setBusy(false); });
+  });
+})();
+</script></body></html>`;
+}

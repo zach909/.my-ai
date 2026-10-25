@@ -51,6 +51,12 @@ test('the back-end framing fits the 160 characters the doorway keeps, and is sen
   for (const body of [null, {}, { visuals: false }, { visuals: 'yes' }]) assert.deepEqual(V.visualSkillsFor(body), []);
 });
 
+test('the page scripts hold no </head>, </body> or </html>: the server inserts its tags at the first one it finds', () => {
+  for (const [name, js] of [['VISUAL_CLIENT_JS', V.VISUAL_CLIENT_JS], ['VISUAL_CSS', V.VISUAL_CSS]]) {
+    assert.ok(!/<\/(head|body|html)>/i.test(js), `${name} contains a closing page tag`);
+  }
+});
+
 const skip = browserSkip();
 let server, base, browser;
 
@@ -70,7 +76,14 @@ window.show = function (code) {
   return b.querySelector('iframe');
 };
 </script></body></html>`;
-  server = createServer((req, res) => { res.setHeader('content-type', 'text/html'); res.end(html); });
+  // The same security headers the real server sends (WebServer.setSecurityHeaders): a panel's document inherits
+  // the page's CSP, so the sandbox has to be proven under it, not under a bare test server.
+  server = createServer((req, res) => {
+    res.setHeader('content-type', 'text/html');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';");
+    res.end(html);
+  });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   base = `http://127.0.0.1:${server.address().port}/`;
   browser = await Browser.launch();
@@ -153,5 +166,35 @@ test('a busy page drops a panel\'s events and tells the panel; a panel that lies
     await sleep(200);
     await clickIn(pg, 0, 100, 40);
     await pg.waitFor('window.events.length === 1');
+  } finally { await pg.close(); }
+});
+
+test('ai.os: a panel in the chat cannot ask the computer for anything; an installed app\'s request goes through its handler, one at a time', { skip }, async () => {
+  const pg = await open();
+  try {
+    // In the chat there is no handler, so the request is refused where it is made.
+    await pg.eval(`show('<script>ai.os("terminal", "run ls").then(function (v) { ai.send("os", { ok: true }); }, function (e) { ai.send("os", { ok: false, why: e.message }); });<\\/script>')`);
+    await pg.waitFor('window.events.some(function (e) { return e[0] === "os"; })', 8000);
+    const [, refused] = await pg.eval('window.events.find(function (e) { return e[0] === "os"; })');
+    assert.equal(refused.ok, false);
+    assert.match(refused.why, /Only an installed app/);
+
+    // With a handler (what an installed app's page supplies): valid requests arrive, invalid ones do not, and a second waits.
+    await pg.eval(`window.osCalls = [];
+      window.mountApp = function (code) {
+        var host = document.createElement('div'); document.body.appendChild(host);
+        host.appendChild(ncVisuals.mount(code, undefined, function (tool, request) { window.osCalls.push([tool, request]); return new Promise(function (r) { window.finish = function () { r({ status: 'ran', text: 'done' }); }; }); }));
+      };
+      mountApp('<script>var out = [];'
+        + 'ai.os("file-system", "list /tmp").then(function (v) { out.push(v.text); });'
+        + 'ai.os("terminal", "second").catch(function (e) { out.push(e.message); });'
+        + 'ai.os("Bad Tool!", "x").catch(function (e) { out.push(e.message); });'
+        + 'setTimeout(function () { ai.send("out", out); }, 700);<\\/script>')`);
+    await sleep(300);
+    assert.deepEqual(await pg.eval('window.osCalls'), [['file-system', 'list /tmp']], 'more than the first valid request got through at once');
+    await pg.eval('window.finish()');
+    await pg.waitFor('window.events.some(function (e) { return e[0] === "out"; })', 8000);
+    const [, out] = await pg.eval('window.events.find(function (e) { return e[0] === "out"; })');
+    assert.deepEqual(out.sort(), ['One request at a time.', 'That request is not valid.', 'done'].sort());
   } finally { await pg.close(); }
 });
