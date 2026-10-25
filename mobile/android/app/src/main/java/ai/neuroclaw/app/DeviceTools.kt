@@ -467,7 +467,7 @@ class DeviceTools(private val context: Context) {
             "notification" -> Settings.ACTION_APP_NOTIFICATION_SETTINGS
             "notification_listener" -> Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
             "modify_settings" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_WRITE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-            "picture_in_picture" -> if (Build.VERSION.SDK_INT >= 26) Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "picture_in_picture" -> if (Build.VERSION.SDK_INT >= 26) "android.settings.PICTURE_IN_PICTURE_SETTINGS" else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "full_screen_intent" -> if (Build.VERSION.SDK_INT >= 34) "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT" else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
             "usage" -> Settings.ACTION_USAGE_ACCESS_SETTINGS
