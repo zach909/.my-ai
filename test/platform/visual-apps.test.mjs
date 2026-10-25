@@ -93,6 +93,34 @@ test('removing an app takes out the launcher it wrote, and leaves a file someone
   } finally { removeDir(dir); removeDir(home); }
 });
 
+test('an app can be allowed only the listed tools, only with an approval a preview returned, once; nothing is allowed by default', () => {
+  const dir = tempDir('nc-apps-');
+  const store = new A.VisualAppStore(dir);
+  try {
+    const app = store.save('Fixer', '<p>x</p>');
+    assert.equal(store.osAllows(app.id, 'terminal'), false, 'a new app can already ask for a tool');
+    // Never offered to an app, however it is asked: things that speak for you, look at you, or change the agent.
+    for (const tool of ['computer-access', 'email', 'camera', 'plugin-maker', 'store', 'self-heal', 'nope', 7]) {
+      assert.throws(() => store.previewOs(app.id, [tool]), /cannot be given/, String(tool));
+    }
+    assert.throws(() => store.previewOs(app.id, []), /at least one/);
+    assert.throws(() => store.grantOs(app.id, ['terminal'], undefined), /Not approved/);
+
+    const shown = store.previewOs(app.id, ['terminal', 'terminal', 'radios']);
+    assert.deepEqual(shown.tools.map((t) => t.id), ['terminal', 'radios']);
+    assert.equal(store.osAllows(app.id, 'terminal'), false, 'a preview granted');
+    assert.throws(() => store.grantOs(app.id, ['terminal', 'radios', 'desktop'], shown.approval), /Not approved/, 'approval carried to a bigger list');
+    const again = store.previewOs(app.id, ['terminal']);
+    const granted = store.grantOs(app.id, ['terminal'], again.approval);
+    assert.deepEqual(granted.os.tools, ['terminal']);
+    assert.equal(store.osAllows(app.id, 'terminal'), true);
+    assert.equal(store.osAllows(app.id, 'radios'), false, 'granted more than was approved');
+    assert.throws(() => store.grantOs(app.id, ['terminal'], again.approval), /Not approved/, 'one approval, one grant');
+    store.revokeOs(app.id);
+    assert.equal(store.osAllows(app.id, 'terminal'), false);
+  } finally { removeDir(dir); }
+});
+
 const skip = browserSkip();
 let srv, home, apps, browser;
 before(async () => {
@@ -135,6 +163,17 @@ test('on the real server: save, preview, approve, open the page, remove', async 
   assert.ok(!existsSync(launcher));
 });
 
+
+/** Press "make app" on the first panel. The bubble springs in, so a pointer click can land on a moving target: try again until the card is there. */
+async function openCard(pg) {
+  for (let i = 0; i < 6; i++) {
+    await sleep(500);
+    try { await pg.click('.nc-visual-bar button[title^="Keep this"]'); } catch { /* still moving */ }
+    try { await pg.waitFor(`document.querySelector('#nc-app-card input')`, 1500); return; } catch { /* not open yet */ }
+  }
+  throw new Error('the make-app card did not open');
+}
+
 test('in the chat page: "make app" shows the exact file first, writes nothing until approved, and Cancel leaves nothing behind', { skip }, async () => {
   const launcher = path.join(home, '.local', 'share', 'applications', 'neuroclaw-clicker.desktop');
   const pg = await browser.newPage();
@@ -146,7 +185,7 @@ test('in the chat page: "make app" shows the exact file first, writes nothing un
     await pg.waitFor(`document.querySelector('.nc-visual-bar button[title^="Keep this"]')`);
 
     // Cancel after the review: the saved draft is deleted and no launcher was written.
-    await pg.click('.nc-visual-bar button[title^="Keep this"]');
+    await openCard(pg);
     await pg.type('#nc-app-card input', 'Clicker');
     assert.ok(await clickText('Review'));
     await pg.waitFor(`document.querySelector('#nc-app-card .nc-card-path')`);
@@ -154,11 +193,12 @@ test('in the chat page: "make app" shows the exact file first, writes nothing un
     assert.match(await pg.eval(`document.querySelector('#nc-app-card .nc-card-pre').textContent`), /\[Desktop Entry\]/);
     assert.ok(!existsSync(launcher), 'the card wrote the launcher before approval');
     assert.ok(await clickText('Cancel'));
-    await sleep(400);
-    assert.equal((await api(srv.url, '/api/visual-apps')).json.apps.length, 0, 'Cancel left a saved app behind');
+    let left = -1;
+    for (let i = 0; i < 50 && left !== 0; i++) { await sleep(100); left = (await api(srv.url, '/api/visual-apps')).json.apps.length; }
+    assert.equal(left, 0, 'Cancel left a saved app behind');
 
     // Approve: now it is written, with what was shown.
-    await pg.click('.nc-visual-bar button[title^="Keep this"]');
+    await openCard(pg);
     await pg.type('#nc-app-card input', 'Clicker');
     assert.ok(await clickText('Review'));
     await pg.waitFor(`document.querySelector('#nc-app-card .nc-card-pre')`);
@@ -170,4 +210,92 @@ test('in the chat page: "make app" shows the exact file first, writes nothing un
     await api(srv.url, '/api/visual-apps/clicker', { method: 'DELETE' });
     assert.ok(!existsSync(launcher));
   } finally { await pg.close(); }
+});
+
+test('on the real server: an app asks the computer for something only if allowed, and a risky tool still waits for the owner', async () => {
+  // Inside the folder the server runs in: the file tool has its own sandbox and would refuse anywhere else.
+  const work = srv.cwd;
+  writeFileSync(path.join(work, 'marker-file.txt'), 'hi');
+  const call = (id, tool, request) => api(srv.url, `/api/visual-apps/${id}/os`, { method: 'POST', body: { tool, request } });
+  try {
+    assert.ok(!(await api(srv.url, '/api/visual-apps/os-tools')).json.tools.some((t) => t.id === 'email'));
+    await api(srv.url, '/api/visual-apps', { method: 'POST', body: { name: 'Tidy', code: '<p>x</p>' } });
+
+    const none = await call('tidy', 'file-system', `list ${work}`);
+    assert.equal(none.status, 403, 'an app with no grant asked the computer');
+
+    const bad = await api(srv.url, '/api/visual-apps/tidy/os-preview', { method: 'POST', body: { tools: ['email'] } });
+    assert.equal(bad.status, 400);
+    const blind = await api(srv.url, '/api/visual-apps/tidy/os-grant', { method: 'POST', body: { tools: ['file-system'], approval: 'x' } });
+    assert.equal(blind.status, 400);
+    assert.equal((await call('tidy', 'file-system', `list ${work}`)).status, 403);
+
+    const shown = await api(srv.url, '/api/visual-apps/tidy/os-preview', { method: 'POST', body: { tools: ['file-system'] } });
+    assert.equal(shown.status, 200);
+    const ok = await api(srv.url, '/api/visual-apps/tidy/os-grant', { method: 'POST', body: { tools: ['file-system'], approval: shown.json.approval } });
+    assert.deepEqual(ok.json.app.os.tools, ['file-system']);
+
+    // Allowed for files only: another tool is still refused, and so is a request that is too long.
+    assert.equal((await call('tidy', 'terminal', 'run ls')).status, 403);
+    assert.equal((await call('tidy', 'file-system', 'x'.repeat(601))).status, 400);
+
+    // Files is a risky tool, so even an allowed app's request is held for the owner and nothing has run.
+    const held = await call('tidy', 'file-system', `list ${work}`);
+    assert.equal(held.status, 200);
+    assert.equal(held.json.status, 'held', JSON.stringify(held.json));
+    assert.match(held.json.text, /Waiting for your permission/);
+    assert.ok(!held.json.text.includes('marker-file.txt'), 'the tool ran before anyone approved it');
+
+    // The owner approves it in Settings, once; only then does it run.
+    const id = held.json.text.match(/request ([a-f0-9]{10})/)[1];
+    const done = await api(srv.url, `/api/safety/approvals/${id}/approve`, { method: 'POST', body: {} });
+    assert.equal(done.json.approval.status, 'approved');
+    assert.match(done.json.approval.result, /marker-file\.txt/);
+    const twice = await api(srv.url, `/api/safety/approvals/${id}/approve`, { method: 'POST', body: {} });
+    assert.equal(twice.status, 409, 'an approval ran twice');
+
+    // Taking the grant away ends it.
+    await api(srv.url, '/api/visual-apps/tidy/os-revoke', { method: 'POST', body: {} });
+    assert.equal((await call('tidy', 'file-system', `list ${work}`)).status, 403);
+  } finally { await api(srv.url, '/api/visual-apps/tidy', { method: 'DELETE' }); }
+});
+
+test('in the browser: the grant card lists what an app may be given, and an installed app\'s page shows every request it makes and what became of it', { skip }, async () => {
+  const pg = await browser.newPage();
+  const clickText = (text) => pg.eval(`(() => { const b = [...document.querySelectorAll('#nc-app-card button')].find((x) => x.textContent === ${JSON.stringify(text)}); if (!b) return false; b.click(); return true; })()`);
+  try {
+    await pg.emulate({ width: 1000, height: 900 });
+    await pg.goto(srv.url + '/');
+    await pg.eval(`addMessage('ai', String.fromCharCode(96,96,96) + 'visual\\n<p>hi</p>\\n' + String.fromCharCode(96,96,96), '12:00')`);
+    await pg.waitFor(`document.querySelector('.nc-visual-bar button[title^="Keep this"]')`);
+    await openCard(pg);
+    await pg.type('#nc-app-card input', 'Looker');
+    await clickText('Review');
+    await pg.waitFor(`document.querySelector('#nc-app-card .nc-card-pre')`);
+    await clickText('Approve and install');
+    await pg.waitFor(`[...document.querySelectorAll('#nc-app-card button')].some((b) => b.textContent.startsWith('Let it change'))`);
+    await clickText('Let it change this computer...');
+    await pg.waitFor(`document.querySelectorAll('#nc-app-card input[type=checkbox]').length > 0`);
+    const labels = await pg.eval(`[...document.querySelectorAll('#nc-app-card label')].map((l) => l.textContent)`);
+    assert.ok(labels.some((l) => l.startsWith('Terminal')) && !labels.some((l) => /mail|camera|Store/i.test(l)), labels.join(' | '));
+    // Nothing is allowed until Allow is pressed.
+    await pg.eval(`document.querySelectorAll('#nc-app-card input[type=checkbox]')[1].click()`); // Files
+    await clickText('Review');
+    await pg.waitFor(`[...document.querySelectorAll('#nc-app-card button')].some((b) => b.textContent === 'Allow')`);
+    assert.equal(await pg.eval(`fetch('/api/visual-apps').then((r) => r.json()).then((j) => j.apps[0].os || null)`), null, 'allowed before Allow was pressed');
+    await clickText('Allow');
+    await pg.waitFor(`document.querySelector('#nc-app-card strong') && document.querySelector('#nc-app-card strong').textContent.includes('may now ask')`);
+
+    // The app's own page: it asks for a file listing; the page shows the request and that it is waiting for the owner.
+    const code = `<script>ai.os("file-system", "list ${srv.cwd.replaceAll('\\', '/')}").then(function () {}, function () {});<\/script>`;
+    await api(srv.url, '/api/visual-apps/looker', { method: 'DELETE' });
+    await api(srv.url, '/api/visual-apps', { method: 'POST', body: { name: 'Looker', code } });
+    const shown = await api(srv.url, '/api/visual-apps/looker/os-preview', { method: 'POST', body: { tools: ['file-system'] } });
+    await api(srv.url, '/api/visual-apps/looker/os-grant', { method: 'POST', body: { tools: ['file-system'], approval: shown.json.approval } });
+    await pg.goto(srv.url + '/visual-apps/looker');
+    await pg.waitFor(`document.querySelectorAll('#oslog li').length >= 2`, 15000);
+    const lines = await pg.eval(`[...document.querySelectorAll('#oslog li')].map((l) => l.textContent)`);
+    assert.match(lines[0], /^Asked file-system: list /);
+    assert.match(lines[1], /^\s+held: .*Waiting for your permission/);
+  } finally { await api(srv.url, '/api/visual-apps/looker', { method: 'DELETE' }); await pg.close(); }
 });

@@ -33,7 +33,7 @@ import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AVATAR_HTML } from './avatar.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute, isPwaRoute } from './ambient.js';
 import { VISUAL_CLIENT_JS, VISUAL_CSS, parseVisualEvent, plainText, visualAppPage, visualEventMessage, visualSkillsFor } from './visuals.js';
-import { VisualAppError, VisualAppStore, isUnavailable } from '../models && skills/core/visual-apps.js';
+import { OS_REQUEST_MAX, OS_TOOLS, VisualAppError, VisualAppStore, isUnavailable } from '../models && skills/core/visual-apps.js';
 import { configFile } from './platform/app-paths.js';
 import { handlePlatformRoutes, isPlatformRoute } from './platform/routes.js';
 import { SETTINGS_PAGE } from './platform/settings-page.js';
@@ -2725,7 +2725,11 @@ export class WebServer {
       this.sendJson(res, { apps: this.visualApps.list().map(a => ({ id: a.id, name: a.name, createdAt: a.createdAt, launcher: a.launcher ?? null })) });
       return;
     }
-    const visualAppMatch = pathname.match(/^\/api\/visual-apps(?:\/([a-z0-9-]{1,48})(?:\/(preview|install))?)?$/);
+    if (pathname === '/api/visual-apps/os-tools' && method === 'GET') {
+      this.sendJson(res, { tools: OS_TOOLS });
+      return;
+    }
+    const visualAppMatch = pathname.match(/^\/api\/visual-apps(?:\/([a-z0-9-]{1,48})(?:\/(preview|install|os-preview|os-grant|os-revoke|os))?)?$/);
     if (visualAppMatch && (method === 'POST' || method === 'DELETE')) {
       if (!isOwnerOrAdmin()) {
         this.sendJson(res, { error: 'Only the owner or an admin may make or install apps.' }, 403);
@@ -2734,7 +2738,7 @@ export class WebServer {
       const [, id, action] = visualAppMatch;
       // A launcher is a file on the computer this server runs on, so it is only written, or removed, when the
       // request comes from that computer. From anywhere else the app is still saved and opens at its page.
-      const needsThisMachine = action === 'preview' || action === 'install' || (method === 'DELETE' && !!id && !!this.visualApps.get(id)?.launcher);
+      const needsThisMachine = !!action || (method === 'DELETE' && !!id && !!this.visualApps.get(id)?.launcher);
       if (needsThisMachine && !this.isFromThisMachine(req)) {
         this.sendJson(res, { error: 'Putting an app on a computer has to be done from that computer. Open this page there.' }, 403);
         return;
@@ -2754,6 +2758,40 @@ export class WebServer {
           const body = await this.parseBody(req) as { approval?: unknown } | null;
           const app = this.visualApps.install(id, body?.approval, baseUrl);
           this.sendJson(res, { app: { id: app.id, name: app.name, launcher: app.launcher ?? null } });
+        } else if (id && action === 'os-preview' && method === 'POST') {
+          const body = await this.parseBody(req) as { tools?: unknown } | null;
+          this.sendJson(res, this.visualApps.previewOs(id, body?.tools));
+        } else if (id && action === 'os-grant' && method === 'POST') {
+          const body = await this.parseBody(req) as { tools?: unknown; approval?: unknown } | null;
+          const app = this.visualApps.grantOs(id, body?.tools, body?.approval);
+          this.sendJson(res, { app: { id: app.id, name: app.name, os: app.os ?? null } });
+        } else if (id && action === 'os-revoke' && method === 'POST') {
+          await this.parseBody(req).catch(() => null);
+          const app = this.visualApps.revokeOs(id);
+          this.sendJson(res, { app: { id: app.id, name: app.name, os: null } });
+        } else if (id && action === 'os' && method === 'POST') {
+          // An installed app asks this computer to do something. Three things must all hold: the owner let THIS
+          // app ask for THIS tool (above), the request goes through the same tool gate chat uses (risky tools
+          // wait for the owner, call by call), and the access settings and danger protocol still apply to it.
+          const body = await this.parseBody(req, 16 * 1024) as { tool?: unknown; request?: unknown } | null;
+          const tool = typeof body?.tool === 'string' ? body.tool : '';
+          const request = typeof body?.request === 'string' ? body.request.trim() : '';
+          if (!request || request.length > OS_REQUEST_MAX) {
+            this.sendJson(res, { error: `The request must be 1 to ${OS_REQUEST_MAX} characters.` }, 400);
+          } else if (!this.visualApps.osAllows(id, tool)) {
+            this.sendJson(res, { error: `This app has not been allowed to use ${tool.slice(0, 40) || 'that'}.` }, 403);
+          } else {
+            const { getNeuroclawSystem } = await import('../src/index.js');
+            const activity = activityStart(`App ${id}: ${tool}`, clip(request));
+            try {
+              const out = await (await getNeuroclawSystem()).pluginRegistry.runTool(tool, request);
+              activityEnd(activity, out.status === 'ran', clip(out.text));
+              this.sendJson(res, out);
+            } catch (err) {
+              activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+              throw err;
+            }
+          }
         } else if (id && !action && method === 'DELETE') {
           this.sendJson(res, this.visualApps.remove(id));
         } else {

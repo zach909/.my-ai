@@ -47,7 +47,29 @@ export interface VisualApp {
   createdAt: number;
   /** Set once a launcher was written: where, and for which system. */
   launcher?: { platform: LauncherPlatform; path: string; at: number };
+  /** The tools the owner let this app ask for. Absent means none, which is the default. */
+  os?: { tools: string[]; at: number };
 }
+
+/**
+ * What an installed app can be allowed to ask this computer to do, and nothing else. Each id is an existing tool
+ * (plugins/) that the agent itself uses, so every request still goes through the tool gate: the risky ones wait
+ * for the owner, call by call, and the danger protocol and access settings still apply. Left out on purpose,
+ * because an app has no need to reach them: anything that speaks or publishes for you (email, messaging, calls,
+ * passkeys, GitHub), looks at you (camera, microphone, screen, location, contacts), or changes the agent itself
+ * (computer access, store, plugin and skill makers, self repair).
+ */
+export const OS_TOOLS: ReadonlyArray<{ id: string; label: string; why: string }> = [
+  { id: "terminal", label: "Terminal", why: "Runs commands on this computer." },
+  { id: "file-system", label: "Files", why: "Reads, lists and opens your files." },
+  { id: "desktop", label: "Desktop", why: "Clicks, types and opens windows for you." },
+  { id: "multi-input", label: "Mouse and keyboard", why: "Drives your mouse and keyboard." },
+  { id: "linux-permission-tools", label: "System permissions", why: "Changes system permissions, services and security policy." },
+  { id: "radios", label: "Radios", why: "Turns Bluetooth, Wi-Fi and other radios on and off." },
+  { id: "notifications", label: "Notifications", why: "Shows notifications on this computer." },
+];
+const OS_TOOL_IDS = new Set(OS_TOOLS.map((t) => t.id));
+export const OS_REQUEST_MAX = 600;
 
 export type LauncherPlatform = "linux" | "macos" | "windows";
 
@@ -140,8 +162,22 @@ export function planLauncher(
 export const isUnavailable = (p: LauncherPlan | Unavailable): p is Unavailable => "unavailable" in p;
 
 export class VisualAppStore {
-  /** Approvals handed out by a preview, by app id. In memory only: a restart cancels them. */
+  /** Approvals handed out by a preview, by app id and what they approve. In memory only: a restart cancels them. */
   private approvals = new Map<string, { token: string; path: string; expires: number }>();
+
+  private hold(key: string, what: string): string {
+    const token = randomBytes(18).toString("hex");
+    this.approvals.set(key, { token, path: what, expires: this.now() + APPROVAL_TTL_MS });
+    return token;
+  }
+
+  /** Spend the approval for `key`: it is gone whether or not it matched, and must match `what` and be in time. */
+  private spend(key: string, given: unknown, what: string): boolean {
+    const held = this.approvals.get(key);
+    this.approvals.delete(key);
+    const g = typeof given === "string" ? Buffer.from(given) : Buffer.alloc(0);
+    return !!held && held.expires >= this.now() && held.path === what && g.length === held.token.length && timingSafeEqual(g, Buffer.from(held.token));
+  }
 
   constructor(private readonly dir: string = appsDir(), private readonly now: () => number = Date.now) {}
 
@@ -197,9 +233,7 @@ export class VisualAppStore {
     if (!app) throw new VisualAppError("No such app.");
     const plan = planLauncher(app, baseUrl, system);
     if (isUnavailable(plan)) return plan;
-    const token = randomBytes(18).toString("hex");
-    this.approvals.set(id, { token, path: plan.path, expires: this.now() + APPROVAL_TTL_MS });
-    return { plan, approval: token };
+    return { plan, approval: this.hold(`${id}:install`, plan.path) };
   }
 
   /**
@@ -209,19 +243,59 @@ export class VisualAppStore {
   install(id: string, approval: unknown, baseUrl: string, system?: Parameters<typeof planLauncher>[2]): VisualApp {
     const app = this.get(id);
     if (!app) throw new VisualAppError("No such app.");
-    const held = this.approvals.get(id);
-    this.approvals.delete(id); // one approval, one install
-    const given = typeof approval === "string" ? Buffer.from(approval) : Buffer.alloc(0);
-    const ok = !!held && held.expires >= this.now() && given.length === held.token.length && timingSafeEqual(given, Buffer.from(held.token));
-    if (!ok) throw new VisualAppError("Not approved. Review what will be written first, then approve it.");
     const plan = planLauncher(app, baseUrl, system);
     if (isUnavailable(plan)) throw new VisualAppError(plan.unavailable);
-    if (plan.path !== held!.path) throw new VisualAppError("The launcher changed since the preview. Review it again.");
+    // One approval, one install; it must be for the file the preview showed.
+    if (!this.spend(`${id}:install`, approval, plan.path)) throw new VisualAppError("Not approved. Review what will be written first, then approve it.");
     mkdirSync(path.dirname(plan.path), { recursive: true });
     writeFileAtomic(plan.path, plan.content);
     const next: VisualApp = { ...app, launcher: { platform: plan.platform, path: plan.path, at: this.now() } };
     writeFileAtomic(this.file(id), JSON.stringify(next, null, 2));
     return next;
+  }
+
+  private osKey(id: string): string { return `${id}:os`; }
+
+  /** The tools asked for, checked against the list an app may ever be given, in a fixed order, no repeats. */
+  private cleanTools(raw: unknown): string[] {
+    const given: unknown[] = Array.isArray(raw) ? raw : [];
+    const bad = given.find((t) => typeof t !== "string" || !OS_TOOL_IDS.has(t));
+    if (bad !== undefined) throw new VisualAppError(`An app cannot be given "${String(bad).slice(0, 40)}".`);
+    const asked = given as string[];
+    const tools = OS_TOOLS.map((t) => t.id).filter((t) => asked.includes(t));
+    if (!tools.length) throw new VisualAppError("Pick at least one thing the app may ask for.");
+    return tools;
+  }
+
+  /** Show what an app would be allowed to ask for, and hand back the approval granting it needs. Grants nothing. */
+  previewOs(id: string, toolsRaw: unknown): { tools: Array<{ id: string; label: string; why: string }>; approval: string } {
+    if (!this.get(id)) throw new VisualAppError("No such app.");
+    const ids = this.cleanTools(toolsRaw);
+    return { tools: OS_TOOLS.filter((t) => ids.includes(t.id)), approval: this.hold(this.osKey(id), ids.join(",")) };
+  }
+
+  /** Let the app ask for these tools (and only these), with the approval previewOs returned. Replaces any earlier grant. */
+  grantOs(id: string, toolsRaw: unknown, approval: unknown): VisualApp {
+    const app = this.get(id);
+    if (!app) throw new VisualAppError("No such app.");
+    const ids = this.cleanTools(toolsRaw);
+    if (!this.spend(this.osKey(id), approval, ids.join(","))) throw new VisualAppError("Not approved. Review what the app would be allowed to ask for first, then approve it.");
+    const next: VisualApp = { ...app, os: { tools: ids, at: this.now() } };
+    writeFileAtomic(this.file(id), JSON.stringify(next, null, 2));
+    return next;
+  }
+
+  revokeOs(id: string): VisualApp {
+    const app = this.get(id);
+    if (!app) throw new VisualAppError("No such app.");
+    const { os: _gone, ...rest } = app;
+    writeFileAtomic(this.file(id), JSON.stringify(rest, null, 2));
+    return rest as VisualApp;
+  }
+
+  /** Whether the owner let this app ask for this tool. */
+  osAllows(id: string, tool: unknown): boolean {
+    return typeof tool === "string" && !!this.get(id)?.os?.tools.includes(tool);
   }
 
   /** Take an app off the computer and out of the store. Touches the launcher only if it is still the one this wrote. */
@@ -238,7 +312,8 @@ export class VisualAppStore {
       } catch { /* already gone */ }
     }
     rmSync(this.file(id), { force: true });
-    this.approvals.delete(id);
+    this.approvals.delete(`${id}:install`);
+    this.approvals.delete(this.osKey(id));
     return { removed: true, launcherRemoved };
   }
 }

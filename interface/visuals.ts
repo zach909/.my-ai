@@ -291,7 +291,14 @@ var ncVisuals = (function () {
       + 'var a=t.getAttribute("data-ai");if(a)d.ask=a.slice(0,120);window.ai.send(name,d)},0)}'
       + 'addEventListener("click",function(e){auto("click",e)},true);'
       + 'addEventListener("change",function(e){auto("change",e)},true);'
-      + 'addEventListener("message",function(e){var m=e.data;if(!m||m.nc!=="visual-host"||m.type!=="busy")return;'
+      // ai.os(tool, request) asks this computer to do something. It works only inside an installed app the owner
+      // has allowed that tool for; in a chat panel it rejects. The answer is {status, text}: status "held" means
+      // a risky tool is waiting for the owner's OK in Settings and nothing has been done.
+      + 'var osq={},rid=0;window.ai.os=function(t,r){return new Promise(function(ok,no){var k=++rid;osq[k]={ok:ok,no:no};'
+      + 'post({type:"os",rid:k,tool:String(t),request:String(r)})})};'
+      + 'addEventListener("message",function(e){var m=e.data;if(!m||m.nc!=="visual-host")return;'
+      + 'if(m.type==="os-result"){var q=osq[m.rid];if(!q)return;delete osq[m.rid];if(m.ok)q.ok(m.value);else q.no(new Error(String(m.value)));return}'
+      + 'if(m.type!=="busy")return;'
       + 'window.ai.busy=!!m.value;document.documentElement.toggleAttribute("data-busy",!!m.value);'
       + 'dispatchEvent(new CustomEvent("ai:busy",{detail:!!m.value}))});'
       + 'var last=0;function fit(){var h=Math.ceil(document.documentElement.getBoundingClientRect().height);'
@@ -319,6 +326,18 @@ var ncVisuals = (function () {
     if (m.type === 'size') {
       var h = Math.round(Number(m.h));
       if (h > 0) entry.el.style.height = Math.max(HEIGHT_MIN, Math.min(HEIGHT_MAX, h)) + 'px';
+      return;
+    }
+    if (m.type === 'os') {
+      var rid = Number(m.rid);
+      var back = function (ok, value) {
+        try { entry.el.contentWindow.postMessage({ nc: 'visual-host', type: 'os-result', rid: rid, ok: ok, value: value }, '*'); } catch (x) { /* frame is gone */ }
+      };
+      if (!entry.os) return back(false, 'Only an installed app the owner has allowed can ask for that; a panel in the chat cannot.');
+      if (typeof m.tool !== 'string' || !/^[a-z0-9-]{1,48}$/.test(m.tool) || typeof m.request !== 'string' || !m.request.trim() || m.request.length > 600) return back(false, 'That request is not valid.');
+      if (entry.osBusy) return back(false, 'One request at a time.');
+      entry.osBusy = true;
+      entry.os(m.tool, m.request).then(function (v) { back(true, v); }, function (e) { back(false, e && e.message ? e.message : 'Refused.'); }).then(function () { entry.osBusy = false; });
       return;
     }
     if (m.type !== 'event' || typeof m.name !== 'string' || !NAME.test(m.name)) return;
@@ -405,6 +424,7 @@ var ncVisuals = (function () {
             var done = actions();
             var link = document.createElement('a'); link.href = '/visual-apps/' + saved.id; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Open ' + saved.name;
             done.appendChild(link);
+            done.appendChild(btn('Let it change this computer...', function () { offerOs(saved); }));
             done.appendChild(btn('Remove it', function () { call('DELETE', '/api/visual-apps/' + saved.id).then(function () { close(false); }).catch(function (e) { msg.textContent = e.message; }); }));
             done.appendChild(btn('Done', function () { close(false); }, true));
           })
@@ -414,8 +434,65 @@ var ncVisuals = (function () {
     ask();
   }
 
+  /**
+   * Let an installed app ask this computer to do things. Same two steps as installing: choose, review exactly
+   * what it would be allowed to ask for, approve. Even then each request goes through the tool gate, so the
+   * risky ones still wait for the owner, one call at a time.
+   */
+  function offerOs(app) {
+    if (!area) return;
+    var old = document.getElementById('nc-app-card');
+    if (old) old.remove();
+    var card = document.createElement('div');
+    card.id = 'nc-app-card';
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-label', 'What ' + app.name + ' may ask this computer to do');
+    area.parentNode.insertBefore(card, area);
+    function row(tag, text, cls) { var e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; card.appendChild(e); return e; }
+    function btn(text, fn, primary) { var b = document.createElement('button'); b.type = 'button'; b.textContent = text; if (primary) b.className = 'primary'; b.onclick = fn; return b; }
+    function actions() { var a = document.createElement('div'); a.className = 'nc-bench-actions'; card.appendChild(a); return a; }
+    row('strong', 'What may ' + app.name + ' ask this computer to do?');
+    row('p', 'Nothing by default. Pick what it may ask for. Anything risky still waits for your OK in Settings each time, and your access settings still apply.', 'nc-dim');
+    var boxes = [];
+    var list = document.createElement('div');
+    card.appendChild(list);
+    var msg = row('p', '', 'nc-card-msg');
+    var a = actions();
+    a.appendChild(btn('Cancel', function () { card.remove(); }));
+    var go = btn('Review', function () {
+      var tools = boxes.filter(function (b) { return b.box.checked; }).map(function (b) { return b.id; });
+      msg.textContent = '';
+      call('POST', '/api/visual-apps/' + app.id + '/os-preview', { tools: tools }).then(function (j) { review(tools, j); }).catch(function (e) { msg.textContent = e.message; });
+    }, true);
+    a.appendChild(go);
+    call('GET', '/api/visual-apps/os-tools').then(function (j) {
+      j.tools.forEach(function (t) {
+        var label = document.createElement('label');
+        label.style.cssText = 'display:flex;gap:10px;align-items:flex-start;margin:6px 0';
+        var box = document.createElement('input'); box.type = 'checkbox';
+        var text = document.createElement('span'); text.textContent = t.label + ': ' + t.why;
+        label.appendChild(box); label.appendChild(text); list.appendChild(label);
+        boxes.push({ id: t.id, box: box });
+      });
+    }).catch(function (e) { msg.textContent = e.message; });
+    function review(tools, j) {
+      card.textContent = '';
+      row('strong', app.name + ' would be allowed to ask for:');
+      j.tools.forEach(function (t) { row('p', t.label + ': ' + t.why); });
+      row('p', 'It cannot do anything by itself: each request is shown on its page, goes through the same safety checks as the AI, and the risky ones wait for you.', 'nc-dim');
+      var m2 = row('p', '', 'nc-card-msg');
+      var b = actions();
+      b.appendChild(btn('Cancel', function () { card.remove(); }));
+      b.appendChild(btn('Allow', function () {
+        call('POST', '/api/visual-apps/' + app.id + '/os-grant', { tools: tools, approval: j.approval })
+          .then(function () { card.textContent = ''; row('strong', app.name + ' may now ask for ' + tools.length + (tools.length === 1 ? ' thing' : ' things') + '.'); var d = actions(); d.appendChild(btn('Done', function () { card.remove(); }, true)); })
+          .catch(function (e) { m2.textContent = e.message; });
+      }, true));
+    }
+  }
+
   /** One panel: a glass frame, a "code" switch that shows the source, and the sandboxed iframe. */
-  function mount(code, onEvent) {
+  function mount(code, onEvent, os) {
     Object.keys(frames).forEach(function (k) { if (!frames[k].el.isConnected) delete frames[k]; });
     var id = 'v' + (++seq);
     var wrap = document.createElement('div');
@@ -457,7 +534,7 @@ var ncVisuals = (function () {
       wrap.appendChild(pre);
       toggle.setAttribute('aria-expanded', 'true');
     };
-    frames[id] = { el: el, onEvent: onEvent || null };
+    frames[id] = { el: el, onEvent: onEvent || null, os: os || null, osBusy: false };
     // Read busy when the frame has loaded, not now: a panel drawn mid-turn may finish loading after the turn ends.
     if (!onEvent) el.addEventListener('load', function () { if (busy) tell(frames[id], true); });
     return wrap;
@@ -570,15 +647,27 @@ export function visualAppPage(app: { id: string; name: string; code: string }): 
   #app .nc-visual { width: 100%; margin-top: 0; }
   #say { margin-top: 14px; min-height: 1.4em; opacity: 0.85; overflow-wrap: anywhere; white-space: pre-wrap; }
   #say.bad { color: #ff9aa8; }
+  #oslog { margin: 14px 0 0; padding: 12px 18px; list-style: none; border: 1px solid var(--border); border-radius: 24px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: rgba(255, 240, 232, 0.05); }
+  #oslog .nc-dim { opacity: 0.62; }
 ${VISUAL_CSS}
 </style></head><body>
-<main><h1>${escapeHtml(app.name)}</h1><div id="app"></div><div id="say" role="status" aria-live="polite"></div></main>
+<main><h1>${escapeHtml(app.name)}</h1><div id="app"></div><div id="say" role="status" aria-live="polite"></div><ul id="oslog" hidden aria-label="What this app asked this computer to do"></ul></main>
 <script>${VISUAL_CLIENT_JS}</script>
 <script>
 (function () {
   var host = document.getElementById('app'), say = document.getElementById('say');
   var NL = String.fromCharCode(10);
-  function show(code) { host.textContent = ''; host.appendChild(ncVisuals.mount(code)); }
+  var logEl = document.getElementById('oslog');
+  function note(text, cls) { var li = document.createElement('li'); li.textContent = text; if (cls) li.className = cls; logEl.appendChild(li); logEl.hidden = false; while (logEl.children.length > 20) logEl.firstChild.remove(); }
+  // What the app asks this computer to do is shown here, every time, whatever the answer.
+  function os(tool, request) {
+    note('Asked ' + tool + ': ' + request);
+    return fetch('/api/visual-apps/' + ${embed(app.id)} + '/os', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool: tool, request: request }) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'Refused.'); return j; }); })
+      .then(function (j) { note('  ' + j.status + ': ' + j.text, j.status === 'ran' ? '' : 'nc-dim'); return { status: j.status, text: j.text }; },
+            function (e) { note('  refused: ' + e.message, 'nc-dim'); throw e; });
+  }
+  function show(code) { host.textContent = ''; host.appendChild(ncVisuals.mount(code, undefined, os)); }
   show(${embed(app.code)});
   ncVisuals.onEvent(function (name, data) {
     ncVisuals.setBusy(true);
