@@ -78,6 +78,19 @@ export class KnowledgeGraph {
   conceptCount(): number {
     return this.concepts.size;
   }
+  /** Every concept, for callers that survey the graph (e.g. curiosity looking for gaps). */
+  allConcepts(): Concept[] {
+    return [...this.concepts.values()];
+  }
+  /** How many currently-believed relations touch a concept, in either direction. 0 = nothing is known around it. */
+  degree(name: string): number {
+    const id = normalize(name);
+    let n = 0;
+    for (const r of this.relations) {
+      if (!r.superseded && (r.from === id || r.to === id)) n++;
+    }
+    return n;
+  }
 
   /** Assert a typed relation between two concepts (creating them if needed). */
   relate(from: string, type: string, to: string, opts: { weight?: number; confidence?: number } = {}): Relation {
