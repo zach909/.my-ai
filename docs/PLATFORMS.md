@@ -40,12 +40,6 @@ exists to edit. Platform code is only the part that has to differ: starting the 
 and the permissions each OS prompts for.
 
 <!-- parity-matrix:begin -->
-
-All system permissions
-All normal permissions 
- +multi-desktop multi-mouse and multi keyboard. 
-Then add another thing for terminal access. 
- Root access
 | Feature | Windows | Linux | macOS | ChromeOS / Chromebook | Android | iOS |
 | --- | --- | --- | --- | --- | --- | --- |
 | Chat | yes | yes | yes | yes | yes | yes |
@@ -74,11 +68,9 @@ Then add another thing for terminal access.
 | Installable web app | yes | yes | yes | yes | yes | yes |
 | Chrome extension launcher | no | no | no | yes | no | no |
 | Versioning, release manifest, change-driven builds | yes | yes | yes | yes | yes | yes |
-| Root access, complete route access | no | yes | no | no | no | no |
-| All permissions | yes | yes | yes | no | partly | partly |
-| System permissions, multi-desktop, multi-mouse and multi-keyboard | no | no | no | no | no | no |
-| Terminal access | yes | yes | yes | no | partly | partly |
 | Root / system access | no | yes | no | no | no | no |
+| All permissions | yes | yes | yes | no | partly | partly |
+| System permissions, multi-desktop, multi-mouse and multi-keyboard | no | partly | no | no | partly | no |
 | Terminal | yes | yes | yes | no | partly | partly |
 | Virtual workspaces | yes | yes | yes | yes | yes | yes |
 | Agent sandbox, with a tamper trap | yes | yes | yes | no | partly | partly |
@@ -104,12 +96,11 @@ Then add another thing for terminal access.
 | cameraCapture | partly | partly | partly | partly | yes | yes |
 | installWithoutTerminal | yes | yes | yes | yes | partly | no |
 | selfUpdate | partly | partly | partly | yes | partly | yes |
-| multiSeatInput | no | no | no | no | no | no |
 | normalPermissions | partly | partly | partly | partly | partly | partly |
 | systemPermissions | no | partly | no | no | partly | no |
 | multiDesktop | yes | yes | yes | yes | yes | yes |
-| multiMouse | no | partly | no | no | no | no |
-| multiKeyboard | no | partly | no | no | no | no |
+| multiMouse | partly | partly | partly | no | no | no |
+| multiKeyboard | partly | partly | partly | no | no | no |
 <!-- capability-matrix:end -->
 
 `yes` means this repository's code delivers it on that platform today. `partly` and `no` come with the reason in
@@ -240,12 +231,16 @@ so its exact rendering logic was re-run standalone against the real `adapters.ts
   rest of `node_modules` was present. CI runs it when vitest is present and otherwise reports "NOT RUN" in the summary.
 - `npm run test:platform` and `node scripts/build-backend.mjs`: same missing-`node_modules`/broken-`npm install` problem:
   no `tsc`, no `@types/node`. A prior session (above) ran this successfully; it was not reproducible in this one.
-- Windows: IExpress installer, Start menu entry, install and uninstall (needs a Windows runner; the CI job does it).
-- macOS: `swiftc`, `codesign`, `hdiutil`, the `.app` really opening (needs a Mac; the CI job compiles, signs ad hoc, verifies and starts the packaged engine).
+- Windows: IExpress installer, Start menu entry, install and uninstall (needs a Windows runner; the CI job does it). Also
+  `windows-input-devices.ts`'s `powershell.exe`/WMI calls: written from PowerShell/WMI's documented behaviour, never run
+  against a real Windows machine -- no Windows host exists in this project's development sandbox.
+- macOS: `swiftc`, `codesign`, `hdiutil`, the `.app` really opening (needs a Mac; the CI job compiles, signs ad hoc, verifies and starts the packaged engine). Also `macos-input-devices.ts`'s `ioreg` call: written from `ioreg`'s documented/known
+  output shape, never run against a real Mac -- no Mac exists in this project's development sandbox either.
 - Android: Gradle build of the edited Kotlin. iOS: `xcodegen` and `xcodebuild` of the edited Swift. (Android SDK and Xcode are not available here.)
 - A real Chromebook, a real phone, and the Chrome Web Store flow.
-- Linux `/dev/input/eventN` access for `linux-input-devices.ts`: not applicable -- that code path does not exist. The module
-  only ever reads `/proc/bus/input/devices`, by design (see the module's own header).
+- Raw live input-event access on any platform (Linux `/dev/input/eventN`, Windows Raw Input, macOS's live IOKit HID stream)
+  for any of the three input-device modules above: not applicable -- that code path does not exist on any of them, by
+  design (see each module's own header comment).
 - The GitHub Actions workflow itself has never run: it was linted as YAML and its structure is tested, but the first real run
   may need small fixes (runner images and tool paths are the usual suspects).
 
@@ -281,21 +276,37 @@ so its exact rendering logic was re-run standalone against the real `adapters.ts
    interface already runs -- it is explicitly **not** the operating system's own virtual desktops, which still have no
    cross-platform API this app could drive honestly. No page renders them yet; today they are reachable only through the
    API, the same first-pass state several other backend-only features here started from.
-   **True multi-seat input** (telling separate physical mice/keyboards apart) is built on Linux only, and only halfway on
-   purpose: `models && skills/core/linux-input-devices.ts` (`GET /api/input-devices`) reads `/proc/bus/input/devices` to
-   enumerate connected devices by name and classify them as mice or keyboards -- something no browser API can do at all,
-   with no special permission needed. It deliberately stops there: it never opens `/dev/input/eventN` to read live
-   pointer/key events, because doing that would make the agent a system-wide keylogger/mouse-logger, capturing input in
-   windows that have nothing to do with it. That is a line this project chooses not to cross, not a gap left by difficulty --
-   see the module's own header comment. So "two mice and a keyboard are plugged in" is something this app can now honestly
-   say on Linux; "what did you just type" is not, and will not be. Windows needs the Win32 Raw Input API from a native
-   addon this project's architecture does not have; macOS needs IOKit HID APIs from native code, and unlike iOS/Android
-   there is no native macOS host app here at all (`NeuroClaw.app` is only the bundled Node runtime in a WKWebView window);
-   ChromeOS has no raw device access from a browser extension; Android's `InputManager`/`getDeviceId()` is a real,
-   non-third-party mechanism that could do this, but it is not implemented, and this project's sandboxes have no Android
-   SDK to compile or verify a Kotlin change against; iOS's UIKit exposes no public per-device HID identity API at all. See
-   the new `systemPermissions`, `normalPermissions`, `multiDesktop`, `multiMouse` and `multiKeyboard` rows in the capability
-   matrix above for the per-platform detail, each with its own honest reason.
+   **True multi-seat input** (telling separate physical mice/keyboards apart) is built on Linux, Windows and macOS now, and
+   only halfway everywhere, on purpose: each platform shells out to that OS's own, pre-installed tool to list connected
+   devices by name and classify them as mice or keyboards -- `/proc/bus/input/devices` on Linux
+   (`models && skills/core/linux-input-devices.ts`), PowerShell's `Win32_PointingDevice`/`Win32_Keyboard` WMI classes on
+   Windows (`models && skills/core/windows-input-devices.ts`), and `ioreg -c IOHIDDevice -r -l`'s HID usage-page/usage
+   fields on macOS (`models && skills/core/macos-input-devices.ts`) -- all three reached through one route,
+   `GET /api/input-devices`, that dispatches on `process.platform`. None of this is third-party code or a native addon: it
+   is the same pattern as this project's existing `pkexec`/`dpkg-deb`/IExpress shell-outs, just applied to a device list
+   instead of an install or a privileged action. It deliberately stops at enumeration on every platform: none of the three
+   ever reads a live pointer/key event stream (`/dev/input/eventN`, Win32 Raw Input, or IOKit's live HID value stream),
+   because doing that would make the agent a system-wide keylogger/mouse-logger, capturing input in windows that have
+   nothing to do with it. That is a line this project chooses not to cross, not a gap left by difficulty -- see each
+   module's own header comment. So "two mice and a keyboard are plugged in" is something this app can now honestly say on
+   Linux, Windows and macOS; "what did you just type" is not, and will not be, anywhere. ChromeOS has no raw device access
+   from a browser extension; Android's `InputManager`/`getDeviceId()` is a real, non-third-party mechanism that could do
+   enumeration there too, but it is not implemented, and this project's sandboxes have no Android SDK to compile or verify
+   a Kotlin change against; iOS's UIKit exposes no public per-device HID identity API at all. See the new
+   `systemPermissions`, `normalPermissions`, `multiDesktop`, `multiMouse` and `multiKeyboard` rows in the capability matrix
+   above for the per-platform detail, each with its own honest reason. The Windows and macOS modules were written from each
+   tool's documented/known output shape but could not be run against a real Windows or macOS machine from this project's own
+   (Linux) development sandbox -- see "Tests: what ran, what did not" below, same caveat as the uncompiled Android
+   Kotlin/iOS Swift edits already noted there.
+   **A note on how this section got here:** two independent sessions worked on this same multi-seat/permissions request in
+   parallel, and the merge that combined them left `interface/platform/feature-contract.ts` with two `id: 'root-access'`
+   and two `id: 'terminal'` key/value triplets inside the same object literal (valid loose JS -- the later pair silently
+   wins -- but a TypeScript compile error, TS1117, so the backend would not have built). That merge also left a now-stale
+   `system-permissions` feature row claiming multi-desktop/multi-mouse/multi-keyboard were "not built anywhere," and a
+   redundant `multiSeatInput` capability duplicating what `multiDesktop`/`multiMouse`/`multiKeyboard` already cover more
+   precisely. All of that is fixed here: the duplicate keys are resolved (keeping the title/description an explicit,
+   clarified decision in this session's own conversation had already settled on), the stale claim is corrected, and
+   `multiSeatInput` is removed in favour of the three separate, more specific capabilities.
 7. **Signing and publishing**: Windows code signing, Google Play, the App Store and TestFlight are not wired (they need your
    certificates and accounts); macOS signing and notarisation are wired but wait for the secrets above.
 8. **Intel macOS** is not built (add a `macos-15-intel` job when you want it); **Linux arm64** (ARM Chromebooks) builds only from
