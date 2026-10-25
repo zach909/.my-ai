@@ -64,7 +64,7 @@ class ScreenCaptureService : Service() {
 
     private fun capture(resultCode: Int, data: Intent, note: String) {
         val projectionManager = getSystemService(MediaProjectionManager::class.java)
-        val proj = projectionManager.getMediaProjection(resultCode, data)
+        val proj = projectionManager.getMediaProjection(resultCode, data) ?: run { teardown(); return }
         projection = proj
 
         val metrics = DisplayMetrics()
