@@ -10,6 +10,7 @@ Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's po
 - [Skill Acquisition Loop](../docs/SKILL_ACQUISITION_LOOP.md) - How an agent learns something new: check the wiki, fall back to web research, run experiments, then push the wiki page, skill source + binary, and the improvement algorithm
 - [[Architecture Overview|Architecture]] - System architecture and design
 - [[Quick Start Guide|Quick-Start]] - Getting started with installation and usage
+- [[Visuals|Visuals]] - Live panels in chat: the AI as the back end, the panel as the front end
 - [[NeuroLang Reference|NeuroLang]] - The custom neuron definition language
 
 ### Background Systems (Learning & Memory)
