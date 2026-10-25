@@ -9,6 +9,7 @@
     "server": "node scripts/server.mjs",
     "launch": "node scripts/launcher.mjs",
     "check:third-party": "node scripts/check-no-third-party.mjs",
+    "build:native": "node scripts/build-native.mjs",
     "prepare": "node scripts/install-hooks.mjs",
     "lint:types": "tsc -p tsconfig.backend.json --noEmit",
     "lint": "npm run check:third-party && npm run lint:types",
