@@ -35,6 +35,8 @@ export interface ChatAttachment {
   id: string;
   filename: string;
   bytes: number;
+  /** For a zip: the result of reading it back before it went out (see zip-review.ts). Absent for any other file. */
+  review?: { approved: boolean; rounds: number; notes: string[] };
 }
 
 interface Entry {

@@ -27,7 +27,8 @@ import { listWikiPages } from "./wiki-store.js";
 import { listCatalog, STORE_KINDS } from "./store.js";
 import { loadRegistry } from "./prompting-skill-store.js";
 import { readRecentConversationTurns } from "../../src/lib/conversation-log.js";
-import { attachmentMetadata, type ChatAttachment } from "./chat-attachments.js";
+import { attachmentMetadata, resolveAttachment, type ChatAttachment } from "./chat-attachments.js";
+import { reviewZip, type ZipJudge } from "./zip-review.js";
 
 /**
  * Strips every `[[ATTACH:<id>]]` marker (see chat-attachments.ts and
@@ -47,8 +48,36 @@ function extractAttachmentMarkers(text: string, sink: ChatAttachment[]): string 
   });
 }
 
+/**
+ * A zip a plugin hands out is read back before it goes out (zip-review.ts):
+ * the judge says yes, or says no and edits it, and it is read again. Appends a
+ * line to the reply saying how that went, so "here is your zip" is never said
+ * about one nobody opened. Attachments before `from` were reviewed already.
+ */
+async function reviewNewZips(text: string, sink: ChatAttachment[], from: number, judge: ZipJudge | undefined): Promise<string> {
+  const lines: string[] = [];
+  for (let i = from; i < sink.length; i++) {
+    const sent = sink[i];
+    if (!sent.filename.toLowerCase().endsWith(".zip")) continue;
+    const resolved = resolveAttachment(sent.id);
+    if (!resolved) continue;
+    const result = await reviewZip(resolved.absPath, judge);
+    // Re-read the metadata: an edit round changes the file's size.
+    sink[i] = { ...(attachmentMetadata(sent.id) ?? sent), review: { approved: result.approved, rounds: result.rounds, notes: result.notes } };
+    const reads = `${result.rounds} read${result.rounds === 1 ? "" : "s"}`;
+    lines.push(
+      result.approved
+        ? `${sent.filename}: checked after ${reads} and approved.`
+        : `${sent.filename}: NOT verified after ${reads} -- ${result.notes.join(" ")}`,
+    );
+  }
+  return lines.length > 0 ? `${text}\n${lines.join("\n")}` : text;
+}
+
 /** The parts of the live system the loop's capabilities are built from. */
 export interface AgentHost {
+  /** Decides yes/no on a zip about to be sent, and how to edit it if no. Defaults to the structural check in zip-review.ts. */
+  zipJudge?: ZipJudge;
   memory?: { retrieve: (q: string, opts?: { topK?: number; tag?: string }) => Array<{ item: { content: string; payload?: string } }> };
   mistakes?: { lessons: (task: string, topK?: number) => string[] };
   /**
@@ -223,7 +252,9 @@ export function buildAgentCapabilities(host: AgentHost, attachmentsOut: ChatAtta
         lastActionResult = null;
         return null;
       }
-      const result = extractAttachmentMarkers(textOf(await instance.onMessage(input)), attachmentsOut);
+      const before = attachmentsOut.length;
+      const stripped = extractAttachmentMarkers(textOf(await instance.onMessage(input)), attachmentsOut);
+      const result = await reviewNewZips(stripped, attachmentsOut, before, host.zipJudge);
       lastActionResult = result.trim().length > 0 ? result : null;
       return result;
     };
@@ -255,7 +286,9 @@ export function buildAgentCapabilities(host: AgentHost, attachmentsOut: ChatAtta
         const instance = host.pluginRegistry!.getPluginInstance(candidate.id);
         if (!instance?.onMessage) continue;
         try {
-          const result = extractAttachmentMarkers(textOf(await instance.onMessage(task)), attachmentsOut);
+          const before = attachmentsOut.length;
+          const stripped = extractAttachmentMarkers(textOf(await instance.onMessage(task)), attachmentsOut);
+          const result = await reviewNewZips(stripped, attachmentsOut, before, host.zipJudge);
           if (result.trim().length > 0) {
             lastActionResult = result;
             return { plugin: candidate.id, result, why: candidate.reason };
