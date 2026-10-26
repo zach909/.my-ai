@@ -28,7 +28,7 @@ const baseEnv = { home: '/home/me', dataDir: '/home/me/.neuroclaw', root: '/srv/
 const plan = (over, present = CHECKOUT) => AI.planAiOs({ ...baseEnv, platform: 'linux', ...over }, (p) => present.includes(p));
 
 /** Fake file system and command runner. `fail` maps "file arg0 arg1" prefixes to a non-zero exit. */
-function fakeIo({ present = CHECKOUT, fail = [], writeFails = [] } = {}) {
+function fakeIo({ present = CHECKOUT, fail = [], writeFails = [], handler } = {}) {
   const fs = new Set(present);
   const io = {
     fs, calls: [], written: new Map(), removed: [],
@@ -38,6 +38,8 @@ function fakeIo({ present = CHECKOUT, fail = [], writeFails = [] } = {}) {
     run(file, args) {
       const line = [file, ...args].join(' ');
       io.calls.push(line);
+      const custom = handler?.(file, args);
+      if (custom) return custom;
       const bad = fail.find((p) => line.startsWith(p));
       return bad ? { status: 1, stdout: '', stderr: `${bad} failed on purpose` } : { status: 0, stdout: '', stderr: '' };
     },
@@ -166,6 +168,131 @@ test('a path systemd cannot take unambiguously ($ quote backslash tab) gets the 
   assert.equal(plan({ node: '/opt/we ird 100%/node' }).mechanism, 'systemd-user', 'a space or % is fine: it is escaped, and the real parser agrees (above)');
 });
 
+/* ---------- Debian / GNOME: the application-menu entry and the keyboard shortcut ---------- */
+
+const KEYS = 'org.gnome.settings-daemon.plugins.media-keys';
+const OURS = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/neuroclaw/';
+const gnomeEnv = { env: { XDG_CURRENT_DESKTOP: 'ubuntu:GNOME' } };
+
+/** A tiny stateful gsettings: get/set/reset on the keys the shortcut code uses, in real gsettings output format. */
+function fakeGsettings(initialList) {
+  const state = { list: initialList, values: new Map(), writes: [] };
+  const fmt = (l) => (l.length ? `[${l.map((x) => `'${x}'`).join(', ')}]` : '@as []');
+  state.handler = (file, args) => {
+    if (file !== 'gsettings') return undefined;
+    const [verb, schema, key, value] = args;
+    if (verb === 'get' && schema === KEYS && key === 'custom-keybindings') return { status: 0, stdout: typeof state.list === 'string' ? state.list : fmt(state.list) + '\n', stderr: '' };
+    if (verb === 'set') {
+      state.writes.push(args.join(' '));
+      if (schema === KEYS) state.list = [...value.matchAll(/'([^']*)'/g)].map((m) => m[1]);
+      else state.values.set(key, value);
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    if (verb === 'reset') { state.values.delete(key); return { status: 0, stdout: '', stderr: '' }; }
+    return { status: 1, stdout: '', stderr: 'unexpected' };
+  };
+  return state;
+}
+
+test('parsing the shortcut list accepts exactly an array of plain strings, and nothing else', () => {
+  assert.deepEqual(AI.parseGsettingsList('@as []'), []);
+  assert.deepEqual(AI.parseGsettingsList('[]\n'), []);
+  assert.deepEqual(AI.parseGsettingsList("['/a/b/']"), ['/a/b/']);
+  assert.deepEqual(AI.parseGsettingsList("['/a/', '/b/',  '/c/']\n"), ['/a/', '/b/', '/c/']);
+  for (const bad of ['', 'nonsense', "['/a/'", "['/a/', 1]", "[1, 2]", "['a\\'b']", "[['x']]", "@as ['/a/']", "['/a/'] extra", "{'a': 1}"]) {
+    assert.equal(AI.parseGsettingsList(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('GNOME: enabling adds the shortcut and keeps the shortcuts the person already has', () => {
+  const g = fakeGsettings(['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/']);
+  const io = fakeIo({ handler: g.handler });
+  const r = AI.enableAiOs({ ...baseEnv, platform: 'linux', ...gnomeEnv }, io);
+  assert.equal(r.ok, true);
+  assert.deepEqual(g.list, ['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/', OURS], 'theirs first, untouched; ours appended');
+  assert.equal(g.values.get('name'), "'NeuroClaw Assistant'");
+  assert.equal(g.values.get('binding'), "'<Primary><Alt>n'");
+  assert.match(g.values.get('command'), /^'xdg-open http:\/\/127\.0\.0\.1:7861\/'$/, 'a source checkout opens the engine page');
+  assert.match(r.message, /Ctrl\+Alt\+N/);
+  assert.equal(g.writes.filter((w) => w.includes(`set ${KEYS} custom-keybindings`)).length, 1);
+});
+
+test('GNOME: enabling twice does not duplicate the entry', () => {
+  const g = fakeGsettings([]);
+  const io = fakeIo({ handler: g.handler });
+  const env = { ...baseEnv, platform: 'linux', ...gnomeEnv };
+  AI.enableAiOs(env, io);
+  AI.enableAiOs(env, io);
+  assert.deepEqual(g.list, [OURS]);
+});
+
+test('GNOME: disabling removes only NeuroClaw\'s entry and resets its keys', () => {
+  const theirs = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/';
+  const g = fakeGsettings([theirs, OURS]);
+  g.values.set('name', "'NeuroClaw Assistant'");
+  const io = fakeIo({ handler: g.handler });
+  const r = AI.disableAiOs({ ...baseEnv, platform: 'linux', ...gnomeEnv }, io);
+  assert.equal(r.ok, true);
+  assert.deepEqual(g.list, [theirs]);
+  assert.equal(g.values.size, 0);
+  const none = fakeGsettings([OURS]);
+  AI.disableAiOs({ ...baseEnv, platform: 'linux' }, fakeIo({ handler: none.handler }));
+  assert.deepEqual(none.list, [], 'it clears the list to an empty array when ours was the only one, even outside a GNOME session (so nothing is orphaned)');
+});
+
+test('GNOME: a shortcut list in an unexpected format is never written to', () => {
+  for (const odd of ["['/a/', 1]", 'weird output', "@as ['x']"]) {
+    const g = fakeGsettings(odd);
+    const io = fakeIo({ handler: g.handler });
+    const r = AI.enableAiOs({ ...baseEnv, platform: 'linux', ...gnomeEnv }, io);
+    assert.equal(r.ok, true, 'the engine part still succeeds');
+    assert.deepEqual(g.writes, [], `nothing written for ${JSON.stringify(odd)}`);
+    assert.ok(r.steps.some((x) => /left alone/.test(x.detail ?? '')));
+    AI.disableAiOs({ ...baseEnv, platform: 'linux', ...gnomeEnv }, io);
+    assert.deepEqual(g.writes, [], 'and disable leaves it alone too');
+  }
+});
+
+test('GNOME: no usable gsettings (a terminal over ssh) is skipped quietly; outside GNOME, enable never touches gsettings', () => {
+  const io = fakeIo({ handler: (file) => (file === 'gsettings' ? { status: 1, stdout: '', stderr: 'no dbus' } : undefined) });
+  const r = AI.enableAiOs({ ...baseEnv, platform: 'linux', ...gnomeEnv }, io);
+  assert.equal(r.ok, true);
+  assert.ok(r.steps.some((x) => /no usable GNOME settings/.test(x.detail ?? '')));
+  const plain = fakeIo();
+  AI.enableAiOs({ ...baseEnv, platform: 'linux', env: { XDG_CURRENT_DESKTOP: 'KDE' } }, plain);
+  assert.ok(!plain.calls.some((c) => c.startsWith('gsettings')), 'KDE, XFCE and the rest are not touched');
+});
+
+test('GNOME: a failing write is reported as a step and does not undo the engine part', () => {
+  const g = fakeGsettings([]);
+  const io = fakeIo({ handler: (f, a) => (f === 'gsettings' && a[0] === 'set' && a[2] === 'command' ? { status: 1, stdout: '', stderr: 'denied' } : g.handler(f, a)) });
+  const r = AI.enableAiOs({ ...baseEnv, platform: 'linux', ...gnomeEnv }, io);
+  assert.equal(r.ok, true);
+  assert.equal(r.enabled, true);
+  assert.match(r.message, /keyboard shortcut could not be set/);
+  assert.deepEqual(g.list, [], 'the list was not changed, because the entry itself was not written');
+});
+
+test('Debian: an application-menu entry is added for either mechanism, opens the right thing for the build, and is removed again', () => {
+  for (const systemdUser of [true, false]) {
+    const p = plan({ systemdUser }, INSTALLED);
+    const menu = p.files.find((f) => f.path.endsWith('/applications/neuroclaw-assistant.desktop'));
+    assert.ok(menu, `systemdUser=${systemdUser}`);
+    assert.equal(menu.path, '/home/me/.local/share/applications/neuroclaw-assistant.desktop');
+    assert.deepEqual(parseDesktopExec(/^Exec=(.*)$/m.exec(menu.content)[1]), ['/usr/bin/node', '/srv/nc/scripts/desktop-launcher.mjs'], 'an installed build opens through its launcher, which attaches to the running engine');
+    assert.match(menu.content, /^Categories=Utility;$/m);
+    assert.ok(p.remove.includes(menu.path));
+  }
+  const checkout = plan({}).files.find((f) => f.path.endsWith('neuroclaw-assistant.desktop'));
+  assert.deepEqual(parseDesktopExec(/^Exec=(.*)$/m.exec(checkout.content)[1]), ['xdg-open', 'http://127.0.0.1:7861/']);
+  assert.equal(plan({ env: { XDG_DATA_HOME: '/data' } }).files[1].path, '/data/applications/neuroclaw-assistant.desktop');
+  const io = fakeIo();
+  AI.enableAiOs({ ...baseEnv, platform: 'linux' }, io);
+  assert.ok(io.written.has('/home/me/.local/share/applications/neuroclaw-assistant.desktop'));
+  AI.disableAiOs({ ...baseEnv, platform: 'linux' }, io);
+  assert.ok(io.removed.includes('/home/me/.local/share/applications/neuroclaw-assistant.desktop'));
+});
+
 /* ---------- macOS ---------- */
 
 test('macOS: a LaunchAgent that runs at load and restarts after a failure, with XML-escaped paths', () => {
@@ -212,6 +339,25 @@ test('Windows: a hidden script started from the per-user Run key, with Windows p
   assert.ok(reg.args.includes(`wscript.exe //B //Nologo "${script}"`));
   assert.ok(reg.args.includes('/f'));
   assert.ok(!JSON.stringify(p).includes('HKLM'), 'per-user only: no administrator rights');
+});
+
+test('Windows: a Start menu shortcut carries the hotkey that opens the assistant, and disable removes every script and the shortcut', () => {
+  const win = { platform: 'win32', home: 'C:\\Users\\Me', dataDir: 'C:\\Users\\Me\\.neuroclaw', root: 'C:\\nc', node: 'C:\\nc\\node.exe', env: { APPDATA: 'C:\\Users\\Me\\AppData\\Roaming' } };
+  const lnk = 'C:\\Users\\Me\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\NeuroClaw Assistant.lnk';
+  const maker = 'C:\\Users\\Me\\.neuroclaw\\ai-os-shortcut.vbs';
+  const open = 'C:\\Users\\Me\\.neuroclaw\\ai-os-open.vbs';
+  const installed = plan(win, ['C:\\nc\\dist\\interface\\main.js', 'C:\\nc\\build-info.json', 'C:\\nc\\scripts\\desktop-launcher.mjs']);
+  const byPath = Object.fromEntries(installed.files.map((f) => [f.path, f.content]));
+  assert.ok(byPath[maker].includes(`Set lnk = sh.CreateShortcut("${lnk}")`));
+  assert.ok(byPath[maker].includes('lnk.Hotkey = "CTRL+ALT+N"'), 'a Ctrl+Alt+letter combination, the form a shortcut accepts');
+  assert.ok(byPath[maker].includes(`lnk.Arguments = "//B //Nologo ""${open}"""`), 'it runs the hidden opener, so no console window');
+  assert.ok(byPath[open].includes('desktop-launcher.mjs'), 'an installed build opens through its own launcher, which attaches to the running engine');
+  assert.deepEqual(installed.enable.map((c) => c.file), ['reg', 'wscript.exe']);
+  assert.deepEqual(installed.enable[1].args, ['//B', '//Nologo', maker]);
+  assert.match(installed.summary, /CTRL\+ALT\+N/);
+  const checkout = plan(win, ['C:\\nc\\dist\\interface\\main.js']);
+  assert.ok(checkout.files.find((f) => f.path === open).content.includes('sh.Run "http://127.0.0.1:7861/"'), 'a source checkout has no window launcher: open the page');
+  for (const f of [open, maker, lnk, 'C:\\Users\\Me\\.neuroclaw\\ai-os.vbs']) assert.ok(installed.remove.includes(f), `disable removes ${f}`);
 });
 
 /* ---------- enable and disable ---------- */

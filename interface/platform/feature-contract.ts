@@ -175,10 +175,16 @@ export const FEATURES: Feature[] = [
     needs: [['localEngine', 'installWithoutTerminal']], tests: [n('test/platform/packaging.test.mjs')], onlyOn: ['windows', 'linux', 'macos'],
   },
   {
-    id: 'ai-os', title: 'AI OS mode (start with the computer)', description: 'Makes the engine part of the computer\'s sign-in, so the AI is running before any window is opened: a systemd user service or autostart entry on Linux, a LaunchAgent on macOS, a hidden per-user startup script on Windows. Per-user, undone with one switch, and it grants the agent no extra access.',
+    id: 'ai-os', title: 'AI OS mode (start with the computer)', description: 'Makes the engine part of the computer\'s sign-in, so the AI is running before any window is opened: a systemd user service or autostart entry on Linux, a LaunchAgent on macOS, a hidden per-user startup script on Windows. Per-user, undone with one switch, and it grants the agent no extra access. Also adds an assistant entry point where the OS has one to offer: a Start menu shortcut with a Ctrl+Alt+N hotkey on Windows, an application-menu entry and a GNOME Ctrl+Alt+N shortcut on Debian and other Linux. It cannot replace Copilot or Siri, which those systems do not allow.',
     implementation: ['interface/platform/ai-os.ts', 'interface/platform/routes.ts', 'interface/platform/settings-page.ts', 'scripts/ai-os.mjs'],
     routes: ['GET /api/ai-os', 'POST /api/ai-os'],
     needs: [['localEngine', 'backgroundService']], tests: [n('test/platform/ai-os.test.mjs')], onlyOn: ['windows', 'linux', 'macos'],
+  },
+  {
+    id: 'system-assistant', title: 'Default digital assistant (Android)', description: 'NeuroClaw can be chosen under Settings > Default apps > Digital assistant app, the role Gemini holds, and then opens as a chat sheet from the power-button long press and the home gesture. Only the person can make the choice; there is no "Hey ..." wake word, which Android reserves for the phone\'s maker.',
+    implementation: ['mobile/android/app/src/main/java/ai/neuroclaw/app/AssistantService.kt', 'mobile/android/app/src/main/java/ai/neuroclaw/app/AssistActivity.kt', 'mobile/android/app/src/main/res/xml/voice_interaction_service.xml', 'mobile/android/app/src/main/AndroidManifest.xml'],
+    routes: [],
+    needs: [['localEngine']], tests: [n('test/platform/mobile-native.test.mjs')], onlyOn: ['android'],
   },
   {
     id: 'source-updates', title: 'Source updates', description: 'For git checkouts: how far behind origin, and a safe fast-forward.',
@@ -199,7 +205,7 @@ export const FEATURES: Feature[] = [
     needs: ENGINE, tests: [n('test/platform/mobile-ui.test.mjs')],
   },
   {
-    id: 'chrome-extension', title: 'Chrome extension launcher', description: 'Toolbar icon that checks the server and opens the interface; options page for the server address.',
+    id: 'chrome-extension', title: 'Chrome extension launcher', description: 'Toolbar icon (and the Alt+Shift+Y keyboard shortcut, rebindable at chrome://extensions/shortcuts) that checks the server and opens the interface; options page for the server address.',
     implementation: ['browser-extension/manifest.json', 'browser-extension/app.html', 'browser-extension/app.js'],
     routes: [],
     needs: [['remoteEngine']], tests: [n('test/platform/extension.test.mjs')], onlyOn: ['chromeos'],

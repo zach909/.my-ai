@@ -95,3 +95,53 @@ test('the phone apps only request the platform permission prompts they document,
   for (const d of deps) assert.ok(d.startsWith('androidx.core:core-ktx'), `unexpected dependency ${d}`);
   assert.match(text('mobile/ios/project.yml'), /NSMicrophoneUsageDescription/);
 });
+
+test('Android: NeuroClaw can be chosen as the default digital assistant, and only the system can bind to it', () => {
+  const manifest = text('mobile/android/app/src/main/AndroidManifest.xml');
+  // Both services must demand the system-only permission, or any app could bind to them.
+  for (const name of ['NeuroVoiceInteractionService', 'NeuroSessionService']) {
+    const tag = new RegExp(`<service[^>]*android:name="\\.${name}"[\\s\\S]*?(?:/>|</service>)`).exec(manifest);
+    assert.ok(tag, `${name} is declared`);
+    assert.match(tag[0], /android:permission="android\.permission\.BIND_VOICE_INTERACTION"/, `${name} is bind-protected`);
+  }
+  assert.match(manifest, /android\.service\.voice\.VoiceInteractionService/);
+  assert.match(manifest, /android:name="android\.voice_interaction" android:resource="@xml\/voice_interaction_service"/);
+  const meta = text('mobile/android/app/src/main/res/xml/voice_interaction_service.xml');
+  assert.match(meta, /<voice-interaction-service/);
+  assert.match(meta, /android:sessionService="ai\.neuroclaw\.app\.NeuroSessionService"/);
+  assert.match(meta, /android:supportsAssist="true"/);
+  // The metadata names classes that exist.
+  const kt = text(`${KT}/AssistantService.kt`);
+  assert.match(kt, /class NeuroVoiceInteractionService : VoiceInteractionService\(\)/);
+  assert.match(kt, /class NeuroSessionService : VoiceInteractionSessionService\(\)/);
+  assert.match(kt, /override fun onNewSession\(args: Bundle\?\): VoiceInteractionSession/);
+  assert.match(kt, /override fun onShow\(args: Bundle\?, showFlags: Int\)/);
+});
+
+test('Android: invoking the assistant opens the chat sheet, which has a way out and a real height', () => {
+  const manifest = text('mobile/android/app/src/main/AndroidManifest.xml');
+  const activity = /<activity[^>]*android:name="\.AssistActivity"[\s\S]*?<\/activity>/.exec(manifest)?.[0] ?? '';
+  assert.match(activity, /android\.intent\.action\.ASSIST/, 'the assist action opens the sheet');
+  assert.match(activity, /android:exported="true"/);
+  assert.doesNotMatch(/<activity[^>]*android:name="\.MainActivity"[\s\S]*?<\/activity>/.exec(manifest)[0], /ASSIST/, 'and not the setup screen');
+  const session = text(`${KT}/AssistantService.kt`);
+  assert.match(session, /Intent\(context, AssistActivity::class\.java\)/);
+  assert.match(session, /startAssistantActivity\(open\)/);
+  assert.match(session, /catch \(_: Exception\)[\s\S]*context\.startActivity\(open\)/, 'a phone that refuses the assistant launch still gets the sheet');
+  assert.match(session, /hide\(\)/);
+  const sheet = text(`${KT}/AssistActivity.kt`);
+  assert.match(sheet, /ChatPanel\(this\) \{ finish\(\) \}/, 'Close works');
+  assert.match(sheet, /setOnClickListener \{ finish\(\) \}/, 'a tap outside dismisses it');
+  assert.match(sheet, /panel\.isClickable = true/, 'a tap on the panel does not dismiss it');
+  assert.match(sheet, /heightPixels \* 0\.6/, 'a real height, not weight 0');
+});
+
+test('Android: the setup screen has a button that opens the system page where the assistant is chosen, and says so when it already is', () => {
+  const main = text(`${KT}/MainActivity.kt`);
+  assert.match(main, /text = "Make NeuroClaw my assistant"/);
+  assert.match(main, /VoiceInteractionService\.isActiveService\(this@MainActivity, me\)/);
+  assert.match(main, /ACTION_VOICE_INPUT_SETTINGS/);
+  assert.match(main, /ACTION_MANAGE_DEFAULT_APPS_SETTINGS/, 'a fallback page for phones without the first');
+  assert.match(main, /addView\(assistant\)/, 'the button is on the screen');
+  assert.match(main, /Only you can change this/, 'it does not pretend the app can take the role itself');
+});
