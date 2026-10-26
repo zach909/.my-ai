@@ -1,4 +1,9 @@
-# NeuroClaw - Artificial Superintelligence System
+# NeuroClaw - Local-First AI Agent and Neural Mesh Engine
+
+> A local-first, open-source AI agent built on **OneBrain**, a neural mesh engine with mixture-of-experts routing, hyperdimensional computing and self-improvement. No tokenizer, no third-party code: text, audio and images enter the mesh as raw bits.
+
+**Topics:** local AI agent · neural mesh · mixture of experts · hyperdimensional computing · self-improving AI · privacy-first AI · Windows, Linux, macOS, Android and Chrome.
+
 this is educational project 
 
 please spread the word
