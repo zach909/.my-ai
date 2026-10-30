@@ -1,10 +1,12 @@
 package ai.neuroclaw.app
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
+import android.service.voice.VoiceInteractionService
 import android.text.InputType
 import android.widget.Button
 import android.widget.EditText
@@ -84,6 +86,26 @@ class MainActivity : Activity() {
             text = "Allow over other apps"
             setOnClickListener {
                 startActivity(Intent(AndroidSettings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+            }
+        }
+        val assistant = Button(this).apply {
+            text = "Make NeuroClaw my assistant"
+            setOnClickListener {
+                val me = ComponentName(this@MainActivity, NeuroVoiceInteractionService::class.java)
+                if (VoiceInteractionService.isActiveService(this@MainActivity, me)) {
+                    status.text = "NeuroClaw is already your default assistant. Long-press the power button, or hold the home button or gesture bar, to open it."
+                    return@setOnClickListener
+                }
+                status.text = "Choose NeuroClaw under \"Digital assistant app\" on the next screen. Only you can change this."
+                try {
+                    startActivity(Intent(AndroidSettings.ACTION_VOICE_INPUT_SETTINGS))
+                } catch (_: Exception) {
+                    try {
+                        startActivity(Intent(AndroidSettings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+                    } catch (_: Exception) {
+                        status.text = "Open Settings > Apps > Default apps > Digital assistant app and choose NeuroClaw."
+                    }
+                }
             }
         }
         val start = Button(this).apply {
@@ -258,6 +280,7 @@ class MainActivity : Activity() {
             addView(url); addView(password)
             addView(row(save, webApp, webSettings))
             addView(row(overlay, start, stop))
+            addView(assistant)
             addView(row(sync))
             addView(grant)
             addView(audit)

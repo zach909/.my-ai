@@ -9,6 +9,12 @@
     "default_title": "Open NeuroClaw",
     "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
   },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+Shift+Y" },
+      "description": "Open NeuroClaw"
+    }
+  },
   "background": { "service_worker": "background.js", "type": "module" },
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "permissions": ["storage", "clipboardWrite"],

@@ -35,6 +35,15 @@ test('manifest: MV3, one clear icon set, one-click action, and the smallest perm
   assert.match(manifest.description, /does not|not inside/i, 'it says plainly that the engine is not in the extension');
 });
 
+test('a keyboard shortcut opens NeuroClaw through the same click handler, and costs no permission', () => {
+  const cmd = manifest.commands?._execute_action;
+  assert.ok(cmd, '_execute_action is the built-in command that behaves exactly like clicking the toolbar icon');
+  assert.match(cmd.suggested_key.default, /^(Ctrl|Alt)\+/, 'Chrome only accepts a shortcut with Ctrl or Alt');
+  assert.match(cmd.description, /NeuroClaw/);
+  assert.match(readFileSync(path.join(EXT, 'background.js'), 'utf8'), /chrome\.action\.onClicked\.addListener\(openLauncher\)/, 'and that click handler is the one that opens the launcher');
+  assert.deepEqual([...manifest.permissions].sort(), ['clipboardWrite', 'storage'], 'a shortcut adds no permission');
+});
+
 test('every file the manifest and pages reference exists and is packaged; icons are real PNGs at their sizes and match the renderer', async () => {
   const refs = [manifest.background.service_worker, manifest.options_ui.page, ...Object.values(manifest.icons), ...Object.values(manifest.action.default_icon)];
   for (const r of refs) { assert.ok(existsSync(path.join(EXT, r)), r); assert.ok(EXTENSION_FILES.includes(r), `${r} is packaged`); }
